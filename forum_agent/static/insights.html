@@ -32,6 +32,7 @@
 </head>
 <body>
 <div id="head"><h1>洞察面板 · Insight Panel</h1><span id="meta"></span></div>
+<div id="viewbar" style="font-size:13px;color:#7f8c99;margin-top:6px"></div>
 <div id="conv"></div>
 <div class="grid">
   <div class="sec"><h2>要点摘要 · Summary</h2><div id="summary_points"></div></div>
@@ -92,6 +93,9 @@ function connect() {
   ws.onclose = () => setTimeout(connect, 1500);
   setInterval(() => { if (ws.readyState === 1) ws.send("ping"); }, 15000);
 }
+document.getElementById("viewbar").innerHTML = operator
+  ? "OPERATOR VIEW — approve/hide buttons active · <a style='color:#6ea8fe' href='?room=" + room + "'>switch to projector view</a>"
+  : "PROJECTOR VIEW (read-only) · <a style='color:#6ea8fe' href='?room=" + room + "&operator=1'>switch to operator view</a>";
 load(); connect(); setInterval(load, 30000);
 </script>
 </body>

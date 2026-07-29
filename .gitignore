@@ -7,3 +7,5 @@ data/*transcript.jsonl
 data/*translations.jsonl
 data/replay_stats.json
 .DS_Store
+data/*_insights.json
+data/*_minutes.md

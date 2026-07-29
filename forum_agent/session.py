@@ -36,6 +36,7 @@ class SessionManager:
         stop = self._stop
 
         from forum_agent.insights import engine
+        engine(room).reset()       # new session: clear last meeting's items
         engine(room).start_auto()  # C4: auto-refresh while session runs
 
         def _run() -> None:
