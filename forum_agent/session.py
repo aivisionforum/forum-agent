@@ -22,11 +22,13 @@ def archive_live(room: str) -> str | None:
         transcript.stat().st_mtime))  # named after last activity, not now
     dest = Path(SESSIONS_DIR) / sid
     dest.mkdir(parents=True, exist_ok=True)
-    for tmpl in (TRANSCRIPT_JSONL, "data/{room}_translations.jsonl",
-                 INSIGHTS_JSON, MINUTES_MD):
-        src = Path(tmpl.format(room=room))
-        if src.exists() and src.stat().st_size > 0:
-            shutil.move(str(src), dest / src.name)
+    for pattern in (TRANSCRIPT_JSONL, "data/{room}_translations.jsonl",
+                    INSIGHTS_JSON, "data/{room}_insights_history.jsonl",
+                    "data/{room}_minutes*.md"):
+        tp = Path(pattern.format(room=room))
+        for src in tp.parent.glob(tp.name):
+            if src.stat().st_size > 0:
+                shutil.move(str(src), dest / src.name)
     return sid
 
 
