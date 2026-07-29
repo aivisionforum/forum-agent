@@ -52,6 +52,9 @@
   <button id="summarize">✦ Summarize now</button>
   <button id="minutes">📝 Generate minutes</button>
   <span id="istatus" style="color:#7f8c99;font-size:14px"></span>
+  <label><input type="checkbox" id="autoapprove" checked>
+    auto-approve new insights (human corrects on review; uncheck for
+    draft-until-approved gatekeeper mode)</label>
   <div style="color:#7f8c99;font-size:13px;margin-top:8px">
     Auto-summarize runs every 4 minutes while a session is live. All items
     appear as DRAFT on the insight panel until approved there (operator view).
@@ -101,6 +104,10 @@ els.mic.onclick = () => post("/api/start", {source: "mic",
 els.replay.onclick = () => post("/api/start",
   {source: "replay", play: els.play.checked});
 els.stop.onclick = () => post("/api/stop");
+document.getElementById("autoapprove").onchange = (e) =>
+  fetch("/api/insights/mode", {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({auto_approve: e.target.checked})});
 document.getElementById("summarize").onclick = async () => {
   const el = document.getElementById("istatus");
   el.textContent = "summarizing…";

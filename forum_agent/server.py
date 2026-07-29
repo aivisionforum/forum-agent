@@ -133,6 +133,14 @@ async def api_insights_run(body: dict) -> dict:
         engine(body.get("room", "room1")).refresh)
 
 
+@app.post("/api/insights/mode")
+async def api_insights_mode(body: dict) -> dict:
+    from forum_agent.insights import engine
+    e = engine(body.get("room", "room1"))
+    e.auto_approve = bool(body.get("auto_approve", True))
+    return {"auto_approve": e.auto_approve}
+
+
 @app.post("/api/insights/item")
 async def api_insights_item(body: dict) -> dict:
     from forum_agent.insights import engine

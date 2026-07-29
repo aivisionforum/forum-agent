@@ -29,15 +29,23 @@ LLM_JSON = json.dumps({
     "convergence_line": {"zh": "收敛线", "en": "Converging line"}})
 
 
-def test_refresh_parses_and_marks_draft(eng, monkeypatch):
+def test_refresh_parses_and_auto_approves(eng, monkeypatch):
     monkeypatch.setattr(ins, "_llm", lambda p: f"```json\n{LLM_JSON}\n```")
     state = eng.refresh()
     assert state["items"]["summary_points"][0]["zh"] == "要点一"
-    assert state["items"]["summary_points"][0]["status"] == "draft"
+    assert state["items"]["summary_points"][0]["status"] == "approved"  # default
     assert state["convergence_line"]["en"] == "Converging line"
 
 
+def test_gatekeeper_mode_marks_draft(eng, monkeypatch):
+    eng.auto_approve = False
+    monkeypatch.setattr(ins, "_llm", lambda p: LLM_JSON)
+    state = eng.refresh()
+    assert state["items"]["summary_points"][0]["status"] == "draft"
+
+
 def test_approval_survives_refresh(eng, monkeypatch):
+    eng.auto_approve = False
     monkeypatch.setattr(ins, "_llm", lambda p: LLM_JSON)
     state = eng.refresh()
     item_id = state["items"]["summary_points"][0]["id"]
