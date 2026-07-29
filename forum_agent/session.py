@@ -35,6 +35,9 @@ class SessionManager:
         self.error = None
         stop = self._stop
 
+        from forum_agent.insights import engine
+        engine(room).start_auto()  # C4: auto-refresh while session runs
+
         def _run() -> None:
             try:
                 if mode == MODE_MIC:
@@ -53,6 +56,8 @@ class SessionManager:
         return self.status()
 
     def stop(self) -> dict:
+        from forum_agent.insights import engine
+        engine(self.room).stop_auto()
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=90)  # models may be mid-inference

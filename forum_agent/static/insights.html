@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<title>Forum Agent — Insights</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0b0f14; color: #f2f5f7; font-family: -apple-system,
+         "PingFang SC", sans-serif; min-height: 100vh; padding: 28px 36px; }
+  #head { display: flex; justify-content: space-between; align-items: baseline;
+          border-bottom: 1px solid #1c2530; padding-bottom: 10px; }
+  h1 { font-size: 20px; font-weight: 600; }
+  #conv { font-size: 20px; color: #6ea8fe; margin: 14px 0 22px;
+          min-height: 26px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .sec h2 { font-size: 17px; color: #7f8c99; margin-bottom: 10px;
+            text-transform: none; }
+  .item { background: #121922; border: 1px solid #1c2530; border-radius: 8px;
+          padding: 12px 14px; margin-bottom: 10px; position: relative; }
+  .item .zh { font-size: 19px; line-height: 1.4; }
+  .item .en { font-size: 15px; color: #a8b8a8; margin-top: 4px; }
+  .badge { position: absolute; top: 8px; right: 10px; font-size: 11px;
+           padding: 2px 8px; border-radius: 10px; }
+  .draft .badge { background: #78350f; color: #fcd34d; }
+  .approved .badge { background: #14532d; color: #86efac; }
+  .hidden-item { display: none; }
+  .ops button { font-size: 12px; margin: 8px 6px 0 0; padding: 4px 10px;
+                border-radius: 6px; border: 1px solid #2a3a4d; cursor: pointer;
+                background: #18222e; color: #cbd5e1; }
+  #meta { color: #556; font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="head"><h1>洞察面板 · Insight Panel</h1><span id="meta"></span></div>
+<div id="conv"></div>
+<div class="grid">
+  <div class="sec"><h2>要点摘要 · Summary</h2><div id="summary_points"></div></div>
+  <div class="sec"><h2>正在形成的共识 · Emerging consensus</h2><div id="emerging_consensus"></div></div>
+  <div class="sec"><h2>主要分歧 · Tensions</h2><div id="tensions"></div></div>
+  <div class="sec"><h2>待回答的问题 · Open questions</h2><div id="open_questions"></div></div>
+</div>
+<script>
+const params = new URLSearchParams(location.search);
+const room = params.get("room") || "room1";
+const operator = params.get("operator") === "1";
+const KINDS = ["summary_points","emerging_consensus","tensions","open_questions"];
+
+function render(s) {
+  for (const kind of KINDS) {
+    const box = document.getElementById(kind);
+    box.innerHTML = "";
+    for (const it of (s.items?.[kind] || [])) {
+      if (it.status === "hidden" && !operator) continue;
+      const d = document.createElement("div");
+      d.className = "item " + (it.status === "approved" ? "approved" : "draft");
+      d.innerHTML = `<span class="badge">${it.status === "approved" ? "APPROVED" : "DRAFT 草稿"}</span>
+        <div class="zh">${it.zh}</div><div class="en">${it.en}</div>`;
+      if (operator) {
+        const ops = document.createElement("div");
+        ops.className = "ops";
+        for (const [label, action] of [["✓ approve","approved"],
+            ["draft","draft"], ["✕ hide","hidden"]]) {
+          const b = document.createElement("button");
+          b.textContent = label;
+          b.onclick = async () => render(await (await fetch("/api/insights/item", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({room, id: it.id, action})})).json());
+          ops.appendChild(b);
+        }
+        d.appendChild(ops);
+      }
+      box.appendChild(d);
+    }
+  }
+  const c = s.convergence_line || {};
+  document.getElementById("conv").textContent =
+    c.zh ? `▶ ${c.zh} · ${c.en}` : "";
+  document.getElementById("meta").textContent = s.updated
+    ? "updated " + new Date(s.updated * 1000).toLocaleTimeString()
+    : "waiting for first refresh…";
+}
+
+async function load() {
+  render(await (await fetch(`/api/insights?room=${room}`)).json());
+}
+function connect() {
+  const ws = new WebSocket(`ws://${location.host}/ws/room/${room}`);
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data);
+    if (m.type === "insights") render(m);
+  };
+  ws.onclose = () => setTimeout(connect, 1500);
+  setInterval(() => { if (ws.readyState === 1) ws.send("ping"); }, 15000);
+}
+load(); connect(); setInterval(load, 30000);
+</script>
+</body>
+</html>
