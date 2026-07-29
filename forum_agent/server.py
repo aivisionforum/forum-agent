@@ -186,6 +186,55 @@ async def minutes_page(room: str = "room1", session: str = "") -> str:
             f"<body>{html}")
 
 
+@app.get("/transcript", response_class=HTMLResponse)
+async def transcript_page(room: str = "room1", session: str = "") -> str:
+    """Human-readable transcript with translations; raw JSONL stays at
+    /api/transcript."""
+    import html as h
+    import json as j
+    from forum_agent.constants import SESSIONS_DIR, TRANSCRIPT_JSONL
+    from pathlib import Path
+    base = Path(SESSIONS_DIR) / session if session else Path("data")
+    tpath = base / f"{room}_transcript.jsonl" if session \
+        else Path(TRANSCRIPT_JSONL.format(room=room))
+    xpath = base / f"{room}_translations.jsonl"
+    trans = {}
+    if xpath.exists():
+        for i, line in enumerate(xpath.read_text().splitlines(), 1):
+            e = j.loads(line)
+            trans[e.get("id", i)] = e["translation"]
+    rows = []
+    colors = ["#6ea8fe", "#3ddc84", "#f0997b", "#ed93b1", "#facc15", "#a78bfa"]
+    if tpath.exists():
+        for i, line in enumerate(tpath.read_text().splitlines(), 1):
+            r = j.loads(line)
+            mm, ss = divmod(int(r["t_start"]), 60)
+            c = colors[(ord(r["speaker_id"][-1]) - 65) % len(colors)]
+            tr = trans.get(i, "")
+            rows.append(
+                f"<div class=seg><span class=t>{mm:02d}:{ss:02d}</span>"
+                f"<span class=sp style='color:{c}'>{h.escape(r['speaker_id'])}</span>"
+                f"<span class=lg>{r['lang']}</span>"
+                f"<div class=tx>{h.escape(r['text'])}"
+                + (f"<div class=tr>{h.escape(tr)}</div>" if tr else "")
+                + "</div></div>")
+    title = f"Transcript — {session or 'live'}"
+    return ("<!doctype html><meta charset=utf-8><title>" + title + "</title>"
+            "<style>body{background:#0b0f14;color:#f2f5f7;font-family:"
+            "-apple-system,'PingFang SC',sans-serif;max-width:860px;"
+            "margin:36px auto;padding:0 20px;line-height:1.6}"
+            "h1{font-size:19px;margin-bottom:18px;color:#7f8c99}"
+            ".seg{display:flex;gap:12px;margin-bottom:14px;align-items:baseline}"
+            ".t{color:#556;font-size:13px;min-width:44px}"
+            ".sp{font-weight:600;min-width:88px;font-size:14px}"
+            ".lg{color:#556;font-size:12px;min-width:40px}"
+            ".tx{flex:1;font-size:16px}"
+            ".tr{color:#a8b8a8;font-size:14px;margin-top:2px}</style>"
+            f"<h1>{title} · <a style='color:#6ea8fe' "
+            f"href='/api/transcript?room={room}&session={session}'>raw JSONL"
+            "</a></h1>" + ("".join(rows) or "No transcript."))
+
+
 @app.get("/api/transcript")
 async def api_transcript(room: str = "room1", session: str = ""):
     from forum_agent.constants import SESSIONS_DIR, TRANSCRIPT_JSONL
