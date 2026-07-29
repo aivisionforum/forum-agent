@@ -102,3 +102,19 @@ def test_delete_session_validates_id(tmp_path, monkeypatch):
     assert not fs.delete_session("../../etc")   # traversal rejected
     assert not fs.delete_session("nonexistent")
     assert fs.delete_session("20260728-120000") and not d.exists()
+
+
+def test_rename_and_default_title(tmp_path, monkeypatch):
+    import json
+    import forum_agent.session as fs
+    monkeypatch.setattr(fs, "SESSIONS_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setattr(fs, "TRANSCRIPT_JSONL", str(tmp_path / "{room}_transcript.jsonl"))
+    monkeypatch.setattr(fs, "INSIGHTS_JSON", str(tmp_path / "{room}_insights.json"))
+    monkeypatch.setattr(fs, "MINUTES_MD", str(tmp_path / "{room}_minutes.md"))
+    (tmp_path / "room1_transcript.jsonl").write_text(
+        json.dumps({"t_end": 1, "text": "开场讨论 human agency"}) + "\n")
+    sid = fs.archive_live("room1")
+    assert fs.list_sessions()[0]["title"].startswith("开场讨论")
+    assert fs.rename_session(sid, "  组会测试 Group Meeting  ")
+    assert fs.list_sessions()[0]["title"] == "组会测试 Group Meeting"
+    assert not fs.rename_session("../../x", "bad")

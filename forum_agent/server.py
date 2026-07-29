@@ -118,6 +118,13 @@ async def api_sessions() -> list:
     return list_sessions()
 
 
+@app.post("/api/sessions/rename")
+async def api_sessions_rename(body: dict) -> dict:
+    from forum_agent.session import rename_session
+    return {"renamed": rename_session(body.get("id", ""),
+                                      body.get("title", ""))}
+
+
 @app.post("/api/sessions/delete")
 async def api_sessions_delete(body: dict) -> dict:
     from forum_agent.session import delete_session
