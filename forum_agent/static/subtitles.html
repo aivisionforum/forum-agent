@@ -54,6 +54,11 @@ function connect() {
                        statusEl.className = ""; setTimeout(connect, 1000); };
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
+    if (m.type === "session_reset") {
+      feed.innerHTML = ""; partialEl = null;
+      for (const k in finals) delete finals[k];
+      return;
+    }
     if (m.type === "partial") {
       if (!partialEl) { partialEl = document.createElement("div");
                         partialEl.className = "entry partial";

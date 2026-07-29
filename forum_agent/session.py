@@ -9,6 +9,7 @@ from pathlib import Path
 
 from forum_agent import replay
 from forum_agent.constants import (FIXTURE_WAV, INSIGHTS_JSON, MINUTES_MD,
+                                   MSG_SESSION_RESET,
                                    SESSIONS_DIR, TRANSCRIPT_JSONL)
 
 
@@ -89,9 +90,12 @@ class SessionManager:
         stop = self._stop
 
         from forum_agent.insights import engine
+        from forum_agent.server import hub
         archive_live(room)         # previous session -> data/sessions/<id>/
         engine(room).reset()       # fresh state for the new meeting
         engine(room).start_auto()  # C4: auto-refresh while session runs
+        # open subtitle/insight pages clear themselves for the new session
+        hub.broadcast_from_thread(room, {"type": MSG_SESSION_RESET})
 
         def _run() -> None:
             try:
