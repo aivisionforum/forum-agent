@@ -1,0 +1,8 @@
+PASS  records-exist: 72 JSONL records
+PASS  schema: all keys present, text non-empty
+PASS  monotonic: no overlapping segments
+PASS  coverage: 71/71 reference utterances covered
+PASS  lag: max 2.68s, mean 0.44s (budget 3s)
+PASS  bilingual: languages seen: ['en', 'mixed', 'zh']
+PASS  translations: 72/72 segments translated
+PASS  diarization: speakers: ['Speaker A', 'Speaker B', 'Speaker C', 'Speaker D']

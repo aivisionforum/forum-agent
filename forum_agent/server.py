@@ -1,0 +1,119 @@
+"""FastAPI server: serves the subtitle page and a per-room websocket feed."""
+import asyncio
+import json
+from pathlib import Path
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+class Hub:
+    """Fan-out of pipeline events to all subtitle-page websockets of a room."""
+
+    def __init__(self) -> None:
+        self._rooms: dict[str, set[WebSocket]] = {}
+        self.loop: asyncio.AbstractEventLoop | None = None
+
+    async def register(self, room: str, ws: WebSocket) -> None:
+        await ws.accept()
+        self._rooms.setdefault(room, set()).add(ws)
+
+    def unregister(self, room: str, ws: WebSocket) -> None:
+        self._rooms.get(room, set()).discard(ws)
+
+    async def broadcast(self, room: str, message: dict) -> None:
+        dead = []
+        for ws in self._rooms.get(room, set()):
+            try:
+                await ws.send_text(json.dumps(message, ensure_ascii=False))
+            except Exception:  # client gone; drop it, page reconnects
+                dead.append(ws)
+        for ws in dead:
+            self.unregister(room, ws)
+
+    def broadcast_from_thread(self, room: str, message: dict) -> None:
+        assert self.loop is not None, "server not started"
+        asyncio.run_coroutine_threadsafe(self.broadcast(room, message), self.loop)
+
+
+hub = Hub()
+app = FastAPI(title="forum-agent")
+
+
+@app.on_event("startup")
+async def _capture_loop() -> None:
+    hub.loop = asyncio.get_running_loop()
+
+
+@app.get("/subtitles", response_class=HTMLResponse)
+async def subtitles_page() -> str:
+    return (STATIC_DIR / "subtitles.html").read_text()
+
+
+@app.get("/", response_class=HTMLResponse)
+@app.get("/control", response_class=HTMLResponse)
+async def control_page() -> str:
+    return (STATIC_DIR / "control.html").read_text()
+
+
+@app.get("/api/status")
+async def api_status() -> dict:
+    from forum_agent.session import manager
+    return manager.status()
+
+
+@app.get("/api/devices")
+async def api_devices() -> list:
+    import sounddevice as sd
+    return [{"index": i, "name": d["name"]}
+            for i, d in enumerate(sd.query_devices())
+            if d["max_input_channels"] > 0]
+
+
+@app.post("/api/start")
+async def api_start(body: dict) -> dict:
+    from forum_agent.session import manager
+    import anyio
+    return await anyio.to_thread.run_sync(
+        lambda: manager.start(body.get("source", "replay"),
+                              body.get("room", "room1"),
+                              play=bool(body.get("play", True)),
+                              device=(int(body["device"])
+                                      if body.get("device") not in (None, "", "auto")
+                                      else None)))
+
+
+@app.post("/api/stop")
+async def api_stop() -> dict:
+    from forum_agent.session import manager
+    import anyio
+    return await anyio.to_thread.run_sync(manager.stop)
+
+
+@app.websocket("/ws/room/{room}")
+async def room_ws(ws: WebSocket, room: str) -> None:
+    await hub.register(room, ws)
+    try:
+        while True:
+            await ws.receive_text()  # keepalive pings from the page
+    except WebSocketDisconnect:
+        hub.unregister(room, ws)
+
+
+def main() -> None:
+    """Persistent server: sessions are started from the /control page."""
+    import uvicorn
+    from forum_agent.constants import SERVER_HOST, SERVER_PORT
+    print(f"Control: http://{SERVER_HOST}:{SERVER_PORT}/control")
+    # Import string (not the app object): under `python -m forum_agent.server`
+    # this file is module `__main__`, and passing its app would leave the
+    # canonical forum_agent.server.hub -- the one the pipeline imports --
+    # without an event loop.
+    uvicorn.run("forum_agent.server:app", host=SERVER_HOST, port=SERVER_PORT,
+                log_level="warning")
+
+
+if __name__ == "__main__":
+    main()

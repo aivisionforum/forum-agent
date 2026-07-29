@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+data/ecapa_model/
+data/*.wav
+data/*transcript.jsonl
+data/*translations.jsonl
+data/replay_stats.json
+.DS_Store
