@@ -8,7 +8,8 @@ Return ONLY a JSON object, no markdown fences, with exactly these keys:
   "emerging_consensus": [ {"zh": "...", "en": "..."} ],    // 0-4 points the room is converging on
   "tensions": [ {"zh": "...", "en": "..."} ],              // 0-4 main disagreements
   "open_questions": [ {"zh": "...", "en": "..."} ],        // 0-4 questions raised but not answered
-  "convergence_line": {"zh": "...", "en": "..."}           // ONE short line: what this room is converging on right now
+  "convergence_line": {"zh": "...", "en": "..."},          // ONE short line: what this room is converging on right now
+  "session_topic": {"zh": "...", "en": "..."}              // 5-15字的会议主题短语 / short noun-phrase naming the session's topic. A label, NOT a sentence: never start with 该房间/本次会议/The room/This session
 }
 
 Each item must exist in both languages (translate faithfully). Be concrete and specific to what was actually said; do not invent content. If the transcript window is empty or trivial, keep the previous state's content.

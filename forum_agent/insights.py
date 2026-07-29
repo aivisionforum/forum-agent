@@ -126,6 +126,10 @@ class InsightEngine:
             if isinstance(line, dict) and line.get("zh"):
                 self.state["convergence_line"] = {"zh": line["zh"],
                                                   "en": line.get("en", "")}
+            topic = parsed.get("session_topic") or {}
+            if isinstance(topic, dict) and topic.get("zh"):
+                self.state["session_topic"] = {"zh": topic["zh"],
+                                               "en": topic.get("en", "")}
             self.state["updated"] = time.time()
             self._save_and_broadcast()
             with Path(INSIGHTS_HISTORY.format(room=self.room)).open("a") as f:
