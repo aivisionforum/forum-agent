@@ -67,3 +67,30 @@ def test_minutes_written_with_draft_banner(eng, monkeypatch):
     content = open(path).read()
     assert content.startswith("> DRAFT")
     assert "会议纪要" in content
+
+
+def test_archive_and_list(tmp_path, monkeypatch):
+    import forum_agent.session as fs
+    monkeypatch.setattr(fs, "TRANSCRIPT_JSONL", str(tmp_path / "{room}_transcript.jsonl"))
+    monkeypatch.setattr(fs, "INSIGHTS_JSON", str(tmp_path / "{room}_insights.json"))
+    monkeypatch.setattr(fs, "MINUTES_MD", str(tmp_path / "{room}_minutes.md"))
+    monkeypatch.setattr(fs, "SESSIONS_DIR", str(tmp_path / "sessions"))
+    assert fs.archive_live("room1") is None  # nothing to archive
+    (tmp_path / "room1_transcript.jsonl").write_text('{"t_end": 1}\n')
+    (tmp_path / "room1_insights.json").write_text('{"items": {}}')
+    sid = fs.archive_live("room1")
+    assert sid is not None
+    assert not (tmp_path / "room1_transcript.jsonl").exists()  # moved
+    sessions = fs.list_sessions()
+    assert sessions[0]["id"] == sid and sessions[0]["segments"] == 1
+    assert "room1_insights.json" in sessions[0]["files"]
+
+
+def test_delete_session_validates_id(tmp_path, monkeypatch):
+    import forum_agent.session as fs
+    monkeypatch.setattr(fs, "SESSIONS_DIR", str(tmp_path / "sessions"))
+    d = tmp_path / "sessions" / "20260728-120000"
+    d.mkdir(parents=True)
+    assert not fs.delete_session("../../etc")   # traversal rejected
+    assert not fs.delete_session("nonexistent")
+    assert fs.delete_session("20260728-120000") and not d.exists()

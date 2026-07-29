@@ -9,3 +9,4 @@ data/replay_stats.json
 .DS_Store
 data/*_insights.json
 data/*_minutes.md
+data/sessions/

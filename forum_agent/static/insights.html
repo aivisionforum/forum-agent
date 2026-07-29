@@ -44,6 +44,7 @@
 const params = new URLSearchParams(location.search);
 const room = params.get("room") || "room1";
 const operator = params.get("operator") === "1";
+const session = params.get("session") || "";
 const KINDS = ["summary_points","emerging_consensus","tensions","open_questions"];
 
 function render(s) {
@@ -56,7 +57,7 @@ function render(s) {
       d.className = "item " + (it.status === "approved" ? "approved" : "draft");
       d.innerHTML = `<span class="badge">${it.status === "approved" ? "APPROVED" : "DRAFT 草稿"}</span>
         <div class="zh">${it.zh}</div><div class="en">${it.en}</div>`;
-      if (operator) {
+      if (operator && !session) {
         const ops = document.createElement("div");
         ops.className = "ops";
         for (const [label, action] of [["✓ approve","approved"],
@@ -82,7 +83,7 @@ function render(s) {
 }
 
 async function load() {
-  render(await (await fetch(`/api/insights?room=${room}`)).json());
+  render(await (await fetch(`/api/insights?room=${room}&session=${session}`)).json());
 }
 function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws/room/${room}`);
@@ -93,10 +94,13 @@ function connect() {
   ws.onclose = () => setTimeout(connect, 1500);
   setInterval(() => { if (ws.readyState === 1) ws.send("ping"); }, 15000);
 }
-document.getElementById("viewbar").innerHTML = operator
+if (session) {
+  document.getElementById("viewbar").innerHTML =
+    "ARCHIVED SESSION " + session + " (read-only)";
+} else document.getElementById("viewbar").innerHTML = operator
   ? "OPERATOR VIEW — approve/hide buttons active · <a style='color:#6ea8fe' href='?room=" + room + "'>switch to projector view</a>"
   : "PROJECTOR VIEW (read-only) · <a style='color:#6ea8fe' href='?room=" + room + "&operator=1'>switch to operator view</a>";
-load(); connect(); setInterval(load, 30000);
+load(); if (!session) { connect(); setInterval(load, 30000); }
 </script>
 </body>
 </html>

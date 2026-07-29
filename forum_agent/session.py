@@ -1,9 +1,60 @@
 """Session manager: lets the web control page start/stop the pipeline with
-either the microphone or a test audio file as the source."""
+either the microphone or a test audio file as the source. Starting a new
+session archives the previous one under data/sessions/<timestamp>/ so past
+meetings stay loadable."""
+import shutil
 import threading
+import time
+from pathlib import Path
 
 from forum_agent import replay
-from forum_agent.constants import FIXTURE_WAV
+from forum_agent.constants import (FIXTURE_WAV, INSIGHTS_JSON, MINUTES_MD,
+                                   SESSIONS_DIR, TRANSCRIPT_JSONL)
+
+
+def archive_live(room: str) -> str | None:
+    """Move the current live files into a timestamped session directory.
+    Returns the session id, or None if there was nothing to archive."""
+    transcript = Path(TRANSCRIPT_JSONL.format(room=room))
+    if not transcript.exists() or transcript.stat().st_size == 0:
+        return None
+    sid = time.strftime("%Y%m%d-%H%M%S", time.localtime(
+        transcript.stat().st_mtime))  # named after last activity, not now
+    dest = Path(SESSIONS_DIR) / sid
+    dest.mkdir(parents=True, exist_ok=True)
+    for tmpl in (TRANSCRIPT_JSONL, "data/{room}_translations.jsonl",
+                 INSIGHTS_JSON, MINUTES_MD):
+        src = Path(tmpl.format(room=room))
+        if src.exists() and src.stat().st_size > 0:
+            shutil.move(str(src), dest / src.name)
+    return sid
+
+
+def delete_session(session_id: str) -> bool:
+    """Operator-initiated removal of one archived session (confirmed in UI).
+    The id must be a pure timestamp: rejects any path-traversal attempt."""
+    import re
+    if not re.fullmatch(r"\d{8}-\d{6}", session_id):
+        return False
+    target = Path(SESSIONS_DIR) / session_id
+    if not target.is_dir():
+        return False
+    shutil.rmtree(target)
+    return True
+
+
+def list_sessions() -> list[dict]:
+    root = Path(SESSIONS_DIR)
+    if not root.exists():
+        return []
+    out = []
+    for d in sorted(root.iterdir(), reverse=True):
+        if d.is_dir():
+            t = next(iter(d.glob("*_transcript.jsonl")), None)
+            out.append({"id": d.name,
+                        "files": sorted(f.name for f in d.iterdir()),
+                        "segments": len(t.read_text().splitlines()) if t else 0})
+    return out
 
 MODE_MIC = "mic"
 MODE_REPLAY = "replay"
@@ -36,7 +87,8 @@ class SessionManager:
         stop = self._stop
 
         from forum_agent.insights import engine
-        engine(room).reset()       # new session: clear last meeting's items
+        archive_live(room)         # previous session -> data/sessions/<id>/
+        engine(room).reset()       # fresh state for the new meeting
         engine(room).start_auto()  # C4: auto-refresh while session runs
 
         def _run() -> None:

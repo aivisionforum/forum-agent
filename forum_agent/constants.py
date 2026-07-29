@@ -68,6 +68,7 @@ MSG_FINAL = "final"
 MSG_TRANSLATION = "translation"
 
 # Files
+SESSIONS_DIR = "data/sessions"   # archived per-session files
 TRANSCRIPT_JSONL = "data/{room}_transcript.jsonl"
 FIXTURE_WAV = "data/fixture_meeting.wav"
 FIXTURE_REF_JSON = "data/fixture_reference.json"
