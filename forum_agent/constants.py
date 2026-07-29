@@ -52,6 +52,7 @@ INSIGHT_TIMEOUT_SECONDS = 180
 # mode, for high-stakes projector use). Toggle live on the console.
 AUTO_APPROVE_DEFAULT = True
 INSIGHTS_JSON = "data/{room}_insights.json"
+INSIGHTS_HISTORY = "data/{room}_insights_history.jsonl"  # every refresh, append-only
 MINUTES_MD = "data/{room}_minutes.md"
 MSG_INSIGHTS = "insights"
 

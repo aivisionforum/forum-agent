@@ -14,7 +14,7 @@ from pathlib import Path
 
 import requests
 
-from forum_agent.constants import (AUTO_APPROVE_DEFAULT,
+from forum_agent.constants import (AUTO_APPROVE_DEFAULT, INSIGHTS_HISTORY,
                                    INSIGHT_INTERVAL_SECONDS, INSIGHT_MODEL,
                                    INSIGHT_THINK, INSIGHT_TIMEOUT_SECONDS,
                                    INSIGHT_WINDOW_SECONDS, INSIGHTS_JSON,
@@ -126,6 +126,8 @@ class InsightEngine:
                                                   "en": line.get("en", "")}
             self.state["updated"] = time.time()
             self._save_and_broadcast()
+            with Path(INSIGHTS_HISTORY.format(room=self.room)).open("a") as f:
+                f.write(json.dumps(self.state, ensure_ascii=False) + "\n")
         return self.state
 
     def set_item(self, item_id: str, action: str, zh: str = "",
@@ -174,5 +176,10 @@ class InsightEngine:
         md = _llm(prompt)
         md = re.sub(r"^```(markdown)?|```$", "", md.strip(), flags=re.M).strip()
         out = Path(MINUTES_MD.format(room=self.room))
-        out.write_text(f"> DRAFT — pending human review / 草稿，待人工确认\n\n{md}\n")
+        content = f"> DRAFT — pending human review / 草稿，待人工确认\n\n{md}\n"
+        out.write_text(content)
+        # regenerations must not destroy earlier drafts: timestamped copy too
+        stamped = out.with_name(out.name.replace(
+            ".md", time.strftime("_%H%M%S.md")))
+        stamped.write_text(content)
         return str(out)
