@@ -71,6 +71,14 @@ class InsightEngine:
         self._thread: threading.Thread | None = None
         self.error: str | None = None
 
+    def reset(self) -> None:
+        """New session = new meeting: clear previous insights so the panel
+        never shows a past session's items as if they were current."""
+        with self._lock:
+            self.state = {"updated": 0, "items": {k: [] for k in KINDS},
+                          "convergence_line": {"zh": "", "en": ""}}
+            self._save_and_broadcast()
+
     def _load(self) -> dict:
         if self.path.exists():
             return json.loads(self.path.read_text())

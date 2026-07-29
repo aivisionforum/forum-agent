@@ -101,7 +101,8 @@ document.getElementById("summarize").onclick = async () => {
   el.textContent = "summarizing…";
   try { await fetch("/api/insights/run", {method:"POST",
     headers:{"Content-Type":"application/json"}, body:"{}"});
-    el.textContent = "insights updated"; }
+    el.textContent = "insights updated";
+    window.open("/insights?room=room1&operator=1"); }
   catch (e) { el.textContent = "failed: " + e; }
 };
 document.getElementById("minutes").onclick = async () => {
