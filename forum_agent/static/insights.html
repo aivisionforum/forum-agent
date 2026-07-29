@@ -23,6 +23,7 @@
            padding: 2px 8px; border-radius: 10px; }
   .draft .badge { background: #78350f; color: #fcd34d; }
   .approved .badge { background: #14532d; color: #86efac; }
+  .new .badge { background: #1e3a8a; color: #93c5fd; }
   .hidden-item { display: none; }
   .ops button { font-size: 12px; margin: 8px 6px 0 0; padding: 4px 10px;
                 border-radius: 6px; border: 1px solid #2a3a4d; cursor: pointer;
@@ -54,8 +55,10 @@ function render(s) {
     for (const it of (s.items?.[kind] || [])) {
       if (it.status === "hidden" && !operator) continue;
       const d = document.createElement("div");
-      d.className = "item " + (it.status === "approved" ? "approved" : "draft");
-      d.innerHTML = `<span class="badge">${it.status === "approved" ? "APPROVED" : "DRAFT 草稿"}</span>
+      const isNew = it.added && s.updated && (s.updated - it.added) < 5;
+      d.className = "item " + (isNew ? "new" : it.status === "approved" ? "approved" : "draft");
+      const badge = isNew ? "NEW 新" : it.status === "approved" ? "✓" : "DRAFT 草稿";
+      d.innerHTML = `<span class="badge">${badge}</span>
         <div class="zh">${it.zh}</div><div class="en">${it.en}</div>`;
       if (operator && !session) {
         const ops = document.createElement("div");
@@ -77,9 +80,8 @@ function render(s) {
   const c = s.convergence_line || {};
   document.getElementById("conv").textContent =
     c.zh ? `▶ ${c.zh} · ${c.en}` : "";
-  document.getElementById("meta").textContent = s.updated
-    ? "updated " + new Date(s.updated * 1000).toLocaleTimeString()
-    : "waiting for first refresh…";
+  lastUpdated = s.updated || 0;
+  tickMeta();
 }
 
 async function load() {
@@ -101,6 +103,15 @@ if (session) {
 } else document.getElementById("viewbar").innerHTML = operator
   ? "OPERATOR VIEW — approve/hide buttons active · <a style='color:#6ea8fe' href='?room=" + room + "'>switch to projector view</a>"
   : "PROJECTOR VIEW (read-only) · <a style='color:#6ea8fe' href='?room=" + room + "&operator=1'>switch to operator view</a>";
+let lastUpdated = 0;
+function tickMeta() {
+  const el = document.getElementById("meta");
+  if (!lastUpdated) { el.textContent = "waiting for first refresh…"; return; }
+  const next = Math.max(0, 180 - (Date.now()/1000 - lastUpdated));
+  el.textContent = "updated " + new Date(lastUpdated * 1000).toLocaleTimeString()
+    + (session ? "" : ` · next auto-update in ${Math.floor(next/60)}:${String(Math.floor(next%60)).padStart(2,"0")}`);
+}
+setInterval(tickMeta, 1000);
 load(); if (!session) { connect(); setInterval(load, 30000); }
 </script>
 </body>

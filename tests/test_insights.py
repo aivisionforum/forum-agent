@@ -44,7 +44,7 @@ def test_gatekeeper_mode_marks_draft(eng, monkeypatch):
     assert state["items"]["summary_points"][0]["status"] == "draft"
 
 
-def test_approval_survives_refresh(eng, monkeypatch):
+def test_panel_replaced_but_approvals_logged(eng, monkeypatch):
     eng.auto_approve = False
     monkeypatch.setattr(ins, "_llm", lambda p: LLM_JSON)
     state = eng.refresh()
@@ -56,9 +56,22 @@ def test_approval_survives_refresh(eng, monkeypatch):
                       "convergence_line": {"zh": "x", "en": "y"}})
     monkeypatch.setattr(ins, "_llm", lambda p: new)
     state = eng.refresh()
-    by_zh = {i["zh"]: i for i in state["items"]["summary_points"]}
-    assert by_zh["要点一"]["status"] == "approved"  # survived the refresh
-    assert by_zh["新要点"]["status"] == "draft"
+    zhs = [i["zh"] for i in state["items"]["summary_points"]]
+    assert zhs == ["新要点"]  # panel is a live snapshot: old item retired
+    assert {"zh": "要点一", "en": "Point one"} in \
+        state["approved_log"]["summary_points"]  # ...but stays in the log
+
+
+def test_hidden_items_stay_suppressed(eng, monkeypatch):
+    monkeypatch.setattr(ins, "_llm", lambda p: LLM_JSON)
+    state = eng.refresh()
+    item_id = state["items"]["summary_points"][0]["id"]
+    eng.set_item(item_id, "hidden")
+    state = eng.refresh()  # LLM re-suggests the same item
+    assert all(i["zh"] != "要点一"
+               for i in state["items"]["summary_points"])
+    assert all(e["zh"] != "要点一"
+               for e in state["approved_log"]["summary_points"])
 
 
 def test_empty_transcript_is_noop(eng, monkeypatch, tmp_path):

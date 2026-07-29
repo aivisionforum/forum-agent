@@ -44,13 +44,15 @@ TRANSLATE_TIMEOUT_SECONDS = 20
 # see ADR 0001). On a two-machine setup, switch to qwen2.5:32b.
 INSIGHT_MODEL = "qwen3:8b"
 INSIGHT_THINK = True
-INSIGHT_INTERVAL_SECONDS = 240   # auto-refresh cadence (spec: every 3-5 min)
+INSIGHT_INTERVAL_SECONDS = 180   # auto-refresh cadence (spec: every 3-5 min)
 INSIGHT_WINDOW_SECONDS = 900     # transcript window fed per refresh
 INSIGHT_TIMEOUT_SECONDS = 180
 # Review mode: True = auto-approve new items, human corrects/hides on review
 # (human-on-the-loop); False = every item is DRAFT until approved (gatekeeper
 # mode, for high-stakes projector use). Toggle live on the console.
 AUTO_APPROVE_DEFAULT = True
+INSIGHT_MAX_ITEMS = {"summary_points": 6, "emerging_consensus": 4,
+                     "tensions": 4, "open_questions": 4}
 INSIGHTS_JSON = "data/{room}_insights.json"
 INSIGHTS_HISTORY = "data/{room}_insights_history.jsonl"  # every refresh, append-only
 MINUTES_MD = "data/{room}_minutes.md"

@@ -14,7 +14,8 @@ from pathlib import Path
 
 import requests
 
-from forum_agent.constants import (AUTO_APPROVE_DEFAULT, INSIGHTS_HISTORY,
+from forum_agent.constants import (AUTO_APPROVE_DEFAULT, INSIGHT_MAX_ITEMS,
+                                   INSIGHTS_HISTORY,
                                    INSIGHT_INTERVAL_SECONDS, INSIGHT_MODEL,
                                    INSIGHT_THINK, INSIGHT_TIMEOUT_SECONDS,
                                    INSIGHT_WINDOW_SECONDS, INSIGHTS_JSON,
@@ -83,14 +84,24 @@ class InsightEngine:
         never shows a past session's items as if they were current."""
         with self._lock:
             self.state = {"updated": 0, "items": {k: [] for k in KINDS},
-                          "convergence_line": {"zh": "", "en": ""}}
+                          "convergence_line": {"zh": "", "en": ""},
+                          "hidden_zh": [], "approved_log": {k: [] for k in KINDS}}
             self._save_and_broadcast()
 
     def _load(self) -> dict:
         if self.path.exists():
             return json.loads(self.path.read_text())
         return {"updated": 0, "items": {k: [] for k in KINDS},
-                "convergence_line": {"zh": "", "en": ""}}
+                "convergence_line": {"zh": "", "en": ""},
+                "hidden_zh": [], "approved_log": {k: [] for k in KINDS}}
+
+    def _log_approved(self, kind: str, item: dict) -> None:
+        """Persistent record of everything ever approved/shown: the minutes
+        and report consume this, so items rotating off the live panel are
+        still counted."""
+        log = self.state.setdefault("approved_log", {k: [] for k in KINDS})
+        if not any(e["zh"] == item["zh"] for e in log.setdefault(kind, [])):
+            log[kind].append({"zh": item["zh"], "en": item["en"]})
 
     def _save_and_broadcast(self) -> None:
         self.path.parent.mkdir(exist_ok=True)
@@ -108,20 +119,31 @@ class InsightEngine:
                            json.dumps(self.state["items"], ensure_ascii=False))
                   .replace("{transcript}", transcript))
         parsed = _parse_json(_llm(prompt))
+        now = time.time()
         with self._lock:
+            hidden = set(self.state.get("hidden_zh", []))
             for kind in KINDS:
                 fresh = parsed.get(kind, []) or []
-                kept = {i["zh"]: i for i in self.state["items"][kind]
-                        if i["status"] != "draft"}  # approvals/hides survive
-                items = list(kept.values())
+                prev = {i["zh"]: i for i in self.state["items"][kind]}
+                # The panel is a bounded live snapshot: each refresh REPLACES
+                # the section with the LLM's current best items. Superseded
+                # items retire (history + approved_log keep them); operator
+                # hides stay suppressed even if re-suggested.
+                items = []
                 for it in fresh:
-                    if isinstance(it, dict) and it.get("zh") and \
-                            it["zh"] not in kept:
-                        items.append({"id": uuid.uuid4().hex[:8],
-                                      "zh": it["zh"], "en": it.get("en", ""),
-                                      "status": "approved"
-                                      if self.auto_approve else "draft"})
-                self.state["items"][kind] = items
+                    if not (isinstance(it, dict) and it.get("zh")) \
+                            or it["zh"] in hidden:
+                        continue
+                    old = prev.get(it["zh"])
+                    items.append(old or {
+                        "id": uuid.uuid4().hex[:8],
+                        "zh": it["zh"], "en": it.get("en", ""),
+                        "status": "approved" if self.auto_approve else "draft",
+                        "added": now})
+                self.state["items"][kind] = items[:INSIGHT_MAX_ITEMS[kind]]
+                if self.auto_approve:  # supervisor mode: log for the minutes
+                    for it in self.state["items"][kind]:
+                        self._log_approved(kind, it)
             line = parsed.get("convergence_line") or {}
             if isinstance(line, dict) and line.get("zh"):
                 self.state["convergence_line"] = {"zh": line["zh"],
@@ -142,12 +164,20 @@ class InsightEngine:
         with self._lock:
             for kind in KINDS:
                 for it in self.state["items"][kind]:
-                    if it["id"] == item_id:
-                        if action == "edit":
-                            it["zh"], it["en"] = zh or it["zh"], en or it["en"]
-                            it["status"] = "approved"
-                        elif action in ("approved", "hidden", "draft"):
-                            it["status"] = action
+                    if it["id"] != item_id:
+                        continue
+                    if action == "edit":
+                        it["zh"], it["en"] = zh or it["zh"], en or it["en"]
+                        it["status"] = "approved"
+                        self._log_approved(kind, it)
+                    elif action in ("approved", "hidden", "draft"):
+                        it["status"] = action
+                        if action == "approved":
+                            self._log_approved(kind, it)
+                        elif action == "hidden":  # stays suppressed on refresh
+                            self.state.setdefault("hidden_zh", []).append(it["zh"])
+                            log = self.state.get("approved_log", {}).get(kind, [])
+                            log[:] = [e for e in log if e["zh"] != it["zh"]]
             self._save_and_broadcast()
         return self.state
 
@@ -185,8 +215,9 @@ class InsightEngine:
                 transcript = read_transcript(self.room, base_dir=base_dir)
         if not transcript.strip():
             raise RuntimeError("no transcript available for minutes")
-        approved = {k: [i for i in self.state["items"][k]
-                        if i["status"] == "approved"] for k in KINDS}
+        approved = self.state.get("approved_log") or {
+            k: [i for i in self.state["items"][k]
+                if i["status"] == "approved"] for k in KINDS}
         prompt = ((_PROMPTS / "minutes.txt").read_text()
                   .replace("{insights}",
                            json.dumps(approved, ensure_ascii=False))
