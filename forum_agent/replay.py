@@ -18,6 +18,7 @@ import uvicorn
 
 from forum_agent import asr, translate
 from forum_agent.constants import (DEAD_STREAM_SECONDS, FRAME_SECONDS,
+                                   RECORDING_WAV,
                                    MSG_FINAL, MSG_PARTIAL,
                                    MSG_TRANSLATION, PARTIAL_INTERVAL_SECONDS,
                                    SAMPLE_RATE, SERVER_HOST, SERVER_PORT,
@@ -161,6 +162,8 @@ def run_mic(room: str, duration: float | None = None,
     agc = AutoGain()
     frame_len = int(FRAME_SECONDS * SAMPLE_RATE)
     import numpy as np
+    recorder = sf.SoundFile(RECORDING_WAV.format(room=room), "w",
+                            samplerate=SAMPLE_RATE, channels=1)  # C3: raw audio
     start = time.monotonic()
     next_partial = PARTIAL_INTERVAL_SECONDS
     dead_frames = 0
@@ -199,6 +202,7 @@ def run_mic(room: str, duration: float | None = None,
                 while not _done():
                     raw, overflowed = stream.read(frame_len)
                     raw = raw[:, 0]
+                    recorder.write(raw)
                     if overflowed:
                         print("[mic] input overflow: audio dropped by OS")
                     peak = float(np.max(np.abs(raw)))
@@ -217,6 +221,8 @@ def run_mic(room: str, duration: float | None = None,
                                               next_partial)
     except KeyboardInterrupt:
         pass
+    finally:
+        recorder.close()
     if seg.open_segment is not None:
         pipe.submit_final(seg.open_segment.t_start, seg.open_segment.audio, start)
     pipe.idle.wait(timeout=60)

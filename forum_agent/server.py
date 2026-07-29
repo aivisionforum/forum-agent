@@ -196,6 +196,18 @@ async def api_transcript(room: str = "room1", session: str = ""):
     return PlainTextResponse(p.read_text() if p.exists() else "")
 
 
+@app.get("/api/audio")
+async def api_audio(room: str = "room1", session: str = ""):
+    from forum_agent.constants import RECORDING_WAV, SESSIONS_DIR
+    from pathlib import Path
+    from fastapi.responses import FileResponse, PlainTextResponse
+    p = (Path(SESSIONS_DIR) / session / f"{room}_recording.wav") if session \
+        else Path(RECORDING_WAV.format(room=room))
+    if not p.exists():
+        return PlainTextResponse("no recording", status_code=404)
+    return FileResponse(p, media_type="audio/wav", filename=p.name)
+
+
 @app.websocket("/ws/room/{room}")
 async def room_ws(ws: WebSocket, room: str) -> None:
     await hub.register(room, ws)
