@@ -27,8 +27,11 @@
 </head>
 <body>
 <h1>Forum Agent — session control</h1>
-<div class="sub">Choose the audio source. Subtitles:
-  <a href="/subtitles?room=room1" target="_blank">/subtitles?room=room1</a></div>
+<div class="sub">Choose the audio source. Pages:
+  <a href="/subtitles?room=room1" target="_blank">subtitles</a> ·
+  <a href="/insights?room=room1&operator=1" target="_blank">insight panel (operator)</a> ·
+  <a href="/insights?room=room1" target="_blank">insight panel (projector)</a> ·
+  <a href="/minutes?room=room1" target="_blank">minutes</a></div>
 <div class="card">
   <div id="status">Source: <b class="idle">idle</b></div>
   <div id="phase" style="font-size:18px;min-height:26px;margin-bottom:10px"></div>
@@ -43,6 +46,16 @@
   <label><input type="checkbox" id="play" checked>
     play test audio on speakers</label>
   <div class="err" id="err"></div>
+</div>
+<div class="card">
+  <b style="font-size:16px">Insights &amp; minutes</b><br>
+  <button id="summarize">✦ Summarize now</button>
+  <button id="minutes">📝 Generate minutes</button>
+  <span id="istatus" style="color:#7f8c99;font-size:14px"></span>
+  <div style="color:#7f8c99;font-size:13px;margin-top:8px">
+    Auto-summarize runs every 4 minutes while a session is live. All items
+    appear as DRAFT on the insight panel until approved there (operator view).
+  </div>
 </div>
 <script>
 const els = Object.fromEntries(
@@ -83,6 +96,22 @@ els.mic.onclick = () => post("/api/start", {source: "mic",
 els.replay.onclick = () => post("/api/start",
   {source: "replay", play: els.play.checked});
 els.stop.onclick = () => post("/api/stop");
+document.getElementById("summarize").onclick = async () => {
+  const el = document.getElementById("istatus");
+  el.textContent = "summarizing…";
+  try { await fetch("/api/insights/run", {method:"POST",
+    headers:{"Content-Type":"application/json"}, body:"{}"});
+    el.textContent = "insights updated"; }
+  catch (e) { el.textContent = "failed: " + e; }
+};
+document.getElementById("minutes").onclick = async () => {
+  const el = document.getElementById("istatus");
+  el.textContent = "generating minutes…";
+  try { await fetch("/api/minutes", {method:"POST",
+    headers:{"Content-Type":"application/json"}, body:"{}"});
+    el.textContent = "minutes ready"; window.open("/minutes?room=room1"); }
+  catch (e) { el.textContent = "failed: " + e; }
+};
 setInterval(refresh, 700); refresh();
 </script>
 </body>

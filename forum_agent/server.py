@@ -92,6 +92,57 @@ async def api_stop() -> dict:
     return await anyio.to_thread.run_sync(manager.stop)
 
 
+@app.get("/insights", response_class=HTMLResponse)
+async def insights_page() -> str:
+    return (STATIC_DIR / "insights.html").read_text()
+
+
+@app.get("/api/insights")
+async def api_insights(room: str = "room1") -> dict:
+    from forum_agent.insights import engine
+    e = engine(room)
+    return {**e.state, "error": e.error}
+
+
+@app.post("/api/insights/run")
+async def api_insights_run(body: dict) -> dict:
+    """Manual 'Summarize now' from the operator console."""
+    from forum_agent.insights import engine
+    import anyio
+    return await anyio.to_thread.run_sync(
+        engine(body.get("room", "room1")).refresh)
+
+
+@app.post("/api/insights/item")
+async def api_insights_item(body: dict) -> dict:
+    from forum_agent.insights import engine
+    return engine(body.get("room", "room1")).set_item(
+        body.get("id", ""), body.get("action", ""),
+        body.get("zh", ""), body.get("en", ""))
+
+
+@app.post("/api/minutes")
+async def api_minutes(body: dict) -> dict:
+    from forum_agent.insights import engine
+    import anyio
+    path = await anyio.to_thread.run_sync(
+        engine(body.get("room", "room1")).generate_minutes)
+    return {"path": path}
+
+
+@app.get("/minutes", response_class=HTMLResponse)
+async def minutes_page(room: str = "room1") -> str:
+    from forum_agent.constants import MINUTES_MD
+    from pathlib import Path
+    p = Path(MINUTES_MD.format(room=room))
+    body = p.read_text() if p.exists() else "No minutes generated yet."
+    return ("<!doctype html><meta charset=utf-8><title>Minutes</title>"
+            "<body style='background:#0b0f14;color:#f2f5f7;font-family:"
+            "-apple-system,PingFang SC,sans-serif;max-width:800px;"
+            "margin:40px auto;line-height:1.6'><pre style='white-space:"
+            f"pre-wrap;font:inherit'>{body}</pre>")
+
+
 @app.websocket("/ws/room/{room}")
 async def room_ws(ws: WebSocket, room: str) -> None:
     await hub.register(room, ws)

@@ -39,6 +39,18 @@ OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_MODEL = "qwen3:8b"
 TRANSLATE_TIMEOUT_SECONDS = 20
 
+# Insight engine (C4/C6). qwen3:8b w/ thinking: quality is adequate and the
+# short-model decode does not starve Whisper on the shared GPU (the 32b scar,
+# see ADR 0001). On a two-machine setup, switch to qwen2.5:32b.
+INSIGHT_MODEL = "qwen3:8b"
+INSIGHT_THINK = True
+INSIGHT_INTERVAL_SECONDS = 240   # auto-refresh cadence (spec: every 3-5 min)
+INSIGHT_WINDOW_SECONDS = 900     # transcript window fed per refresh
+INSIGHT_TIMEOUT_SECONDS = 180
+INSIGHTS_JSON = "data/{room}_insights.json"
+MINUTES_MD = "data/{room}_minutes.md"
+MSG_INSIGHTS = "insights"
+
 # Language tags used in JSONL and UI
 LANG_ZH = "zh"
 LANG_EN = "en"
