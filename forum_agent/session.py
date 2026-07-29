@@ -39,12 +39,18 @@ def archive_live(room: str) -> str | None:
 def _default_title(session_dir: Path, room: str) -> str:
     """Default session title: the convergence line if insights exist, else
     the opening words of the transcript."""
+    import re
     ins = session_dir / f"{room}_insights.json"
     try:
         if ins.exists():
-            line = json.loads(ins.read_text()).get("convergence_line", {})
-            if line.get("zh"):
-                return line["zh"][:40]
+            data = json.loads(ins.read_text())
+            topic = data.get("session_topic", {})
+            if topic.get("zh"):
+                return topic["zh"][:40]
+            line = data.get("convergence_line", {})
+            if line.get("zh"):  # older sessions: strip "the room is..." phrasing
+                return re.sub(r"^(该房间|本房间|该会场|本次会议|The room is converging on\s*)(正在)?(聚焦于|讨论|收敛于)?",
+                              "", line["zh"]).strip("。 ")[:40]
         t = session_dir / f"{room}_transcript.jsonl"
         first = json.loads(t.read_text().splitlines()[0])
         return first["text"][:40]
