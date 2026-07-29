@@ -1,0 +1,8 @@
+{"t_start": 0.0, "t_end": 10.0, "speaker_id": "Speaker A", "lang": "mixed", "text": "大家好,欢迎来到今天的讨论我们今天的主题是Human Agency也就是人的能动性在AI时代的角色"}
+{"t_start": 10.5, "t_end": 19.25, "speaker_id": "Speaker B", "lang": "en", "text": "Thank you. I want to start with a simple observation. Every automation wave has promised to free people, and every wave has also displaced them."}
+{"t_start": 19.5, "t_end": 30.25, "speaker_id": "Speaker A", "lang": "mixed", "text": "对,这个Tension是真实存在的。我们在深圳看到很多工厂已经在用Vision Model做质检,效率提升非常明显。"}
+{"t_start": 30.5, "t_end": 41.25, "speaker_id": "Speaker C", "lang": "mixed", "text": "我补充一点,效率不是唯一的指标,如果operator只是按一个approv按钮,它其实已经失去了judgment空间。"}
+{"t_start": 41.5, "t_end": 50.5, "speaker_id": "Speaker D", "lang": "en", "text": "That's the automation paradox. The more reliable the system, the less attention the human pays, and the worse they perform when it fails."}
+{"t_start": 51.0, "t_end": 58.25, "speaker_id": "Speaker A", "lang": "mixed", "text": "所以我们需要设计所谓的Meaningful Human Control,而不是形式上的Human in the Loop。"}
+{"t_start": 58.75, "t_end": 64.25, "speaker_id": "Speaker B", "lang": "en", "text": "Exactly. A rubber stamp reviewer is not control. It's liability laundering."}
+{"t_start": 64.5, "t_end": 75.25, "speaker_id": "Speaker C", "lang": "mixed", "text": "在医疗领域这个问题更明显,医生如果直接接受AI的诊断建议,那责任在谁?这是一个accountability问题。"}

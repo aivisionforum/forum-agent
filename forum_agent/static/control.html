@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Forum Agent — Control</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0b0f14; color: #f2f5f7; font-family: -apple-system,
+         "PingFang SC", sans-serif; min-height: 100vh; padding: 40px; }
+  h1 { font-size: 22px; font-weight: 600; margin-bottom: 6px; }
+  .sub { color: #7f8c99; margin-bottom: 28px; }
+  .card { background: #121922; border: 1px solid #1c2530; border-radius: 10px;
+          padding: 24px; max-width: 560px; margin-bottom: 20px; }
+  button { font-size: 17px; padding: 12px 22px; margin: 6px 10px 6px 0;
+           border-radius: 8px; border: 1px solid #2a3a4d; cursor: pointer;
+           background: #18222e; color: #f2f5f7; }
+  button.primary { background: #1d4ed8; border-color: #1d4ed8; }
+  button.danger { background: #7f1d1d; border-color: #7f1d1d; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  label { display: block; margin: 10px 0; color: #a8b4c0; font-size: 15px; }
+  #status { font-size: 16px; margin-bottom: 14px; }
+  #status b.mic { color: #3ddc84; } #status b.replay { color: #6ea8fe; }
+  #status b.idle { color: #7f8c99; }
+  a { color: #6ea8fe; }
+  .err { color: #f87171; font-size: 14px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1>Forum Agent — session control</h1>
+<div class="sub">Choose the audio source. Subtitles:
+  <a href="/subtitles?room=room1" target="_blank">/subtitles?room=room1</a></div>
+<div class="card">
+  <div id="status">Source: <b class="idle">idle</b></div>
+  <div id="phase" style="font-size:18px;min-height:26px;margin-bottom:10px"></div>
+  <label>audio input device<br>
+    <select id="device" style="font-size:15px;padding:8px;border-radius:6px;
+      background:#18222e;color:#f2f5f7;border:1px solid #2a3a4d;width:100%">
+      <option value="auto">Auto (built-in mic preferred)</option>
+    </select></label>
+  <button class="primary" id="mic">🎙 Start microphone</button>
+  <button class="primary" id="replay">▶ Start test audio file</button>
+  <button class="danger" id="stop">■ Stop</button>
+  <label><input type="checkbox" id="play" checked>
+    play test audio on speakers</label>
+  <div class="err" id="err"></div>
+</div>
+<script>
+const els = Object.fromEntries(
+  ["mic","replay","stop","play","status","err","phase"]
+  .map(id => [id, document.getElementById(id)]));
+let busy = false;
+const PHASES = {
+  "loading models": ["⏳ Loading models — please wait…", "#fbbf24"],
+  "live": ["🟢 Live — speak now", "#3ddc84"],
+};
+async function refresh() {
+  const s = await (await fetch("/api/status")).json();
+  const mode = s.running ? s.mode : "idle";
+  els.status.innerHTML = `Source: <b class="${mode}">${mode}</b>` +
+    (s.running ? ` (room ${s.room})` : "");
+  const [txt, color] = (s.running && PHASES[s.phase]) || ["", ""];
+  els.phase.textContent = txt; els.phase.style.color = color;
+  els.err.textContent = s.error || "";
+  els.mic.disabled = els.replay.disabled = busy || s.running;
+  els.stop.disabled = busy || !s.running;
+}
+async function post(path, body) {
+  busy = true; refresh();
+  try { await fetch(path, { method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body || {}) }); }
+  finally { busy = false; refresh(); }
+}
+els.mic.onclick = () => post("/api/start", {source: "mic",
+  device: document.getElementById("device").value});
+(async () => {
+  const sel = document.getElementById("device");
+  for (const d of await (await fetch("/api/devices")).json()) {
+    const o = document.createElement("option");
+    o.value = d.index; o.textContent = d.name; sel.appendChild(o);
+  }
+})();
+els.replay.onclick = () => post("/api/start",
+  {source: "replay", play: els.play.checked});
+els.stop.onclick = () => post("/api/stop");
+setInterval(refresh, 700); refresh();
+</script>
+</body>
+</html>

@@ -1,0 +1,499 @@
+[
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 0.0,
+  "t_end": 9.52,
+  "text": "大家好，欢迎来到今天的讨论。我们今天的主题是 human agency，也就是人的能动性在 AI 时代的角色。"
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 10.42,
+  "t_end": 18.8,
+  "text": "Thank you. I want to start with a simple observation: every automation wave has promised to free people, and every wave has also displaced them."
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 19.7,
+  "t_end": 29.77,
+  "text": "对，这个 tension 是真实存在的。我们在深圳看到很多工厂已经在用 vision model 做质检，效率提升非常明显。"
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 30.67,
+  "t_end": 40.78,
+  "text": "我补充一点，效率不是唯一的指标。如果 operator 只是按一个 approve 按钮，他其实已经失去了 judgment 的空间。"
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 41.68,
+  "t_end": 50.07,
+  "text": "That's the automation paradox. The more reliable the system, the less attention the human pays, and the worse they perform when it fails."
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 50.97,
+  "t_end": 57.92,
+  "text": "所以我们需要设计所谓的 meaningful human control，而不是形式上的 human in the loop。"
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 58.82,
+  "t_end": 63.62,
+  "text": "Exactly. A rubber-stamp reviewer is not control, it's liability laundering."
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 64.52,
+  "t_end": 74.66,
+  "text": "在医疗领域这个问题更明显。医生如果直接接受 AI 的诊断建议，那责任在谁？这是一个 accountability 的问题。"
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 75.56,
+  "t_end": 83.69,
+  "text": "In aviation we solved part of this with crew resource management. Maybe AI needs the same: the system must justify itself to the human."
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 84.59,
+  "t_end": 92.71,
+  "text": "对，explainability 不是给监管者看的报告，而是实时的、可以被质疑的 justification。"
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 93.61,
+  "t_end": 102.27,
+  "text": "Let me push back a little. Explanations can be post-hoc rationalizations. What we need is contestability, the ability to say no and have that matter."
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 103.17,
+  "t_end": 112.33,
+  "text": "这个词很好，contestability，可竞争性或者说可抗辩性。我们的系统设计里很少有 undo 按钮。"
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 113.23,
+  "t_end": 121.99,
+  "text": "深圳的几家 robotics 公司现在在做 teleoperation fallback，人可以随时接管，这算是一种实践。"
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 122.89,
+  "t_end": 131.06,
+  "text": "Take-over is necessary but not sufficient. If the human takes over once a month, their skills atrophy. We saw this with autopilot."
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 131.96,
+  "t_end": 137.55,
+  "text": "So we need deliberate practice built into the workflow. Keep the human sharp, not just present."
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 138.45,
+  "t_end": 146.83,
+  "text": "对，training 应该是系统的一部分。比如系统故意留一些 case 让人独立判断，然后对比结果。"
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 147.73,
+  "t_end": 154.83,
+  "text": "这就是所谓的 calibration，让人知道自己什么时候该信任模型，什么时候不该。"
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 155.73,
+  "t_end": 162.76,
+  "text": "Calibration data should be visible to the operator: here is where I am usually wrong, here is my confidence today."
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 163.66,
+  "t_end": 169.47,
+  "text": "I like that. An AI that advertises its own failure modes is more trustworthy than one that hides them."
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 170.37,
+  "t_end": 179.93,
+  "text": "接下来我想谈谈 education。如果下一代人从小就用 AI 写作业，他们的 critical thinking 会不会退化？"
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 180.83,
+  "t_end": 189.86,
+  "text": "这个担心历史上出现过很多次，苏格拉底当年也担心文字会毁掉记忆。但这次可能真的不一样。"
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 190.76,
+  "t_end": 198.47,
+  "text": "The difference is speed and intimacy. A calculator does arithmetic; a language model does thinking, or something that looks like it."
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 199.37,
+  "t_end": 206.65,
+  "text": "The evidence so far is mixed. Students who use AI as a tutor improve; students who use it as an answer machine decline."
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 207.55,
+  "t_end": 215.89,
+  "text": "所以关键还是 interface design。同一个模型，不同的交互方式，产生完全不同的结果。"
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 216.79,
+  "t_end": 224.61,
+  "text": "对，我们应该要求 education 场景的 AI 默认是 Socratic mode，先提问，再给答案。"
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 225.51,
+  "t_end": 230.03,
+  "text": "Default settings are policy. Whoever writes the defaults writes the curriculum."
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 230.93,
+  "t_end": 236.25,
+  "text": "That's worth putting on the board: defaults are policy decisions and should be reviewed like policy."
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 237.15,
+  "t_end": 244.9,
+  "text": "我同意。我们在制定标准的时候，往往只看 accuracy，不看这些 interaction pattern。"
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 245.8,
+  "t_end": 253.64,
+  "text": "下一个话题是 labor。AI 会不会造成大规模的失业？还是像以前一样创造新的工作？"
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 254.54,
+  "t_end": 263.18,
+  "text": "Both, at different speeds. Destruction is fast and concentrated; creation is slow and diffuse. The gap is the political problem."
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 264.08,
+  "t_end": 272.13,
+  "text": "And the new jobs often appear in different cities, different skill sets, different generations. The person displaced is rarely the person hired."
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 273.03,
+  "t_end": 281.33,
+  "text": "深圳这边的经验是，工厂的 line worker 转型做 robot maintenance，大概需要六个月的 training。"
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 282.23,
+  "t_end": 289.87,
+  "text": "但不是每个人都能转型。我们需要 social safety net，也需要 lifelong learning 的基础设施。"
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 290.77,
+  "t_end": 297.15,
+  "text": "Singapore's SkillsFuture credits are one model: individual learning accounts, portable across employers."
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 298.05,
+  "t_end": 303.98,
+  "text": "The employer incentive matters too. If firms can rent skills from a platform, why train anyone?"
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 304.88,
+  "t_end": 313.22,
+  "text": "所以可能需要政策干预，比如 training levy，企业要么自己培训，要么交钱进公共基金。"
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 314.12,
+  "t_end": 322.34,
+  "text": "好，我们休息前最后一个话题：open source。开源模型对 human agency 是加分还是减分？"
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 323.24,
+  "t_end": 328.59,
+  "text": "Open weights decentralize capability. That empowers small actors, for good and for ill."
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 329.49,
+  "t_end": 336.82,
+  "text": "I'd argue the agency question favors openness. A closed model is a black box you rent; an open model is a tool you own."
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 337.72,
+  "t_end": 344.58,
+  "text": "但是 open model 也让 misuse 更难控制。这是一个 trade-off，不是免费的午餐。"
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 345.48,
+  "t_end": 352.56,
+  "text": "对，所以治理的重点应该放在 deployment 层面，而不是禁止模型本身的发布。"
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 353.46,
+  "t_end": 360.13,
+  "text": "Deployment-layer governance also matches where harm actually occurs: in products, in decisions, in scale."
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 361.03,
+  "t_end": 366.24,
+  "text": "Agreed. Regulate outcomes and high-risk uses, keep the research commons open."
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 367.14,
+  "t_end": 375.57,
+  "text": "我们广东这边的企业其实非常依赖开源生态，从 PyTorch 到 Llama 到 Qwen，都是基础设施。"
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 376.47,
+  "t_end": 381.98,
+  "text": "好的，那我们进入第二个环节，讨论具体的 governance mechanism。"
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 382.88,
+  "t_end": 387.63,
+  "text": "Let's talk about audits. Who audits the auditors, and what exactly do they measure?"
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 388.53,
+  "t_end": 395.61,
+  "text": "现在的 AI audit 很多是 checkbox exercise，审计的人甚至没有 model access。"
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 396.51,
+  "t_end": 403.34,
+  "text": "Real audits need three things: access to the system, a stable benchmark, and consequences for failure."
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 404.24,
+  "t_end": 411.33,
+  "text": "而且 benchmark 本身会被 game，所以需要定期更新，甚至保密的 holdout set。"
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 412.23,
+  "t_end": 417.72,
+  "text": "There's a role for government here: a public testing infrastructure, like crash tests for cars."
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 418.62,
+  "t_end": 426.01,
+  "text": "汽车的 crash test 是个好比喻。NCAP 的五星评级改变了整个行业的安全设计。"
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 426.91,
+  "t_end": 432.96,
+  "text": "And crucially, crash tests are understandable by consumers. AI evaluations today are not."
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 433.86,
+  "t_end": 441.46,
+  "text": "所以我们需要一个普通人能看懂的 rating system，比如这个模型在医疗建议上是几星。"
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 442.36,
+  "t_end": 447.48,
+  "text": "Simple ratings hide nuance, but they create market pressure. It's a trade worth making."
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 448.38,
+  "t_end": 456.59,
+  "text": "关于 privacy 我想说一点，现在很多 evaluation 需要真实用户数据，这本身就是风险。"
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 457.49,
+  "t_end": 463.45,
+  "text": "Synthetic data and federated evaluation can help, but they introduce their own validity problems."
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 464.35,
+  "t_end": 472.86,
+  "text": "对，用 synthetic data 测试，就像用模拟考试代替高考，方向对，但不能完全等价。"
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 473.76,
+  "t_end": 479.4,
+  "text": "On the international side: we need interoperability of standards, not identical standards."
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 480.3,
+  "t_end": 488.48,
+  "text": "同意，完全统一是不现实的，但是 mutual recognition 是可以谈的，就像药品监管一样。"
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 489.38,
+  "t_end": 496.7,
+  "text": "The pharmaceutical analogy is strong: different agencies, shared clinical trial standards, mutual inspection."
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 497.6,
+  "t_end": 504.88,
+  "text": "我们今天讨论了 human control、education、labor、open source 和 governance 五个方面。"
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 505.78,
+  "t_end": 512.71,
+  "text": "My takeaway: agency is not preserved by slowing AI down, but by designing systems that keep humans in command."
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 513.61,
+  "t_end": 521.13,
+  "text": "我的 takeaway 是 defaults are policy，界面和默认值的设计者承担了政策制定者的责任。"
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 522.03,
+  "t_end": 527.34,
+  "text": "Mine is that audits need teeth: access, benchmarks, and consequences."
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 528.24,
+  "t_end": 535.23,
+  "text": "Before we break, one more thread: incident reporting. Aviation improved because near-misses were reported without blame."
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 536.13,
+  "t_end": 544.85,
+  "text": "对，blameless reporting 很重要。如果每次 AI 事故都变成公关灾难，企业就会隐瞒问题。"
+ },
+ {
+  "speaker": "D",
+  "voice": "Daniel",
+  "t_start": 545.75,
+  "t_end": 550.94,
+  "text": "A safe-harbor scheme for disclosed incidents could change the incentive structure entirely."
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 551.84,
+  "t_end": 558.68,
+  "text": "这个可以写进我们的 recommendation：建立行业级的 incident database，匿名共享。"
+ },
+ {
+  "speaker": "C",
+  "voice": "Samantha",
+  "t_start": 559.58,
+  "t_end": 564.77,
+  "text": "Anonymous, structured, and machine-readable, so researchers can actually learn from it."
+ },
+ {
+  "speaker": "B",
+  "voice": "Meijia",
+  "t_start": 565.67,
+  "t_end": 572.92,
+  "text": "好，那这一条就作为今天上午的 action item 之一，会后我来起草初稿。"
+ },
+ {
+  "speaker": "A",
+  "voice": "Tingting",
+  "t_start": 573.82,
+  "t_end": 580.91,
+  "text": "谢谢大家，我们下午继续讨论 cross-border 的合作机制。现在休息十五分钟。"
+ }
+]
