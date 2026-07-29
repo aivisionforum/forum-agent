@@ -12,7 +12,7 @@ Return ONLY a JSON object, no markdown fences, with exactly these keys:
   "session_topic": {"zh": "...", "en": "..."}              // 5-15字的会议主题短语 / short noun-phrase naming the session's topic. A label, NOT a sentence: never start with 该房间/本次会议/The room/This session
 }
 
-Each item must exist in both languages (translate faithfully). Be concrete and specific to what was actually said; do not invent content. If the transcript window is empty or trivial, keep the previous state's content.
+Each item must exist in both languages (translate faithfully). Be concrete and specific to what was actually said; do not invent content. Return the CURRENT BEST snapshot: merge or drop stale points, and make sure genuinely new topics from the recent window are represented — do not just repeat the previous state. If the transcript window is empty or trivial, keep the previous state's content.
 
 (1) Running state (may be empty at session start):
 {state}
