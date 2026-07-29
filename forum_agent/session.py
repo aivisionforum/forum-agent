@@ -2,6 +2,7 @@
 either the microphone or a test audio file as the source. Starting a new
 session archives the previous one under data/sessions/<timestamp>/ so past
 meetings stay loadable."""
+import json
 import shutil
 import threading
 import time
@@ -30,7 +31,39 @@ def archive_live(room: str) -> str | None:
         for src in tp.parent.glob(tp.name):
             if src.stat().st_size > 0:
                 shutil.move(str(src), dest / src.name)
+    (dest / "meta.json").write_text(json.dumps(
+        {"title": _default_title(dest, room)}, ensure_ascii=False))
     return sid
+
+
+def _default_title(session_dir: Path, room: str) -> str:
+    """Default session title: the convergence line if insights exist, else
+    the opening words of the transcript."""
+    ins = session_dir / f"{room}_insights.json"
+    try:
+        if ins.exists():
+            line = json.loads(ins.read_text()).get("convergence_line", {})
+            if line.get("zh"):
+                return line["zh"][:40]
+        t = session_dir / f"{room}_transcript.jsonl"
+        first = json.loads(t.read_text().splitlines()[0])
+        return first["text"][:40]
+    except Exception:
+        return "Untitled session"
+
+
+def rename_session(session_id: str, title: str) -> bool:
+    import re
+    if not re.fullmatch(r"\d{8}-\d{6}", session_id) or not title.strip():
+        return False
+    d = Path(SESSIONS_DIR) / session_id
+    if not d.is_dir():
+        return False
+    meta = d / "meta.json"
+    data = json.loads(meta.read_text()) if meta.exists() else {}
+    data["title"] = title.strip()[:120]
+    meta.write_text(json.dumps(data, ensure_ascii=False))
+    return True
 
 
 def delete_session(session_id: str) -> bool:
@@ -54,7 +87,14 @@ def list_sessions() -> list[dict]:
     for d in sorted(root.iterdir(), reverse=True):
         if d.is_dir():
             t = next(iter(d.glob("*_transcript.jsonl")), None)
-            out.append({"id": d.name,
+            meta = d / "meta.json"
+            title = ""
+            if meta.exists():
+                try:
+                    title = json.loads(meta.read_text()).get("title", "")
+                except json.JSONDecodeError:
+                    pass
+            out.append({"id": d.name, "title": title or "Untitled session",
                         "files": sorted(f.name for f in d.iterdir()),
                         "segments": len(t.read_text().splitlines()) if t else 0})
     return out
@@ -72,6 +112,7 @@ class SessionManager:
         self.room = "room1"
         self.phase = ""
         self.error: str | None = None
+        self.last_session_id: str | None = None
 
     def status(self) -> dict:
         running = self._thread is not None and self._thread.is_alive()
@@ -116,6 +157,7 @@ class SessionManager:
 
     def stop(self) -> dict:
         from forum_agent.insights import engine
+        was_running = self._thread is not None and self._thread.is_alive()
         engine(self.room).stop_auto()
         self._stop.set()
         if self._thread is not None:
@@ -123,6 +165,8 @@ class SessionManager:
         self._thread = None
         self.mode = MODE_IDLE
         self.phase = ""
+        if was_running:  # finished session appears in Past sessions right away
+            self.last_session_id = archive_live(self.room)
         return self.status()
 
 

@@ -41,8 +41,10 @@ def _parse_json(text: str) -> dict:
     return json.loads(text[start:end + 1])
 
 
-def read_transcript(room: str, window_s: float | None = None) -> str:
-    path = Path(TRANSCRIPT_JSONL.format(room=room))
+def read_transcript(room: str, window_s: float | None = None,
+                    base_dir: str | None = None) -> str:
+    path = (Path(base_dir) / f"{room}_transcript.jsonl") if base_dir \
+        else Path(TRANSCRIPT_JSONL.format(room=room))
     if not path.exists():
         return ""
     records = [json.loads(l) for l in path.read_text().splitlines() if l]
@@ -165,8 +167,20 @@ class InsightEngine:
         self._stop.set()
 
     def generate_minutes(self) -> str:
-        """C6: end-of-session bilingual draft minutes as Markdown."""
+        """C6: end-of-session bilingual draft minutes as Markdown. If the
+        session was already archived (Stop moves the live files), the minutes
+        are generated from and written into the latest archive."""
+        base_dir = None
         transcript = read_transcript(self.room)
+        if not transcript.strip():
+            from forum_agent.session import list_sessions
+            sessions = list_sessions()
+            if sessions:
+                from forum_agent.constants import SESSIONS_DIR
+                base_dir = f"{SESSIONS_DIR}/{sessions[0]['id']}"
+                transcript = read_transcript(self.room, base_dir=base_dir)
+        if not transcript.strip():
+            raise RuntimeError("no transcript available for minutes")
         approved = {k: [i for i in self.state["items"][k]
                         if i["status"] == "approved"] for k in KINDS}
         prompt = ((_PROMPTS / "minutes.txt").read_text()
@@ -175,7 +189,8 @@ class InsightEngine:
                   .replace("{transcript}", transcript))
         md = _llm(prompt)
         md = re.sub(r"^```(markdown)?|```$", "", md.strip(), flags=re.M).strip()
-        out = Path(MINUTES_MD.format(room=self.room))
+        out = (Path(base_dir) / f"{self.room}_minutes.md") if base_dir \
+            else Path(MINUTES_MD.format(room=self.room))
         content = f"> DRAFT — pending human review / 草稿，待人工确认\n\n{md}\n"
         out.write_text(content)
         # regenerations must not destroy earlier drafts: timestamped copy too
