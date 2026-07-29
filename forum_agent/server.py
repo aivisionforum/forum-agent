@@ -98,10 +98,30 @@ async def insights_page() -> str:
 
 
 @app.get("/api/insights")
-async def api_insights(room: str = "room1") -> dict:
+async def api_insights(room: str = "room1", session: str = "") -> dict:
+    if session:  # archived session: read-only snapshot
+        import json
+        from forum_agent.constants import SESSIONS_DIR
+        from pathlib import Path
+        p = Path(SESSIONS_DIR) / session / f"{room}_insights.json"
+        if p.exists():
+            return {**json.loads(p.read_text()), "archived": session}
+        return {"items": {}, "convergence_line": {}, "archived": session}
     from forum_agent.insights import engine
     e = engine(room)
     return {**e.state, "error": e.error}
+
+
+@app.get("/api/sessions")
+async def api_sessions() -> list:
+    from forum_agent.session import list_sessions
+    return list_sessions()
+
+
+@app.post("/api/sessions/delete")
+async def api_sessions_delete(body: dict) -> dict:
+    from forum_agent.session import delete_session
+    return {"deleted": delete_session(body.get("id", ""))}
 
 
 @app.post("/api/insights/run")
@@ -131,16 +151,27 @@ async def api_minutes(body: dict) -> dict:
 
 
 @app.get("/minutes", response_class=HTMLResponse)
-async def minutes_page(room: str = "room1") -> str:
-    from forum_agent.constants import MINUTES_MD
+async def minutes_page(room: str = "room1", session: str = "") -> str:
+    from forum_agent.constants import MINUTES_MD, SESSIONS_DIR
     from pathlib import Path
-    p = Path(MINUTES_MD.format(room=room))
+    p = (Path(SESSIONS_DIR) / session / f"{room}_minutes.md") if session \
+        else Path(MINUTES_MD.format(room=room))
     body = p.read_text() if p.exists() else "No minutes generated yet."
     return ("<!doctype html><meta charset=utf-8><title>Minutes</title>"
             "<body style='background:#0b0f14;color:#f2f5f7;font-family:"
             "-apple-system,PingFang SC,sans-serif;max-width:800px;"
             "margin:40px auto;line-height:1.6'><pre style='white-space:"
             f"pre-wrap;font:inherit'>{body}</pre>")
+
+
+@app.get("/api/transcript")
+async def api_transcript(room: str = "room1", session: str = ""):
+    from forum_agent.constants import SESSIONS_DIR, TRANSCRIPT_JSONL
+    from pathlib import Path
+    from fastapi.responses import PlainTextResponse
+    p = (Path(SESSIONS_DIR) / session / f"{room}_transcript.jsonl") if session \
+        else Path(TRANSCRIPT_JSONL.format(room=room))
+    return PlainTextResponse(p.read_text() if p.exists() else "")
 
 
 @app.websocket("/ws/room/{room}")

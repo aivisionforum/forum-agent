@@ -57,6 +57,11 @@
     appear as DRAFT on the insight panel until approved there (operator view).
   </div>
 </div>
+<div class="card">
+  <b style="font-size:16px">Past sessions</b>
+  <div id="sessions" style="margin-top:10px;font-size:15px;color:#a8b4c0">
+    loading…</div>
+</div>
 <script>
 const els = Object.fromEntries(
   ["mic","replay","stop","play","status","err","phase"]
@@ -114,6 +119,26 @@ document.getElementById("minutes").onclick = async () => {
   catch (e) { el.textContent = "failed: " + e; }
 };
 setInterval(refresh, 700); refresh();
+async function loadSessions() {
+  const list = await (await fetch("/api/sessions")).json();
+  const box = document.getElementById("sessions");
+  if (!list.length) { box.textContent = "none yet — archives appear here when a new session starts"; return; }
+  box.innerHTML = list.map(s2 => {
+    const has = n => s2.files.some(f => f.endsWith(n));
+    return `<div style="margin-bottom:8px"><b>${s2.id}</b> · ${s2.segments} segments ·
+      ${has("_insights.json") ? `<a href="/insights?room=room1&operator=1&session=${s2.id}" target="_blank">insights</a> · ` : ""}
+      ${has("_minutes.md") ? `<a href="/minutes?room=room1&session=${s2.id}" target="_blank">minutes</a> · ` : ""}
+      <a href="/api/transcript?room=room1&session=${s2.id}" target="_blank">transcript</a> ·
+      <a href="#" style="color:#f87171" onclick="deleteSession('${s2.id}');return false">delete</a></div>`;
+  }).join("");
+}
+async function deleteSession(id) {
+  if (!confirm("Permanently delete session " + id + " (transcript, insights, minutes)? This cannot be undone.")) return;
+  await fetch("/api/sessions/delete", {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify({id})});
+  loadSessions();
+}
+loadSessions(); setInterval(loadSessions, 15000);
 </script>
 </body>
 </html>
