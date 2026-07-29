@@ -55,6 +55,7 @@ INSIGHTS_JSON = "data/{room}_insights.json"
 INSIGHTS_HISTORY = "data/{room}_insights_history.jsonl"  # every refresh, append-only
 MINUTES_MD = "data/{room}_minutes.md"
 MSG_INSIGHTS = "insights"
+MSG_SESSION_RESET = "session_reset"
 
 # Language tags used in JSONL and UI
 LANG_ZH = "zh"

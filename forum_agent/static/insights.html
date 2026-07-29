@@ -90,6 +90,7 @@ function connect() {
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
     if (m.type === "insights") render(m);
+    if (m.type === "session_reset") load();
   };
   ws.onclose = () => setTimeout(connect, 1500);
   setInterval(() => { if (ws.readyState === 1) ws.send("ping"); }, 15000);
