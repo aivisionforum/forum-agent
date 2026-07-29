@@ -47,6 +47,10 @@ INSIGHT_THINK = True
 INSIGHT_INTERVAL_SECONDS = 240   # auto-refresh cadence (spec: every 3-5 min)
 INSIGHT_WINDOW_SECONDS = 900     # transcript window fed per refresh
 INSIGHT_TIMEOUT_SECONDS = 180
+# Review mode: True = auto-approve new items, human corrects/hides on review
+# (human-on-the-loop); False = every item is DRAFT until approved (gatekeeper
+# mode, for high-stakes projector use). Toggle live on the console.
+AUTO_APPROVE_DEFAULT = True
 INSIGHTS_JSON = "data/{room}_insights.json"
 MINUTES_MD = "data/{room}_minutes.md"
 MSG_INSIGHTS = "insights"

@@ -1,7 +1,10 @@
 """Insight engine (spec C4/C6): periodically (or on demand) feeds the recent
 transcript + running state to the local LLM, producing structured bilingual
-insights for the panel, and generates end-of-session minutes. Every item is
-a DRAFT until the operator approves it (human-in-the-loop)."""
+insights for the panel, and generates end-of-session minutes.
+
+Review modes (human agency, two flavors): auto-approve (default) shows items
+immediately and the operator corrects/hides on review — human-on-the-loop;
+gatekeeper mode holds every item as DRAFT until approved."""
 import json
 import re
 import threading
@@ -11,7 +14,8 @@ from pathlib import Path
 
 import requests
 
-from forum_agent.constants import (INSIGHT_INTERVAL_SECONDS, INSIGHT_MODEL,
+from forum_agent.constants import (AUTO_APPROVE_DEFAULT,
+                                   INSIGHT_INTERVAL_SECONDS, INSIGHT_MODEL,
                                    INSIGHT_THINK, INSIGHT_TIMEOUT_SECONDS,
                                    INSIGHT_WINDOW_SECONDS, INSIGHTS_JSON,
                                    MINUTES_MD, MSG_INSIGHTS, OLLAMA_URL,
@@ -70,6 +74,7 @@ class InsightEngine:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.error: str | None = None
+        self.auto_approve = AUTO_APPROVE_DEFAULT
 
     def reset(self) -> None:
         """New session = new meeting: clear previous insights so the panel
@@ -112,7 +117,8 @@ class InsightEngine:
                             it["zh"] not in kept:
                         items.append({"id": uuid.uuid4().hex[:8],
                                       "zh": it["zh"], "en": it.get("en", ""),
-                                      "status": "draft"})
+                                      "status": "approved"
+                                      if self.auto_approve else "draft"})
                 self.state["items"][kind] = items
             line = parsed.get("convergence_line") or {}
             if isinstance(line, dict) and line.get("zh"):
