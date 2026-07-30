@@ -167,8 +167,11 @@ class InsightEngine:
                     if it["id"] != item_id:
                         continue
                     if action == "edit":
+                        old_zh = it["zh"]
                         it["zh"], it["en"] = zh or it["zh"], en or it["en"]
                         it["status"] = "approved"
+                        log = self.state.get("approved_log", {}).get(kind, [])
+                        log[:] = [e for e in log if e["zh"] != old_zh]
                         self._log_approved(kind, it)
                     elif action in ("approved", "hidden", "draft"):
                         it["status"] = action

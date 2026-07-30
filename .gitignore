@@ -11,3 +11,4 @@ data/*_insights.json
 data/*_minutes*.md
 data/*_insights_history.jsonl
 data/sessions/
+data/report_draft*.md

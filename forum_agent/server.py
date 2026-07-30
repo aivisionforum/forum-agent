@@ -165,6 +165,35 @@ async def api_minutes(body: dict) -> dict:
     return {"path": path}
 
 
+@app.post("/api/report")
+async def api_report(body: dict) -> dict:
+    from forum_agent.report import generate_report
+    import anyio
+    path = await anyio.to_thread.run_sync(generate_report)
+    return {"path": path}
+
+
+@app.get("/report", response_class=HTMLResponse)
+async def report_page() -> str:
+    import markdown
+    from forum_agent.constants import REPORT_MD
+    from pathlib import Path
+    p = Path(REPORT_MD)
+    body = p.read_text() if p.exists() else "No report generated yet."
+    html = markdown.markdown(body, extensions=["tables"])
+    return ("<!doctype html><meta charset=utf-8><title>Report</title>"
+            "<style>body{background:#0b0f14;color:#f2f5f7;font-family:"
+            "-apple-system,'PingFang SC',sans-serif;max-width:820px;"
+            "margin:40px auto;line-height:1.7;padding:0 20px}"
+            "h1{font-size:24px;margin:24px 0 12px}"
+            "h2{border-bottom:1px solid #1c2530;padding-bottom:6px;"
+            "margin:28px 0 12px}li{margin:6px 0}hr{border:0;border-top:"
+            "1px solid #1c2530;margin:36px 0}blockquote{color:#fcd34d;"
+            "border-left:3px solid #78350f;padding-left:12px;"
+            "margin-bottom:20px}</style>"
+            f"<body>{html}")
+
+
 @app.get("/minutes", response_class=HTMLResponse)
 async def minutes_page(room: str = "room1", session: str = "") -> str:
     from forum_agent.constants import MINUTES_MD, SESSIONS_DIR

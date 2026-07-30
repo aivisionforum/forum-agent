@@ -131,3 +131,33 @@ def test_rename_and_default_title(tmp_path, monkeypatch):
     assert fs.rename_session(sid, "  组会测试 Group Meeting  ")
     assert fs.list_sessions()[0]["title"] == "组会测试 Group Meeting"
     assert not fs.rename_session("../../x", "bad")
+
+
+def test_report_gathers_sessions(tmp_path, monkeypatch):
+    import json
+    import forum_agent.report as rep
+    monkeypatch.setattr(rep, "SESSIONS_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setattr(rep, "REPORT_MD", str(tmp_path / "report.md"))
+    d = tmp_path / "sessions" / "20260729-100000"
+    d.mkdir(parents=True)
+    (d / "meta.json").write_text(json.dumps({"title": "主题一"}))
+    (d / "room1_insights.json").write_text(json.dumps(
+        {"approved_log": {"summary_points": [{"zh": "要点", "en": "Point"}]}}))
+    captured = {}
+    def fake_llm(prompt):
+        captured["prompt"] = prompt
+        return "# 报告\n## 摘要\n内容"
+    monkeypatch.setattr(rep, "_llm", fake_llm)
+    path = rep.generate_report()
+    assert "主题一" in captured["prompt"] and "要点" in captured["prompt"]
+    assert open(path).read().startswith("> DRAFT")
+    import pathlib
+    assert len(list(tmp_path.glob("report_*.md"))) == 1  # timestamped copy
+
+
+def test_report_fails_loudly_when_empty(tmp_path, monkeypatch):
+    import pytest
+    import forum_agent.report as rep
+    monkeypatch.setattr(rep, "SESSIONS_DIR", str(tmp_path / "none"))
+    with pytest.raises(RuntimeError):
+        rep.generate_report()  # R14: empty input is an error, not a report

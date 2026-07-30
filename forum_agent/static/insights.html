@@ -64,12 +64,20 @@ function render(s) {
         const ops = document.createElement("div");
         ops.className = "ops";
         for (const [label, action] of [["✓ approve","approved"],
-            ["draft","draft"], ["✕ hide","hidden"]]) {
+            ["draft","draft"], ["✕ hide","hidden"], ["✎ edit","edit"]]) {
           const b = document.createElement("button");
           b.textContent = label;
-          b.onclick = async () => render(await (await fetch("/api/insights/item", {
-            method: "POST", headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({room, id: it.id, action})})).json());
+          b.onclick = async () => {
+            const body = {room, id: it.id, action};
+            if (action === "edit") {
+              const zh = prompt("中文:", it.zh); if (zh === null) return;
+              const en = prompt("English:", it.en); if (en === null) return;
+              body.zh = zh; body.en = en;
+            }
+            render(await (await fetch("/api/insights/item", {
+              method: "POST", headers: {"Content-Type": "application/json"},
+              body: JSON.stringify(body)})).json());
+          };
           ops.appendChild(b);
         }
         d.appendChild(ops);
