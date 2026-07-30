@@ -31,7 +31,8 @@
   <a href="/subtitles?room=room1" target="_blank">subtitles</a> ·
   <a href="/insights?room=room1&operator=1" target="_blank">insight panel (operator)</a> ·
   <a href="/insights?room=room1" target="_blank">insight panel (projector)</a> ·
-  <a href="/minutes?room=room1" target="_blank">minutes</a></div>
+  <a href="/minutes?room=room1" target="_blank">minutes</a> ·
+  <a href="/report" target="_blank">event report</a></div>
 <div class="card">
   <div id="status">Source: <b class="idle">idle</b></div>
   <div id="phase" style="font-size:18px;min-height:26px;margin-bottom:10px"></div>
@@ -51,6 +52,7 @@
   <b style="font-size:16px">Insights &amp; minutes</b><br>
   <button id="summarize">✦ Summarize now</button>
   <button id="minutes">📝 Generate minutes</button>
+  <button id="report">📊 Generate event report</button>
   <span id="istatus" style="color:#7f8c99;font-size:14px"></span>
   <label><input type="checkbox" id="autoapprove" checked>
     auto-approve new insights (human corrects on review; uncheck for
@@ -116,6 +118,16 @@ document.getElementById("summarize").onclick = async () => {
     el.textContent = "insights updated";
     window.open("/insights?room=room1&operator=1"); }
   catch (e) { el.textContent = "failed: " + e; }
+};
+document.getElementById("report").onclick = async () => {
+  const el = document.getElementById("istatus");
+  el.textContent = "drafting report from all sessions (may take a few minutes)…";
+  try {
+    const r = await fetch("/api/report", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body:"{}"});
+    if (!r.ok) throw new Error((await r.json()).detail || r.status);
+    el.textContent = "report ready"; window.open("/report");
+  } catch (e) { el.textContent = "report failed: " + e; }
 };
 document.getElementById("minutes").onclick = async () => {
   const el = document.getElementById("istatus");

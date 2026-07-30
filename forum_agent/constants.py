@@ -53,6 +53,12 @@ INSIGHT_TIMEOUT_SECONDS = 180
 AUTO_APPROVE_DEFAULT = True
 INSIGHT_MAX_ITEMS = {"summary_points": 6, "emerging_consensus": 4,
                      "tensions": 4, "open_questions": 4}
+# Report drafter (C7): batch job, quality over latency -> the big model is
+# fine here (nothing else needs the GPU when the report runs).
+REPORT_MODEL = "qwen2.5:32b"
+REPORT_TIMEOUT_SECONDS = 900
+REPORT_MD = "data/report_draft.md"
+
 INSIGHTS_JSON = "data/{room}_insights.json"
 INSIGHTS_HISTORY = "data/{room}_insights_history.jsonl"  # every refresh, append-only
 MINUTES_MD = "data/{room}_minutes.md"
