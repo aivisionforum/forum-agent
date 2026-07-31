@@ -12,14 +12,13 @@ import time
 import uuid
 from pathlib import Path
 
-import requests
-
+from forum_agent import llm
 from forum_agent.constants import (AUTO_APPROVE_DEFAULT, INSIGHT_MAX_ITEMS,
                                    INSIGHTS_HISTORY,
                                    INSIGHT_INTERVAL_SECONDS, INSIGHT_MODEL,
                                    INSIGHT_THINK, INSIGHT_TIMEOUT_SECONDS,
                                    INSIGHT_WINDOW_SECONDS, INSIGHTS_JSON,
-                                   MINUTES_MD, MSG_INSIGHTS, OLLAMA_URL,
+                                   MINUTES_MD, MSG_INSIGHTS,
                                    TRANSCRIPT_JSONL)
 from forum_agent.server import hub
 
@@ -28,12 +27,8 @@ KINDS = ["summary_points", "emerging_consensus", "tensions", "open_questions"]
 
 
 def _llm(prompt: str) -> str:
-    resp = requests.post(OLLAMA_URL, json={
-        "model": INSIGHT_MODEL, "think": INSIGHT_THINK, "stream": False,
-        "messages": [{"role": "user", "content": prompt}],
-        "options": {"temperature": 0.2}}, timeout=INSIGHT_TIMEOUT_SECONDS)
-    resp.raise_for_status()
-    return resp.json()["message"]["content"].strip()
+    return llm.chat(INSIGHT_MODEL, prompt, think=INSIGHT_THINK,
+                    timeout=INSIGHT_TIMEOUT_SECONDS)
 
 
 def _parse_json(text: str) -> dict:

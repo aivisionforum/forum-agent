@@ -86,7 +86,7 @@ async function refresh() {
   const [txt, color] = (s.running && PHASES[s.phase]) || ["", ""];
   els.phase.textContent = txt; els.phase.style.color = color;
   els.err.textContent = (s.error || "") +
-    (s.ollama === false ? "  ⚠ Ollama is not responding — translation and insights are down" : "");
+    (s.llm === false ? "  ⚠ LLM server not responding — translation and insights are down" : "");
   els.mic.disabled = els.replay.disabled = busy || s.running;
   els.stop.disabled = busy || !s.running;
 }

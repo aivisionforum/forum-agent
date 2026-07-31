@@ -6,9 +6,8 @@ import re
 import time
 from pathlib import Path
 
-import requests
-
-from forum_agent.constants import (OLLAMA_URL, REPORT_MD, REPORT_MODEL,
+from forum_agent import llm
+from forum_agent.constants import (REPORT_MD, REPORT_MODEL,
                                    REPORT_TIMEOUT_SECONDS, SESSIONS_DIR)
 
 _PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
@@ -16,12 +15,8 @@ MAX_MINUTES_CHARS = 4000  # per session, keep total prompt within context
 
 
 def _llm(prompt: str) -> str:
-    resp = requests.post(OLLAMA_URL, json={
-        "model": REPORT_MODEL, "stream": False,
-        "messages": [{"role": "user", "content": prompt}],
-        "options": {"temperature": 0.3}}, timeout=REPORT_TIMEOUT_SECONDS)
-    resp.raise_for_status()
-    return resp.json()["message"]["content"].strip()
+    return llm.chat(REPORT_MODEL, prompt, temperature=0.3, max_tokens=8192,
+                    timeout=REPORT_TIMEOUT_SECONDS)
 
 
 def _session_block(d: Path, room: str = "room1") -> str | None:

@@ -31,13 +31,14 @@ SPEAKER_SIM_THRESHOLD = 0.72
 MAX_SPEAKERS = 8
 MIN_EMBED_SECONDS = 0.8
 
-# Translation / Ollama
-OLLAMA_URL = "http://localhost:11434/api/chat"
-# qwen3:8b chosen over qwen2.5:32b: on a single shared GPU the 32b model's
-# ~10x longer decode starves mlx-whisper and subtitle lag blows the 3s budget.
-# See README "Model choices". Use 32b only if translation runs on another box.
-OLLAMA_MODEL = "qwen3:8b"
-TRANSLATE_TIMEOUT_SECONDS = 20
+# Local LLM serving: mlx-lm server (OpenAI-compatible), launched and managed
+# by forum_agent.server itself — nothing to babysit at the venue. MLX
+# benchmarked ~1.8x faster generation than Ollama/llama.cpp on this M3 Max
+# (46 vs 25 tok/s, qwen3-8b), and shares the framework with mlx-whisper.
+MLX_SERVER_PORT = 8711
+CHAT_URL = f"http://127.0.0.1:{MLX_SERVER_PORT}/v1/chat/completions"
+TRANSLATE_MODEL = "mlx-community/Qwen3-8B-4bit"
+TRANSLATE_TIMEOUT_SECONDS = 30
 
 # Insight engine (C4/C6). qwen3:8b w/ thinking: quality is adequate and the
 # short-model decode does not starve Whisper on the shared GPU (the 32b scar,
@@ -55,7 +56,7 @@ INSIGHT_MAX_ITEMS = {"summary_points": 6, "emerging_consensus": 4,
                      "tensions": 4, "open_questions": 4}
 # Report drafter (C7): batch job, quality over latency -> the big model is
 # fine here (nothing else needs the GPU when the report runs).
-REPORT_MODEL = "qwen2.5:32b"
+REPORT_MODEL = "mlx-community/Qwen2.5-32B-Instruct-4bit"
 REPORT_TIMEOUT_SECONDS = 900
 REPORT_MD = "data/report_draft.md"
 
