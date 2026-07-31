@@ -173,13 +173,13 @@ async def api_sessions_delete(body: dict) -> dict:
 @app.post("/api/insights/run")
 async def api_insights_run(body: dict) -> dict:
     """Manual 'Summarize now' from the operator console."""
-    from forum_agent.insights import engine, read_transcript
+    from forum_agent.insights import engine
     import anyio
     room = safe_room(body.get("room", "room1"))
-    if not read_transcript(room).strip():
-        raise HTTPException(409, "no active session — start a session first; "
-                            "archived meetings are under Past sessions")
-    return await anyio.to_thread.run_sync(engine(room).refresh)
+    try:
+        return await anyio.to_thread.run_sync(engine(room).refresh)
+    except RuntimeError as exc:  # nothing to summarize anywhere
+        raise HTTPException(409, str(exc))
 
 
 @app.post("/api/insights/mode")

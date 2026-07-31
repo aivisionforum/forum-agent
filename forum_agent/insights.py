@@ -105,12 +105,29 @@ class InsightEngine:
         self.path.write_text(json.dumps(self.state, ensure_ascii=False, indent=1))
         hub.broadcast_from_thread(self.room, {"type": MSG_INSIGHTS, **self.state})
 
+    def latest_archive_dir(self) -> str | None:
+        from forum_agent.session import list_sessions
+        sessions = list_sessions()
+        if not sessions:
+            return None
+        from forum_agent.constants import SESSIONS_DIR
+        return f"{SESSIONS_DIR}/{sessions[0]['id']}"
+
     def refresh(self) -> dict:
         """One engine run: transcript window + state -> updated draft items.
-        Operator-approved/hidden items keep their status across runs."""
+        With no live session, falls back to the latest archived session and
+        writes the insights there (same policy as minutes) — short meetings
+        can be summarized after the fact."""
+        base_dir = None
         transcript = read_transcript(self.room, INSIGHT_WINDOW_SECONDS)
         if not transcript.strip():
-            return self.state
+            base_dir = self.latest_archive_dir()
+            if base_dir:
+                transcript = read_transcript(self.room, base_dir=base_dir)
+        if not transcript.strip():
+            raise RuntimeError("no transcript available (live or archived)")
+        if base_dir:
+            return self._refresh_archived(base_dir, transcript)
         prompt = ((_PROMPTS / "insights.txt").read_text()
                   .replace("{state}",
                            json.dumps(self.state["items"], ensure_ascii=False))
@@ -159,6 +176,38 @@ class InsightEngine:
             with Path(INSIGHTS_HISTORY.format(room=self.room)).open("a") as f:
                 f.write(json.dumps(self.state, ensure_ascii=False) + "\n")
         return self.state
+
+    def _refresh_archived(self, base_dir: str, transcript: str) -> dict:
+        """Post-hoc insights for an already-archived session: reads and
+        writes that session's own insights file; live state untouched."""
+        import uuid as _uuid
+        apath = Path(base_dir) / f"{self.room}_insights.json"
+        state = json.loads(apath.read_text()) if apath.exists() else \
+            {"updated": 0, "items": {k: [] for k in KINDS},
+             "convergence_line": {"zh": "", "en": ""},
+             "hidden_zh": [], "approved_log": {k: [] for k in KINDS}}
+        prompt = ((_PROMPTS / "insights.txt").read_text()
+                  .replace("{state}",
+                           json.dumps(state["items"], ensure_ascii=False))
+                  .replace("{transcript}", transcript))
+        parsed = _parse_json(_llm(prompt))
+        now = time.time()
+        for kind in KINDS:
+            items = [{"id": _uuid.uuid4().hex[:8], "zh": it["zh"],
+                      "en": it.get("en", ""), "status": "approved",
+                      "added": now}
+                     for it in (parsed.get(kind, []) or [])
+                     if isinstance(it, dict) and it.get("zh")]
+            state["items"][kind] = items[:INSIGHT_MAX_ITEMS[kind]]
+            state["approved_log"][kind] = [
+                {"zh": i["zh"], "en": i["en"]} for i in state["items"][kind]]
+        for key in ("convergence_line", "session_topic"):
+            val = parsed.get(key) or {}
+            if isinstance(val, dict) and val.get("zh"):
+                state[key] = {"zh": val["zh"], "en": val.get("en", "")}
+        state["updated"] = now
+        apath.write_text(json.dumps(state, ensure_ascii=False, indent=1))
+        return {**state, "archived": Path(base_dir).name}
 
     def set_item(self, item_id: str, action: str, zh: str = "",
                  en: str = "") -> dict:
