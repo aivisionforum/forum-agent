@@ -118,7 +118,7 @@ document.getElementById("summarize").onclick = async () => {
   el.textContent = "summarizing…";
   try { const r = await fetch("/api/insights/run", {method:"POST",
     headers:{"Content-Type":"application/json"}, body:"{}"});
-    if (!r.ok) throw new Error("HTTP " + r.status);
+    if (!r.ok) throw new Error((await r.json()).detail || "HTTP " + r.status);
     el.textContent = "insights updated";
     window.open("/insights?room=room1&operator=1"); }
   catch (e) { el.textContent = "summarize failed: " + e; }
@@ -138,7 +138,7 @@ document.getElementById("minutes").onclick = async () => {
   el.textContent = "generating minutes…";
   try { const r = await fetch("/api/minutes", {method:"POST",
     headers:{"Content-Type":"application/json"}, body:"{}"});
-    if (!r.ok) throw new Error("HTTP " + r.status);
+    if (!r.ok) throw new Error((await r.json()).detail || "HTTP " + r.status);
     el.textContent = "minutes ready"; window.open("/minutes?room=room1"); }
   catch (e) { el.textContent = "minutes failed: " + e; }
 };

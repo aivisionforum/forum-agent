@@ -54,7 +54,9 @@ class Hub:
                 self.unregister(room, ws)
 
     def broadcast_from_thread(self, room: str, message: dict) -> None:
-        assert self.loop is not None, "server not started"
+        if self.loop is None:
+            # standalone use (scripts, batch jobs): no pages to update
+            return
         fut = asyncio.run_coroutine_threadsafe(
             self.broadcast(room, message), self.loop)
         fut.add_done_callback(
@@ -171,9 +173,12 @@ async def api_sessions_delete(body: dict) -> dict:
 @app.post("/api/insights/run")
 async def api_insights_run(body: dict) -> dict:
     """Manual 'Summarize now' from the operator console."""
-    from forum_agent.insights import engine
+    from forum_agent.insights import engine, read_transcript
     import anyio
     room = safe_room(body.get("room", "room1"))
+    if not read_transcript(room).strip():
+        raise HTTPException(409, "no active session — start a session first; "
+                            "archived meetings are under Past sessions")
     return await anyio.to_thread.run_sync(engine(room).refresh)
 
 
@@ -273,6 +278,8 @@ def main() -> None:
     proc = llm.launch_server()
     if proc is not None:
         atexit.register(proc.terminate)
+    import threading
+    threading.Thread(target=llm.prewarm, daemon=True).start()
     print(f"Control: http://{SERVER_HOST}:{SERVER_PORT}/control")
     # Import string (not the app object): under `python -m forum_agent.server`
     # this file is module `__main__`, and passing its app would leave the
