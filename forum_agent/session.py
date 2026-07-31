@@ -9,9 +9,10 @@ import time
 from pathlib import Path
 
 from forum_agent import replay
-from forum_agent.constants import (FIXTURE_WAV, INSIGHTS_JSON, MINUTES_MD,
-                                   MSG_SESSION_RESET,
-                                   SESSIONS_DIR, TRANSCRIPT_JSONL)
+from forum_agent.constants import (FIXTURE_WAV, INSIGHTS_HISTORY,
+                                   INSIGHTS_JSON, MINUTES_MD,
+                                   MSG_SESSION_RESET, SESSIONS_DIR,
+                                   TRANSCRIPT_JSONL, TRANSLATIONS_JSONL)
 
 
 def archive_live(room: str) -> str | None:
@@ -24,8 +25,8 @@ def archive_live(room: str) -> str | None:
         transcript.stat().st_mtime))  # named after last activity, not now
     dest = Path(SESSIONS_DIR) / sid
     dest.mkdir(parents=True, exist_ok=True)
-    for pattern in (TRANSCRIPT_JSONL, "data/{room}_translations.jsonl",
-                    INSIGHTS_JSON, "data/{room}_insights_history.jsonl",
+    for pattern in (TRANSCRIPT_JSONL, TRANSLATIONS_JSONL,
+                    INSIGHTS_JSON, INSIGHTS_HISTORY,
                     "data/{room}_minutes*.md",
                     "data/{room}_recording.wav"):
         tp = Path(pattern.format(room=room))
@@ -56,6 +57,8 @@ def _default_title(session_dir: Path, room: str) -> str:
         first = json.loads(t.read_text().splitlines()[0])
         return first["text"][:40]
     except Exception:
+        # Title derivation is cosmetic; a malformed archive must not block
+        # archiving itself. The files stay inspectable either way.
         return "Untitled session"
 
 
@@ -113,6 +116,10 @@ MODE_IDLE = "idle"
 
 class SessionManager:
     def __init__(self) -> None:
+        # One lock for start/stop: they are called from worker threads
+        # (anyio.to_thread) and share _thread/_stop; unlocked, two rapid
+        # Start clicks ran two pipelines onto one transcript file.
+        self._op_lock = threading.RLock()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self.mode = MODE_IDLE
@@ -132,7 +139,11 @@ class SessionManager:
     def start(self, mode: str, room: str = "room1",
               wav: str = FIXTURE_WAV, play: bool = True,
               device: int | None = None) -> dict:
+      with self._op_lock:
         self.stop()
+        if self._thread is not None:  # stop() timed out; refuse to double-run
+            self.error = "previous session is still shutting down; retry"
+            return self.status()
         self._stop = threading.Event()
         self.error = None
         stop = self._stop
@@ -163,12 +174,22 @@ class SessionManager:
         return self.status()
 
     def stop(self) -> dict:
+      with self._op_lock:
         from forum_agent.insights import engine
         was_running = self._thread is not None and self._thread.is_alive()
         engine(self.room).stop_auto()
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=90)  # models may be mid-inference
+            if self._thread.is_alive():
+                # Pipeline is wedged: archiving now would race its writes and
+                # leak this meeting's tail into the next one. Keep files live,
+                # surface the failure, let start() refuse until it exits.
+                self.error = "session did not stop within 90s; not archived"
+                print(f"[session] {self.error}")
+                self.mode = MODE_IDLE
+                self.phase = ""
+                return self.status()
         self._thread = None
         self.mode = MODE_IDLE
         self.phase = ""

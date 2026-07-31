@@ -1,4 +1,4 @@
-"""M1 replay orchestrator: one-command startup.
+"""Replay/mic orchestrators: one-command startup.
 
     python -m forum_agent.replay data/fixture_meeting.wav --room room1
 
@@ -8,7 +8,6 @@ websocket, with translation on a separate worker so subtitles never wait.
 """
 import argparse
 import json
-import queue
 import threading
 import time
 from pathlib import Path
@@ -16,120 +15,15 @@ from pathlib import Path
 import soundfile as sf
 import uvicorn
 
-from forum_agent import asr, translate
+from forum_agent import asr
 from forum_agent.constants import (DEAD_STREAM_SECONDS, FRAME_SECONDS,
-                                   RECORDING_WAV,
-                                   MSG_FINAL, MSG_PARTIAL,
-                                   MSG_TRANSLATION, PARTIAL_INTERVAL_SECONDS,
-                                   SAMPLE_RATE, SERVER_HOST, SERVER_PORT,
-                                   TRANSCRIPT_JSONL)
-from forum_agent.diarize import Diarizer
+                                   PARTIAL_INTERVAL_SECONDS, RECORDING_WAV,
+                                   SAMPLE_RATE, SERVER_HOST, SERVER_PORT)
+from forum_agent.pipeline import Pipeline
 from forum_agent.segmenter import Segmenter
-from forum_agent.server import app, hub
+from forum_agent.server import app
 
 
-class Pipeline:
-    def __init__(self, room: str) -> None:
-        self.room = room
-        self.diarizer = Diarizer()
-        self.jsonl = Path(TRANSCRIPT_JSONL.format(room=room))
-        self.jsonl.parent.mkdir(exist_ok=True)
-        self.jsonl.write_text("")
-        self.translate_q: queue.Queue = queue.Queue()
-        self.trans_jsonl = self.jsonl.with_name(f"{room}_translations.jsonl")
-        self.trans_jsonl.write_text("")
-        self.lags: list[float] = []
-        self.seq = 0
-        self.final_q: queue.Queue = queue.Queue()
-        self._partial_slot: tuple | None = None  # latest open-segment snapshot
-        self._slot_lock = threading.Lock()
-        self.idle = threading.Event()  # set when no final work is pending
-        self.idle.set()
-        threading.Thread(target=self._translator, daemon=True).start()
-        threading.Thread(target=self._asr_worker, daemon=True).start()
-
-    def warmup(self) -> None:
-        """Load every model (Whisper, ECAPA, Ollama) before the replay clock
-        starts; cold loads mid-stream showed up as 10s+ subtitle lag spikes."""
-        import numpy as np
-        asr.warmup()
-        self.diarizer._embed(np.random.default_rng(0)
-                             .normal(0, 0.1, SAMPLE_RATE).astype("float32"))
-        translate.translate("warmup", "en")
-
-    def submit_final(self, t_start: float, audio, wall_offset: float) -> None:
-        self.idle.clear()
-        self.final_q.put((t_start, audio, wall_offset))
-
-    def submit_partial(self, t_start: float, audio, wall_offset: float) -> None:
-        with self._slot_lock:  # overwrite: only the freshest partial matters
-            self._partial_slot = (t_start, audio, wall_offset)
-
-    def _asr_worker(self) -> None:
-        """Finals take priority; partials are best-effort on idle cycles, so
-        the replay feed thread never blocks on Whisper or ECAPA."""
-        while True:
-            try:
-                job = self.final_q.get(timeout=0.1)
-                try:
-                    self.on_final(*job)
-                except Exception as exc:  # keep worker alive; skip bad segment
-                    print(f"[asr-worker] final failed, segment dropped: {exc!r}")
-                if self.final_q.empty():
-                    self.idle.set()
-                continue
-            except queue.Empty:
-                pass
-            with self._slot_lock:
-                job, self._partial_slot = self._partial_slot, None
-            if job is not None:
-                try:
-                    self.on_partial(*job)
-                except Exception as exc:  # partials are best-effort anyway
-                    print(f"[asr-worker] partial skipped: {exc!r}")
-
-    def _translator(self) -> None:
-        while True:
-            seg_id, text, lang = self.translate_q.get()
-            translation = translate.translate(text, lang)
-            if translation:
-                with self.trans_jsonl.open("a") as f:
-                    f.write(json.dumps({"id": seg_id, "translation": translation},
-                                       ensure_ascii=False) + "\n")
-                hub.broadcast_from_thread(self.room, {
-                    "type": MSG_TRANSLATION, "id": seg_id,
-                    "translation": translation})
-
-    def on_partial(self, t_start: float, audio, wall_offset: float) -> None:
-        text, lang = asr.transcribe(audio)
-        if not text:
-            return
-        self._track_lag(t_start + len(audio) / SAMPLE_RATE, wall_offset)
-        hub.broadcast_from_thread(self.room, {
-            "type": MSG_PARTIAL, "t_start": t_start, "lang": lang,
-            "text": text})
-
-    def on_final(self, t_start: float, audio, wall_offset: float) -> None:
-        text, lang = asr.transcribe(audio)
-        if not text:
-            return
-        t_end = t_start + len(audio) / SAMPLE_RATE
-        speaker = self.diarizer.assign(audio)
-        self.seq += 1
-        record = {"t_start": round(t_start, 2), "t_end": round(t_end, 2),
-                  "speaker_id": speaker, "lang": lang, "text": text}
-        with self.jsonl.open("a") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        lag = self._track_lag(t_end, wall_offset)
-        hub.broadcast_from_thread(self.room, {
-            "type": MSG_FINAL, "id": self.seq, **record, "translation": ""})
-        print(f"[final #{self.seq}] {speaker} {lang} lag={lag:.1f}s: {text[:60]}")
-        self.translate_q.put((self.seq, text, lang))
-
-    def _track_lag(self, audio_time: float, wall_offset: float) -> float:
-        lag = (time.monotonic() - wall_offset) - audio_time
-        self.lags.append(lag)
-        return lag
 
 
 def feed_frame(pipe: Pipeline, seg: Segmenter, frame, start: float,
@@ -138,11 +32,11 @@ def feed_frame(pipe: Pipeline, seg: Segmenter, frame, start: float,
     next-partial deadline."""
     for closed in seg.feed(frame):
         pipe.submit_final(closed.t_start, closed.audio, start)
-        next_partial = seg._clock + PARTIAL_INTERVAL_SECONDS
+        next_partial = seg.clock + PARTIAL_INTERVAL_SECONDS
     cur = seg.open_segment
-    if cur is not None and seg._clock >= next_partial:
+    if cur is not None and seg.clock >= next_partial:
         pipe.submit_partial(cur.t_start, cur.audio.copy(), start)
-        next_partial = seg._clock + PARTIAL_INTERVAL_SECONDS
+        next_partial = seg.clock + PARTIAL_INTERVAL_SECONDS
     return next_partial
 
 
@@ -225,8 +119,17 @@ def run_mic(room: str, duration: float | None = None,
         recorder.close()
     if seg.open_segment is not None:
         pipe.submit_final(seg.open_segment.t_start, seg.open_segment.audio, start)
-    pipe.idle.wait(timeout=60)
+    _drain_and_close(pipe)
     return pipe
+
+
+def _drain_and_close(pipe: Pipeline) -> None:
+    """Let pending ASR finals and translations finish, then stop workers."""
+    pipe.idle.wait(timeout=60)
+    deadline = time.monotonic() + 90
+    while not pipe.translate_q.empty() and time.monotonic() < deadline:
+        time.sleep(0.5)
+    pipe.close()
 
 
 def run_replay(wav_path: str, room: str, play: bool = False,
@@ -258,9 +161,9 @@ def run_replay(wav_path: str, room: str, play: bool = False,
                                   next_partial)
     if seg.open_segment is not None:
         pipe.submit_final(seg.open_segment.t_start, seg.open_segment.audio, start)
-    pipe.idle.wait(timeout=60)  # drain pending finals before reporting stats
     if player is not None:
         player.terminate()
+    _drain_and_close(pipe)
     return pipe
 
 

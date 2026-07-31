@@ -78,11 +78,13 @@ class InsightEngine:
         self._thread: threading.Thread | None = None
         self.error: str | None = None
         self.auto_approve = AUTO_APPROVE_DEFAULT
+        self._gen = 0  # bumped on reset/stop: in-flight refreshes discard
 
     def reset(self) -> None:
         """New session = new meeting: clear previous insights so the panel
         never shows a past session's items as if they were current."""
         with self._lock:
+            self._gen += 1
             self.state = {"updated": 0, "items": {k: [] for k in KINDS},
                           "convergence_line": {"zh": "", "en": ""},
                           "hidden_zh": [], "approved_log": {k: [] for k in KINDS}}
@@ -118,9 +120,14 @@ class InsightEngine:
                   .replace("{state}",
                            json.dumps(self.state["items"], ensure_ascii=False))
                   .replace("{transcript}", transcript))
+        gen = self._gen
         parsed = _parse_json(_llm(prompt))
         now = time.time()
         with self._lock:
+            if gen != self._gen:
+                # session was reset/stopped during the (long) LLM call: this
+                # result belongs to the previous meeting — drop it
+                return self.state
             hidden = set(self.state.get("hidden_zh", []))
             for kind in KINDS:
                 fresh = parsed.get(kind, []) or []
@@ -202,6 +209,8 @@ class InsightEngine:
 
     def stop_auto(self) -> None:
         self._stop.set()
+        with self._lock:
+            self._gen += 1  # invalidate any refresh still in the LLM
 
     def generate_minutes(self) -> str:
         """C6: end-of-session bilingual draft minutes as Markdown. If the

@@ -62,5 +62,10 @@ class Segmenter:
         return closed
 
     @property
+    def clock(self) -> float:
+        """Stream position in seconds (total audio fed so far)."""
+        return self._clock
+
+    @property
     def open_segment(self) -> Segment | None:
         return self._current

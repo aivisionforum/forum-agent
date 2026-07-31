@@ -35,20 +35,23 @@ const fs = params.get("fs");
 if (fs) document.documentElement.style.setProperty("--fs", fs + "px");
 document.getElementById("room-label").textContent = "Room: " + room;
 const feed = document.getElementById("feed");
+const esc = (t) => String(t ?? "").replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const statusEl = document.getElementById("status");
 let partialEl = null;
 const finals = {};   // id -> entry element, so translations can attach later
 
 function entryHtml(m, partial) {
   const t = new Date(m.t_start * 1000).toISOString().substr(14, 5);
-  return `<div class="meta">${m.speaker_id || "…"} · ${t} · ${m.lang || ""}</div>
-          <div class="orig">${m.text}</div>` +
-         (partial ? "" : `<div class="trans">${m.translation || ""}</div>`);
+  return `<div class="meta">${esc(m.speaker_id) || "…"} · ${t} · ${esc(m.lang)}</div>
+          <div class="orig">${esc(m.text)}</div>` +
+         (partial ? "" : `<div class="trans">${esc(m.translation)}</div>`);
 }
 function scrollDown() { feed.scrollTop = feed.scrollHeight; }
 
 function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws/room/${room}`);
+  window._ws = ws;
   ws.onopen = () => { statusEl.textContent = "● LIVE"; statusEl.className = "live"; };
   ws.onclose = () => { statusEl.textContent = "reconnecting…";
                        statusEl.className = ""; setTimeout(connect, 1000); };
@@ -70,13 +73,13 @@ function connect() {
       el.className = "entry"; el.innerHTML = entryHtml(m, false);
       feed.appendChild(el); finals[m.id] = el;
     } else if (m.type === "translation" && finals[m.id]) {
-      finals[m.id].querySelector(".trans").textContent = m.translation;
+      finals[m.id].querySelector(".trans").textContent = m.translation;  // textContent: safe
     }
     scrollDown();
   };
-  setInterval(() => { if (ws.readyState === 1) ws.send("ping"); }, 15000);
 }
 connect();
+setInterval(() => { if (window._ws && window._ws.readyState === 1) window._ws.send("ping"); }, 15000);
 </script>
 </body>
 </html>

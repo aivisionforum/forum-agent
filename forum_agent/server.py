@@ -1,12 +1,34 @@
-"""FastAPI server: serves the subtitle page and a per-room websocket feed."""
+"""FastAPI server: pages, control API, and per-room websocket feed.
+
+Security model: binds 127.0.0.1 only, but that does not stop CSRF/DNS
+rebinding from a hostile page in the operator's browser — so every state-
+changing POST requires a local Origin (or none, for curl), and all
+session/room parameters are strictly validated against path traversal."""
 import asyncio
 import json
+import re
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Request, WebSocket, \
+    WebSocketDisconnect
+from fastapi.responses import HTMLResponse, PlainTextResponse
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+_SESSION_RE = re.compile(r"\d{8}-\d{6}")
+_ROOM_RE = re.compile(r"[A-Za-z0-9_-]{1,32}")
+_LOCAL_ORIGINS = ("http://127.0.0.1", "http://localhost")
+
+
+def safe_session(session: str) -> str:
+    if session and not _SESSION_RE.fullmatch(session):
+        raise HTTPException(400, "invalid session id")
+    return session
+
+
+def safe_room(room: str) -> str:
+    if not _ROOM_RE.fullmatch(room):
+        raise HTTPException(400, "invalid room")
+    return room
 
 
 class Hub:
@@ -24,22 +46,33 @@ class Hub:
         self._rooms.get(room, set()).discard(ws)
 
     async def broadcast(self, room: str, message: dict) -> None:
-        dead = []
-        for ws in self._rooms.get(room, set()):
+        # iterate a copy: register/unregister can run while send() yields
+        for ws in list(self._rooms.get(room, set())):
             try:
                 await ws.send_text(json.dumps(message, ensure_ascii=False))
             except Exception:  # client gone; drop it, page reconnects
-                dead.append(ws)
-        for ws in dead:
-            self.unregister(room, ws)
+                self.unregister(room, ws)
 
     def broadcast_from_thread(self, room: str, message: dict) -> None:
         assert self.loop is not None, "server not started"
-        asyncio.run_coroutine_threadsafe(self.broadcast(room, message), self.loop)
+        fut = asyncio.run_coroutine_threadsafe(
+            self.broadcast(room, message), self.loop)
+        fut.add_done_callback(
+            lambda f: f.exception() and print(f"[hub] broadcast failed: "
+                                              f"{f.exception()!r}"))
 
 
 hub = Hub()
 app = FastAPI(title="forum-agent")
+
+
+@app.middleware("http")
+async def _reject_cross_origin_posts(request: Request, call_next):
+    if request.method == "POST":
+        origin = request.headers.get("origin", "")
+        if origin and not origin.startswith(_LOCAL_ORIGINS):
+            return PlainTextResponse("cross-origin rejected", status_code=403)
+    return await call_next(request)
 
 
 @app.on_event("startup")
@@ -58,10 +91,24 @@ async def control_page() -> str:
     return (STATIC_DIR / "control.html").read_text()
 
 
+@app.get("/insights", response_class=HTMLResponse)
+async def insights_page() -> str:
+    return (STATIC_DIR / "insights.html").read_text()
+
+
 @app.get("/api/status")
 async def api_status() -> dict:
+    import requests
+    from forum_agent.constants import OLLAMA_URL
     from forum_agent.session import manager
-    return manager.status()
+    status = manager.status()
+    try:  # surface a dead Ollama on the console instead of failing silently
+        requests.get(OLLAMA_URL.rsplit("/api/", 1)[0] + "/api/tags",
+                     timeout=1).raise_for_status()
+        status["ollama"] = True
+    except requests.RequestException:
+        status["ollama"] = False
+    return status
 
 
 @app.get("/api/devices")
@@ -76,13 +123,13 @@ async def api_devices() -> list:
 async def api_start(body: dict) -> dict:
     from forum_agent.session import manager
     import anyio
+    room = safe_room(body.get("room", "room1"))
     return await anyio.to_thread.run_sync(
-        lambda: manager.start(body.get("source", "replay"),
-                              body.get("room", "room1"),
+        lambda: manager.start(body.get("source", "replay"), room,
                               play=bool(body.get("play", True)),
                               device=(int(body["device"])
-                                      if body.get("device") not in (None, "", "auto")
-                                      else None)))
+                                      if body.get("device")
+                                      not in (None, "", "auto") else None)))
 
 
 @app.post("/api/stop")
@@ -92,24 +139,19 @@ async def api_stop() -> dict:
     return await anyio.to_thread.run_sync(manager.stop)
 
 
-@app.get("/insights", response_class=HTMLResponse)
-async def insights_page() -> str:
-    return (STATIC_DIR / "insights.html").read_text()
-
-
 @app.get("/api/insights")
 async def api_insights(room: str = "room1", session: str = "") -> dict:
+    from forum_agent.constants import INSIGHT_INTERVAL_SECONDS, SESSIONS_DIR
+    safe_room(room), safe_session(session)
     if session:  # archived session: read-only snapshot
-        import json
-        from forum_agent.constants import SESSIONS_DIR
-        from pathlib import Path
         p = Path(SESSIONS_DIR) / session / f"{room}_insights.json"
-        if p.exists():
-            return {**json.loads(p.read_text()), "archived": session}
-        return {"items": {}, "convergence_line": {}, "archived": session}
+        state = json.loads(p.read_text()) if p.exists() else \
+            {"items": {}, "convergence_line": {}}
+        return {**state, "archived": session}
     from forum_agent.insights import engine
     e = engine(room)
-    return {**e.state, "error": e.error}
+    return {**e.state, "error": e.error,
+            "interval": INSIGHT_INTERVAL_SECONDS}
 
 
 @app.get("/api/sessions")
@@ -136,14 +178,14 @@ async def api_insights_run(body: dict) -> dict:
     """Manual 'Summarize now' from the operator console."""
     from forum_agent.insights import engine
     import anyio
-    return await anyio.to_thread.run_sync(
-        engine(body.get("room", "room1")).refresh)
+    room = safe_room(body.get("room", "room1"))
+    return await anyio.to_thread.run_sync(engine(room).refresh)
 
 
 @app.post("/api/insights/mode")
 async def api_insights_mode(body: dict) -> dict:
     from forum_agent.insights import engine
-    e = engine(body.get("room", "room1"))
+    e = engine(safe_room(body.get("room", "room1")))
     e.auto_approve = bool(body.get("auto_approve", True))
     return {"auto_approve": e.auto_approve}
 
@@ -151,7 +193,7 @@ async def api_insights_mode(body: dict) -> dict:
 @app.post("/api/insights/item")
 async def api_insights_item(body: dict) -> dict:
     from forum_agent.insights import engine
-    return engine(body.get("room", "room1")).set_item(
+    return engine(safe_room(body.get("room", "room1"))).set_item(
         body.get("id", ""), body.get("action", ""),
         body.get("zh", ""), body.get("en", ""))
 
@@ -160,8 +202,8 @@ async def api_insights_item(body: dict) -> dict:
 async def api_minutes(body: dict) -> dict:
     from forum_agent.insights import engine
     import anyio
-    path = await anyio.to_thread.run_sync(
-        engine(body.get("room", "room1")).generate_minutes)
+    room = safe_room(body.get("room", "room1"))
+    path = await anyio.to_thread.run_sync(engine(room).generate_minutes)
     return {"path": path}
 
 
@@ -175,110 +217,36 @@ async def api_report(body: dict) -> dict:
 
 @app.get("/report", response_class=HTMLResponse)
 async def report_page() -> str:
-    import markdown
-    from forum_agent.constants import REPORT_MD
-    from pathlib import Path
-    p = Path(REPORT_MD)
-    body = p.read_text() if p.exists() else "No report generated yet."
-    html = markdown.markdown(body, extensions=["tables"])
-    return ("<!doctype html><meta charset=utf-8><title>Report</title>"
-            "<style>body{background:#0b0f14;color:#f2f5f7;font-family:"
-            "-apple-system,'PingFang SC',sans-serif;max-width:820px;"
-            "margin:40px auto;line-height:1.7;padding:0 20px}"
-            "h1{font-size:24px;margin:24px 0 12px}"
-            "h2{border-bottom:1px solid #1c2530;padding-bottom:6px;"
-            "margin:28px 0 12px}li{margin:6px 0}hr{border:0;border-top:"
-            "1px solid #1c2530;margin:36px 0}blockquote{color:#fcd34d;"
-            "border-left:3px solid #78350f;padding-left:12px;"
-            "margin-bottom:20px}</style>"
-            f"<body>{html}")
+    from forum_agent import pages
+    return pages.report_page()
 
 
 @app.get("/minutes", response_class=HTMLResponse)
 async def minutes_page(room: str = "room1", session: str = "") -> str:
-    from forum_agent.constants import MINUTES_MD, SESSIONS_DIR
-    from pathlib import Path
-    p = (Path(SESSIONS_DIR) / session / f"{room}_minutes.md") if session \
-        else Path(MINUTES_MD.format(room=room))
-    import markdown
-    body = p.read_text() if p.exists() else "No minutes generated yet."
-    html = markdown.markdown(body, extensions=["tables"])
-    return ("<!doctype html><meta charset=utf-8><title>Minutes</title>"
-            "<style>body{background:#0b0f14;color:#f2f5f7;font-family:"
-            "-apple-system,'PingFang SC',sans-serif;max-width:800px;"
-            "margin:40px auto;line-height:1.7;padding:0 20px}"
-            "h2{border-bottom:1px solid #1c2530;padding-bottom:6px;"
-            "margin:28px 0 12px}h3{color:#6ea8fe;margin:18px 0 8px}"
-            "li{margin:6px 0}hr{border:0;border-top:1px solid #1c2530;"
-            "margin:32px 0}blockquote{color:#fcd34d;border-left:3px solid "
-            "#78350f;padding-left:12px;margin-bottom:20px}</style>"
-            f"<body>{html}")
+    from forum_agent import pages
+    return pages.render_markdown_page(
+        "Minutes", pages.minutes_path(safe_room(room), safe_session(session)),
+        "No minutes generated yet.")
 
 
 @app.get("/transcript", response_class=HTMLResponse)
 async def transcript_page(room: str = "room1", session: str = "") -> str:
-    """Human-readable transcript with translations; raw JSONL stays at
-    /api/transcript."""
-    import html as h
-    import json as j
-    from forum_agent.constants import SESSIONS_DIR, TRANSCRIPT_JSONL
-    from pathlib import Path
-    base = Path(SESSIONS_DIR) / session if session else Path("data")
-    tpath = base / f"{room}_transcript.jsonl" if session \
-        else Path(TRANSCRIPT_JSONL.format(room=room))
-    xpath = base / f"{room}_translations.jsonl"
-    trans = {}
-    if xpath.exists():
-        for i, line in enumerate(xpath.read_text().splitlines(), 1):
-            e = j.loads(line)
-            trans[e.get("id", i)] = e["translation"]
-    rows = []
-    colors = ["#6ea8fe", "#3ddc84", "#f0997b", "#ed93b1", "#facc15", "#a78bfa"]
-    if tpath.exists():
-        for i, line in enumerate(tpath.read_text().splitlines(), 1):
-            r = j.loads(line)
-            mm, ss = divmod(int(r["t_start"]), 60)
-            c = colors[(ord(r["speaker_id"][-1]) - 65) % len(colors)]
-            tr = trans.get(i, "")
-            rows.append(
-                f"<div class=seg><span class=t>{mm:02d}:{ss:02d}</span>"
-                f"<span class=sp style='color:{c}'>{h.escape(r['speaker_id'])}</span>"
-                f"<span class=lg>{r['lang']}</span>"
-                f"<div class=tx>{h.escape(r['text'])}"
-                + (f"<div class=tr>{h.escape(tr)}</div>" if tr else "")
-                + "</div></div>")
-    title = f"Transcript — {session or 'live'}"
-    return ("<!doctype html><meta charset=utf-8><title>" + title + "</title>"
-            "<style>body{background:#0b0f14;color:#f2f5f7;font-family:"
-            "-apple-system,'PingFang SC',sans-serif;max-width:860px;"
-            "margin:36px auto;padding:0 20px;line-height:1.6}"
-            "h1{font-size:19px;margin-bottom:18px;color:#7f8c99}"
-            ".seg{display:flex;gap:12px;margin-bottom:14px;align-items:baseline}"
-            ".t{color:#556;font-size:13px;min-width:44px}"
-            ".sp{font-weight:600;min-width:88px;font-size:14px}"
-            ".lg{color:#556;font-size:12px;min-width:40px}"
-            ".tx{flex:1;font-size:16px}"
-            ".tr{color:#a8b8a8;font-size:14px;margin-top:2px}</style>"
-            f"<h1>{title} · <a style='color:#6ea8fe' "
-            f"href='/api/transcript?room={room}&session={session}'>raw JSONL"
-            "</a></h1>" + ("".join(rows) or "No transcript."))
+    from forum_agent import pages
+    return pages.transcript_page(safe_room(room), safe_session(session))
 
 
 @app.get("/api/transcript")
 async def api_transcript(room: str = "room1", session: str = ""):
-    from forum_agent.constants import SESSIONS_DIR, TRANSCRIPT_JSONL
-    from pathlib import Path
-    from fastapi.responses import PlainTextResponse
-    p = (Path(SESSIONS_DIR) / session / f"{room}_transcript.jsonl") if session \
-        else Path(TRANSCRIPT_JSONL.format(room=room))
-    return PlainTextResponse(p.read_text() if p.exists() else "")
+    from forum_agent import pages
+    tpath, _ = pages.transcript_paths(safe_room(room), safe_session(session))
+    return PlainTextResponse(tpath.read_text() if tpath.exists() else "")
 
 
 @app.get("/api/audio")
 async def api_audio(room: str = "room1", session: str = ""):
     from forum_agent.constants import RECORDING_WAV, SESSIONS_DIR
-    from pathlib import Path
-    from fastapi.responses import FileResponse, PlainTextResponse
+    from fastapi.responses import FileResponse
+    safe_room(room), safe_session(session)
     p = (Path(SESSIONS_DIR) / session / f"{room}_recording.wav") if session \
         else Path(RECORDING_WAV.format(room=room))
     if not p.exists():
@@ -288,6 +256,10 @@ async def api_audio(room: str = "room1", session: str = ""):
 
 @app.websocket("/ws/room/{room}")
 async def room_ws(ws: WebSocket, room: str) -> None:
+    origin = ws.headers.get("origin", "")
+    if origin and not origin.startswith(_LOCAL_ORIGINS):
+        await ws.close(code=4403)  # hostile page must not read the live feed
+        return
     await hub.register(room, ws)
     try:
         while True:
