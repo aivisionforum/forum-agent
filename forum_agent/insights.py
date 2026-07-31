@@ -121,6 +121,12 @@ class InsightEngine:
         base_dir = None
         transcript = read_transcript(self.room, INSIGHT_WINDOW_SECONDS)
         if not transcript.strip():
+            from forum_agent.session import manager
+            if manager.status()["running"]:
+                # live session but nothing transcribed yet: never fall back
+                # to the previous meeting's archive mid-session
+                raise RuntimeError("no speech transcribed yet — speak first, "
+                                   "then summarize")
             base_dir = self.latest_archive_dir()
             if base_dir:
                 transcript = read_transcript(self.room, base_dir=base_dir)
