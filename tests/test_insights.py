@@ -74,12 +74,16 @@ def test_hidden_items_stay_suppressed(eng, monkeypatch):
                for e in state["approved_log"]["summary_points"])
 
 
-def test_empty_transcript_is_noop(eng, monkeypatch, tmp_path):
+def test_empty_transcript_no_archive_raises(eng, monkeypatch, tmp_path):
+    import forum_agent.session as fs
+    monkeypatch.setattr(fs, "SESSIONS_DIR", str(tmp_path / "none"))
     (tmp_path / "room1_t.jsonl").write_text("")
     called = []
     monkeypatch.setattr(ins, "_llm", lambda p: called.append(1) or LLM_JSON)
-    eng.refresh()
-    assert not called  # no LLM call on empty transcript (R14: no vacuous run)
+    import pytest
+    with pytest.raises(RuntimeError):
+        eng.refresh()  # R14: nothing to summarize -> error, not vacuous run
+    assert not called
 
 
 def test_minutes_written_with_draft_banner(eng, monkeypatch):
