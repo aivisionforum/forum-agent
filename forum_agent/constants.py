@@ -43,7 +43,7 @@ TRANSLATE_TIMEOUT_SECONDS = 30
 # Insight engine (C4/C6). qwen3:8b w/ thinking: quality is adequate and the
 # short-model decode does not starve Whisper on the shared GPU (the 32b scar,
 # see ADR 0001). On a two-machine setup, switch to qwen2.5:32b.
-INSIGHT_MODEL = "qwen3:8b"
+INSIGHT_MODEL = TRANSLATE_MODEL  # same 8B: live path stays small (ADR 0001)
 INSIGHT_THINK = True
 INSIGHT_INTERVAL_SECONDS = 180   # auto-refresh cadence (spec: every 3-5 min)
 INSIGHT_WINDOW_SECONDS = 900     # transcript window fed per refresh
