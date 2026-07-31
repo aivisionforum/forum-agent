@@ -17,12 +17,12 @@ ASR_MAX_NO_SPEECH_PROB = 0.6
 
 # Neural VAD (Silero) for mic input: no calibration or tuning required
 SILERO_CHUNK = 512           # samples per Silero inference at 16 kHz
-SILERO_SPEECH_PROB = 0.3
+SILERO_SPEECH_PROB = 0.3     # frame is speech if any chunk >= this prob
 SILERO_MIN_PEAK = 1e-3      # below this post-AGC peak, skip neural VAD
 AGC_TARGET_PEAK = 0.5        # auto-gain target for mic input
 AGC_MAX_GAIN = 50.0          # cap so pure silence is not amplified into noise
 AGC_DECAY = 0.999            # running-peak decay per frame (~2 min half-life)
-DEAD_STREAM_SECONDS = 5.0    # all-zero input for this long -> reopen device     # frame is speech if any chunk >= this prob
+DEAD_STREAM_SECONDS = 5.0    # all-zero input for this long -> reopen device
 PRE_ROLL_SECONDS = 0.5       # audio kept from before speech onset (mic)
 PEAK_NORM_TARGET = 0.9       # amplify quiet mic segments before Whisper
 
@@ -73,8 +73,6 @@ LANG_MIXED = "mixed"
 # Server
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8710
-WS_PATH = "/ws/room/{room}"
-DEFAULT_ROOM = "room1"
 
 # Message types on the websocket
 MSG_PARTIAL = "partial"
@@ -84,6 +82,7 @@ MSG_TRANSLATION = "translation"
 # Files
 SESSIONS_DIR = "data/sessions"   # archived per-session files
 TRANSCRIPT_JSONL = "data/{room}_transcript.jsonl"
+TRANSLATIONS_JSONL = "data/{room}_translations.jsonl"
 RECORDING_WAV = "data/{room}_recording.wav"  # raw session audio (C3)
 FIXTURE_WAV = "data/fixture_meeting.wav"
 FIXTURE_REF_JSON = "data/fixture_reference.json"

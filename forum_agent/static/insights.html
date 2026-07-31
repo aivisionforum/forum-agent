@@ -47,6 +47,9 @@ const room = params.get("room") || "room1";
 const operator = params.get("operator") === "1";
 const session = params.get("session") || "";
 const KINDS = ["summary_points","emerging_consensus","tensions","open_questions"];
+const esc = (t) => String(t ?? "").replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let interval = 180, engineError = "";
 
 function render(s) {
   for (const kind of KINDS) {
@@ -59,7 +62,7 @@ function render(s) {
       d.className = "item " + (isNew ? "new" : it.status === "approved" ? "approved" : "draft");
       const badge = isNew ? "NEW 新" : it.status === "approved" ? "✓" : "DRAFT 草稿";
       d.innerHTML = `<span class="badge">${badge}</span>
-        <div class="zh">${it.zh}</div><div class="en">${it.en}</div>`;
+        <div class="zh">${esc(it.zh)}</div><div class="en">${esc(it.en)}</div>`;
       if (operator && !session) {
         const ops = document.createElement("div");
         ops.className = "ops";
@@ -89,6 +92,8 @@ function render(s) {
   document.getElementById("conv").textContent =
     c.zh ? `▶ ${c.zh} · ${c.en}` : "";
   lastUpdated = s.updated || 0;
+  interval = s.interval || interval;
+  engineError = s.error || "";
   tickMeta();
 }
 
@@ -103,8 +108,9 @@ function connect() {
     if (m.type === "session_reset") load();
   };
   ws.onclose = () => setTimeout(connect, 1500);
-  setInterval(() => { if (ws.readyState === 1) ws.send("ping"); }, 15000);
+  window._ws = ws;
 }
+setInterval(() => { if (window._ws && window._ws.readyState === 1) window._ws.send("ping"); }, 15000);
 if (session) {
   document.getElementById("viewbar").innerHTML =
     "ARCHIVED SESSION " + session + " (read-only)";
@@ -115,9 +121,11 @@ let lastUpdated = 0;
 function tickMeta() {
   const el = document.getElementById("meta");
   if (!lastUpdated) { el.textContent = "waiting for first refresh…"; return; }
-  const next = Math.max(0, 180 - (Date.now()/1000 - lastUpdated));
-  el.textContent = "updated " + new Date(lastUpdated * 1000).toLocaleTimeString()
+  const next = Math.max(0, interval - (Date.now()/1000 - lastUpdated));
+  el.textContent = (engineError ? "⚠ " + engineError + " · " : "")
+    + "updated " + new Date(lastUpdated * 1000).toLocaleTimeString()
     + (session ? "" : ` · next auto-update in ${Math.floor(next/60)}:${String(Math.floor(next%60)).padStart(2,"0")}`);
+  el.style.color = engineError ? "#f87171" : "";
 }
 setInterval(tickMeta, 1000);
 load(); if (!session) { connect(); setInterval(load, 30000); }

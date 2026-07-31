@@ -58,7 +58,7 @@
     auto-approve new insights (human corrects on review; uncheck for
     draft-until-approved gatekeeper mode)</label>
   <div style="color:#7f8c99;font-size:13px;margin-top:8px">
-    Auto-summarize runs every 4 minutes while a session is live. All items
+    Auto-summarize runs every 3 minutes while a session is live. All items
     appear as DRAFT on the insight panel until approved there (operator view).
   </div>
 </div>
@@ -68,6 +68,8 @@
     loading…</div>
 </div>
 <script>
+const esc = (t) => String(t ?? "").replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const els = Object.fromEntries(
   ["mic","replay","stop","play","status","err","phase"]
   .map(id => [id, document.getElementById(id)]));
@@ -83,7 +85,8 @@ async function refresh() {
     (s.running ? ` (room ${s.room})` : "");
   const [txt, color] = (s.running && PHASES[s.phase]) || ["", ""];
   els.phase.textContent = txt; els.phase.style.color = color;
-  els.err.textContent = s.error || "";
+  els.err.textContent = (s.error || "") +
+    (s.ollama === false ? "  ⚠ Ollama is not responding — translation and insights are down" : "");
   els.mic.disabled = els.replay.disabled = busy || s.running;
   els.stop.disabled = busy || !s.running;
 }
@@ -113,11 +116,12 @@ document.getElementById("autoapprove").onchange = (e) =>
 document.getElementById("summarize").onclick = async () => {
   const el = document.getElementById("istatus");
   el.textContent = "summarizing…";
-  try { await fetch("/api/insights/run", {method:"POST",
+  try { const r = await fetch("/api/insights/run", {method:"POST",
     headers:{"Content-Type":"application/json"}, body:"{}"});
+    if (!r.ok) throw new Error("HTTP " + r.status);
     el.textContent = "insights updated";
     window.open("/insights?room=room1&operator=1"); }
-  catch (e) { el.textContent = "failed: " + e; }
+  catch (e) { el.textContent = "summarize failed: " + e; }
 };
 document.getElementById("report").onclick = async () => {
   const el = document.getElementById("istatus");
@@ -132,10 +136,11 @@ document.getElementById("report").onclick = async () => {
 document.getElementById("minutes").onclick = async () => {
   const el = document.getElementById("istatus");
   el.textContent = "generating minutes…";
-  try { await fetch("/api/minutes", {method:"POST",
+  try { const r = await fetch("/api/minutes", {method:"POST",
     headers:{"Content-Type":"application/json"}, body:"{}"});
+    if (!r.ok) throw new Error("HTTP " + r.status);
     el.textContent = "minutes ready"; window.open("/minutes?room=room1"); }
-  catch (e) { el.textContent = "failed: " + e; }
+  catch (e) { el.textContent = "minutes failed: " + e; }
 };
 setInterval(refresh, 700); refresh();
 async function loadSessions() {
@@ -143,8 +148,8 @@ async function loadSessions() {
   const box = document.getElementById("sessions");
   if (!list.length) { box.textContent = "none yet — archives appear here when a new session starts"; return; }
   box.innerHTML = list.map(s2 =>
-    `<div style="margin-bottom:10px"><b>${s2.title}</b>
-      <a href="#" title="rename" onclick="renameSession('${s2.id}','${s2.title.replace(/'/g,"\\'")}');return false">✎</a><br>
+    `<div style="margin-bottom:10px"><b>${esc(s2.title)}</b>
+      <a href="#" title="rename" data-id="${s2.id}" class="rename">✎</a><br>
       <span style="color:#7f8c99">${s2.id} · ${s2.segments} segments</span> ·
       <a href="/insights?room=room1&operator=1&session=${s2.id}" target="_blank">insights</a> ·
       <a href="/minutes?room=room1&session=${s2.id}" target="_blank">minutes</a> ·
@@ -153,6 +158,10 @@ async function loadSessions() {
       <a href="#" style="color:#f87171" onclick="deleteSession('${s2.id}');return false">delete</a></div>`
   ).join("");
 }
+document.getElementById("sessions").addEventListener("click", (ev) => {
+  const a = ev.target.closest("a.rename");
+  if (a) { ev.preventDefault(); renameSession(a.dataset.id, ""); }
+});
 async function renameSession(id, current) {
   const title = prompt("Session title:", current);
   if (!title) return;

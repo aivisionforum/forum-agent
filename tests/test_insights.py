@@ -161,3 +161,35 @@ def test_report_fails_loudly_when_empty(tmp_path, monkeypatch):
     monkeypatch.setattr(rep, "SESSIONS_DIR", str(tmp_path / "none"))
     with pytest.raises(RuntimeError):
         rep.generate_report()  # R14: empty input is an error, not a report
+
+
+def test_server_param_validation():
+    import pytest
+    from fastapi import HTTPException
+    from forum_agent.server import safe_room, safe_session
+    assert safe_session("20260728-191122") == "20260728-191122"
+    assert safe_session("") == ""
+    for bad in ["../../etc", "/etc/passwd", "20260728-191122/../x"]:
+        with pytest.raises(HTTPException):
+            safe_session(bad)
+    assert safe_room("room1") == "room1"
+    for bad in ["../room1", "room/1", "a" * 40, ""]:
+        with pytest.raises(HTTPException):
+            safe_room(bad)
+
+
+def test_pages_escape_model_text(tmp_path, monkeypatch):
+    import json
+    from forum_agent import pages
+    monkeypatch.setattr(pages, "TRANSCRIPT_JSONL", str(tmp_path / "{room}_t.jsonl"))
+    monkeypatch.setattr(pages, "TRANSLATIONS_JSONL", str(tmp_path / "{room}_x.jsonl"))
+    (tmp_path / "room1_t.jsonl").write_text(json.dumps(
+        {"t_start": 0, "t_end": 1, "speaker_id": "Speaker A", "lang": "en",
+         "text": "<img src=x onerror=alert(1)>"}) + "\n")
+    html_out = pages.transcript_page("room1", "")
+    assert "<img" not in html_out and "&lt;img" in html_out
+
+    md = tmp_path / "m.md"
+    md.write_text("# ok\n<script>alert(1)</script>")
+    out = pages.render_markdown_page("T", md, "none")
+    assert "<script>alert" not in out
