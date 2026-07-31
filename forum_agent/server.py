@@ -98,16 +98,11 @@ async def insights_page() -> str:
 
 @app.get("/api/status")
 async def api_status() -> dict:
-    import requests
-    from forum_agent.constants import OLLAMA_URL
+    from forum_agent import llm
     from forum_agent.session import manager
     status = manager.status()
-    try:  # surface a dead Ollama on the console instead of failing silently
-        requests.get(OLLAMA_URL.rsplit("/api/", 1)[0] + "/api/tags",
-                     timeout=1).raise_for_status()
-        status["ollama"] = True
-    except requests.RequestException:
-        status["ollama"] = False
+    # surface a dead LLM server on the console instead of failing silently
+    status["llm"] = llm.healthy()
     return status
 
 
@@ -269,9 +264,15 @@ async def room_ws(ws: WebSocket, room: str) -> None:
 
 
 def main() -> None:
-    """Persistent server: sessions are started from the /control page."""
+    """Persistent server: sessions are started from the /control page.
+    Also launches and owns the mlx-lm model server (one-command startup)."""
+    import atexit
     import uvicorn
+    from forum_agent import llm
     from forum_agent.constants import SERVER_HOST, SERVER_PORT
+    proc = llm.launch_server()
+    if proc is not None:
+        atexit.register(proc.terminate)
     print(f"Control: http://{SERVER_HOST}:{SERVER_PORT}/control")
     # Import string (not the app object): under `python -m forum_agent.server`
     # this file is module `__main__`, and passing its app would leave the

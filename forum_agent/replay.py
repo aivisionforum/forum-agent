@@ -183,6 +183,11 @@ def main() -> None:
     if bool(args.wav) == args.mic:
         ap.error("provide either a WAV file or --mic")
 
+    import atexit
+    from forum_agent import llm
+    proc = llm.launch_server()  # managed MLX model server (one command)
+    if proc is not None:
+        atexit.register(proc.terminate)
     server = uvicorn.Server(uvicorn.Config(
         app, host=SERVER_HOST, port=SERVER_PORT, log_level="warning"))
     threading.Thread(target=server.run, daemon=True).start()
