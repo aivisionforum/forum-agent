@@ -29,10 +29,11 @@
 <h1>Forum Agent — session control</h1>
 <div class="sub">Choose the audio source. Pages:
   <a href="/subtitles?room=room1" target="_blank">subtitles</a> ·
-  <a href="/insights?room=room1&operator=1" target="_blank">insight panel (operator)</a> ·
-  <a href="/insights?room=room1" target="_blank">insight panel (projector)</a> ·
-  <a href="/minutes?room=room1" target="_blank">minutes</a> ·
-  <a href="/report" target="_blank">event report</a></div>
+  <a id="nav-op" href="/insights?room=room1&operator=1" target="_blank">insight panel (operator)</a> ·
+  <a id="nav-proj" href="/insights?room=room1" target="_blank">insight panel (projector)</a> ·
+  <a id="nav-min" href="/minutes?room=room1" target="_blank">minutes</a> ·
+  <a href="/report" target="_blank">event report</a>
+  <span id="nav-note" style="color:#556;font-size:13px"></span></div>
 <div class="card">
   <div id="status">Source: <b class="idle">idle</b></div>
   <div id="phase" style="font-size:18px;min-height:26px;margin-bottom:10px"></div>
@@ -90,6 +91,7 @@ async function refresh() {
     (s.llm === false ? "  ⚠ LLM server not responding — translation and insights are down" : "");
   els.mic.disabled = els.replay.disabled = busy || s.running;
   els.stop.disabled = busy || !s.running;
+  updateNav(s.running, latestSessionId);
 }
 async function post(path, body) {
   busy = true; refresh();
@@ -168,8 +170,20 @@ document.getElementById("report").onclick = () =>
   runAction("/api/report", "drafting event report", "report ready",
             "/report", 900000);
 setInterval(refresh, 700); refresh();
+function updateNav(running, latestId) {
+  // idle console: page links show the latest finished session, not empty
+  // live pages (a fresh session re-points them automatically)
+  const sfx = (!running && latestId) ? "&session=" + latestId : "";
+  document.getElementById("nav-op").href = "/insights?room=room1&operator=1" + sfx;
+  document.getElementById("nav-proj").href = "/insights?room=room1" + sfx;
+  document.getElementById("nav-min").href = "/minutes?room=room1" + sfx;
+  document.getElementById("nav-note").textContent =
+    sfx ? " (showing last session " + latestId + ")" : "";
+}
+let latestSessionId = "";
 async function loadSessions() {
   const list = await (await fetch("/api/sessions")).json();
+  latestSessionId = list.length ? list[0].id : "";
   const box = document.getElementById("sessions");
   if (!list.length) { box.textContent = "none yet — archives appear here when a new session starts"; return; }
   box.innerHTML = list.map(s2 =>
