@@ -53,6 +53,7 @@
   <button id="summarize">✦ Summarize now</button>
   <button id="minutes">📝 Generate minutes</button>
   <button id="report">📊 Generate event report</button>
+  <button id="cancelwait" style="display:none;color:#f87171">✕ Cancel wait</button>
   <span id="istatus" style="color:#7f8c99;font-size:14px"></span>
   <label><input type="checkbox" id="autoapprove" checked>
     auto-approve new insights (human corrects on review; uncheck for
@@ -113,35 +114,59 @@ document.getElementById("autoapprove").onchange = (e) =>
   fetch("/api/insights/mode", {method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({auto_approve: e.target.checked})});
-document.getElementById("summarize").onclick = async () => {
+const genButtons = ["summarize", "minutes", "report"];
+let genAbort = null, genTicker = null;
+function genBusy(busyLabel) {
   const el = document.getElementById("istatus");
-  el.textContent = "summarizing…";
-  try { const r = await fetch("/api/insights/run", {method:"POST",
-    headers:{"Content-Type":"application/json"}, body:"{}"});
-    if (!r.ok) throw new Error((await r.json()).detail || "HTTP " + r.status);
-    el.textContent = "insights updated";
-    window.open("/insights?room=room1&operator=1"); }
-  catch (e) { el.textContent = "summarize failed: " + e; }
-};
-document.getElementById("report").onclick = async () => {
+  const cancel = document.getElementById("cancelwait");
+  const running = busyLabel !== null;
+  for (const id of genButtons) document.getElementById(id).disabled = running;
+  cancel.style.display = running ? "" : "none";
+  clearInterval(genTicker);
+  if (running) {
+    const t0 = Date.now();
+    el.textContent = busyLabel + "… 0s";
+    genTicker = setInterval(() => {
+      el.textContent = `${busyLabel}… ${Math.round((Date.now() - t0)/1000)}s`;
+    }, 1000);
+  }
+}
+async function runAction(path, busyLabel, doneLabel, openUrl, timeoutMs) {
+  genAbort = new AbortController();
+  const timer = setTimeout(() => genAbort.abort(), timeoutMs);
+  genBusy(busyLabel);
   const el = document.getElementById("istatus");
-  el.textContent = "drafting report from all sessions (may take a few minutes)…";
   try {
-    const r = await fetch("/api/report", {method:"POST",
-      headers:{"Content-Type":"application/json"}, body:"{}"});
-    if (!r.ok) throw new Error((await r.json()).detail || r.status);
-    el.textContent = "report ready"; window.open("/report");
-  } catch (e) { el.textContent = "report failed: " + e; }
-};
-document.getElementById("minutes").onclick = async () => {
-  const el = document.getElementById("istatus");
-  el.textContent = "generating minutes…";
-  try { const r = await fetch("/api/minutes", {method:"POST",
-    headers:{"Content-Type":"application/json"}, body:"{}"});
+    const r = await fetch(path, {method: "POST", signal: genAbort.signal,
+      headers: {"Content-Type": "application/json"}, body: "{}"});
     if (!r.ok) throw new Error((await r.json()).detail || "HTTP " + r.status);
-    el.textContent = "minutes ready"; window.open("/minutes?room=room1"); }
-  catch (e) { el.textContent = "minutes failed: " + e; }
-};
+    const data = await r.json();
+    genBusy(null);
+    if (data.archived) {  // post-session run: open that session's view
+      el.textContent = doneLabel + " (session " + data.archived + ")";
+      window.open(openUrl + "&session=" + data.archived);
+    } else {
+      el.textContent = doneLabel;
+      if (openUrl) window.open(openUrl);
+    }
+  } catch (e) {
+    genBusy(null);
+    el.textContent = e.name === "AbortError"
+      ? busyLabel + " — stopped waiting (it may still finish in the background; check the page in a minute)"
+      : busyLabel + " failed: " + (e.message || e);
+  } finally { clearTimeout(timer); }
+}
+document.getElementById("cancelwait").onclick = () => genAbort && genAbort.abort();
+document.getElementById("summarize").onclick = () =>
+  runAction("/api/insights/run", "summarizing", "insights updated",
+            "/insights?room=room1&operator=1", 180000);
+document.getElementById("minutes").onclick = () =>
+  runAction("/api/minutes", "generating minutes", "minutes ready",
+            "/minutes?room=room1", 300000);  // minutes API writes into the
+            // archive itself when idle; the page shows the live-or-latest file
+document.getElementById("report").onclick = () =>
+  runAction("/api/report", "drafting event report", "report ready",
+            "/report", 900000);
 setInterval(refresh, 700); refresh();
 async function loadSessions() {
   const list = await (await fetch("/api/sessions")).json();
