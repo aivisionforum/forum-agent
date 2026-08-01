@@ -197,3 +197,24 @@ def test_pages_escape_model_text(tmp_path, monkeypatch):
     md.write_text("# ok\n<script>alert(1)</script>")
     out = pages.render_markdown_page("T", md, "none")
     assert "<script>alert" not in out
+
+
+def test_stale_refresh_redirects_to_archive(eng, monkeypatch, tmp_path):
+    import json
+    import forum_agent.session as fs
+    monkeypatch.setattr(fs, "SESSIONS_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setattr(ins, "SESSIONS_DIR", str(tmp_path / "sessions"),
+                        raising=False)
+    d = tmp_path / "sessions" / "20260731-120000"
+    d.mkdir(parents=True)
+    (d / "room1_transcript.jsonl").write_text('{"t_end": 1}\n')
+
+    def llm_and_stop(prompt):
+        eng.stop_auto()  # session stops while the LLM call is in flight
+        return LLM_JSON
+    monkeypatch.setattr(ins, "_llm", llm_and_stop)
+    state = eng.refresh()
+    assert state.get("archived") == "20260731-120000"  # redirected, not lost
+    saved = json.loads((d / "room1_insights.json").read_text())
+    assert saved["items"]["summary_points"][0]["zh"] == "要点一"
+    assert eng.state["updated"] == 0  # live state untouched
