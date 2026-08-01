@@ -106,12 +106,12 @@ class InsightEngine:
         hub.broadcast_from_thread(self.room, {"type": MSG_INSIGHTS, **self.state})
 
     def latest_archive_dir(self) -> str | None:
-        from forum_agent.session import list_sessions
-        sessions = list_sessions()
+        import forum_agent.session as fs
+        sessions = fs.list_sessions()
         if not sessions:
             return None
-        from forum_agent.constants import SESSIONS_DIR
-        return f"{SESSIONS_DIR}/{sessions[0]['id']}"
+        # fs.SESSIONS_DIR (not constants) so both resolve identically
+        return f"{fs.SESSIONS_DIR}/{sessions[0]['id']}"
 
     def refresh(self) -> dict:
         """One engine run: transcript window + state -> updated draft items.
@@ -142,10 +142,24 @@ class InsightEngine:
         parsed = _parse_json(_llm(prompt))
         now = time.time()
         with self._lock:
-            if gen != self._gen:
-                # session was reset/stopped during the (long) LLM call: this
-                # result belongs to the previous meeting — drop it
-                return self.state
+            stale = gen != self._gen
+        if stale:
+            # The session was stopped (archived) or reset during the LLM
+            # call. The result belongs to THAT meeting: store it into the
+            # latest archive instead of contaminating the new session or
+            # discarding the operator's work.
+            base_dir = self.latest_archive_dir()
+            if base_dir:
+                empty = {"updated": 0, "items": {k: [] for k in KINDS},
+                         "convergence_line": {"zh": "", "en": ""},
+                         "hidden_zh": [],
+                         "approved_log": {k: [] for k in KINDS}}
+                apath = Path(base_dir) / f"{self.room}_insights.json"
+                prev = json.loads(apath.read_text()) if apath.exists() \
+                    else empty
+                return self._store_archived(base_dir, prev, parsed)
+            return self.state
+        with self._lock:
             hidden = set(self.state.get("hidden_zh", []))
             for kind in KINDS:
                 fresh = parsed.get(kind, []) or []
@@ -186,7 +200,6 @@ class InsightEngine:
     def _refresh_archived(self, base_dir: str, transcript: str) -> dict:
         """Post-hoc insights for an already-archived session: reads and
         writes that session's own insights file; live state untouched."""
-        import uuid as _uuid
         apath = Path(base_dir) / f"{self.room}_insights.json"
         state = json.loads(apath.read_text()) if apath.exists() else \
             {"updated": 0, "items": {k: [] for k in KINDS},
@@ -197,6 +210,12 @@ class InsightEngine:
                            json.dumps(state["items"], ensure_ascii=False))
                   .replace("{transcript}", transcript))
         parsed = _parse_json(_llm(prompt))
+        return self._store_archived(base_dir, state, parsed)
+
+    def _store_archived(self, base_dir: str, state: dict,
+                        parsed: dict) -> dict:
+        import uuid as _uuid
+        apath = Path(base_dir) / f"{self.room}_insights.json"
         now = time.time()
         for kind in KINDS:
             items = [{"id": _uuid.uuid4().hex[:8], "zh": it["zh"],
