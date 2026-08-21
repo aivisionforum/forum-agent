@@ -1,7 +1,7 @@
 # forum-agent
 
-An open-source AI participant for bilingual (中文/English) forums, built for
-**AI Vision Forum Shenzhen 2026**. It listens to room audio, produces a
+Built for the [AI Vision Forum Shenzhen 2026](https://shenzhen2026.visionforum.ai)
+(Oct 14–15, Zhuhai) — an open-source AI participant for bilingual (中文/English) forums. It listens to room audio, produces a
 diarized, code-switching-aware transcript with live bilingual subtitles —
 **fully locally**: no cloud APIs, no internet needed at the venue. Speakers
 are labelled only `Speaker A/B/C…` (Chatham House Rule); all AI output is a
@@ -13,6 +13,17 @@ Status: **M1 (proof of concept), extended** — single-room pipeline: audio
 source and input device. See [docs/SPEC.md](docs/SPEC.md) for the full
 requirement spec (C1–C10) and [PROMPT.md](PROMPT.md) for the build plan
 (next: insight engine, operator console, minutes, two-room mode).
+
+## Screenshots
+
+Operator console — audio source, generation controls (live session when
+running, otherwise the checked sessions), and the session archive:
+
+![Operator console](docs/img/console.png)
+
+Live bilingual subtitles (from the acceptance run):
+
+![Live subtitles](docs/img/subtitles.png)
 
 ## Architecture (M1)
 
