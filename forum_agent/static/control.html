@@ -48,10 +48,16 @@
       <option value="auto">Auto (built-in mic preferred)</option>
     </select></label>
   <button class="primary" id="mic">🎙 Start microphone</button>
-  <button class="primary" id="replay">▶ Start test audio file</button>
   <button class="danger" id="stop">■ Stop</button>
-  <label><input type="checkbox" id="play" checked>
-    play test audio on speakers</label>
+  <details style="margin-top:14px">
+    <summary style="cursor:pointer;color:#7f8c99;font-size:14px">Testing
+      tools (rehearsal / demo without a live mic)</summary>
+    <div style="margin-top:10px">
+      <button class="primary" id="replay">▶ Start test audio file</button>
+      <label><input type="checkbox" id="play" checked>
+        play test audio on speakers</label>
+    </div>
+  </details>
   <div class="err" id="err"></div>
 </div>
 <div class="card">
