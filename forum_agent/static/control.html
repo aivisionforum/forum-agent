@@ -50,7 +50,8 @@
   <div class="err" id="err"></div>
 </div>
 <div class="card">
-  <b style="font-size:16px">Insights &amp; minutes</b><br>
+  <b style="font-size:16px">Insights &amp; minutes — current / latest session</b>
+  <span style="color:#556;font-size:12px">(the report below uses the checked sessions)</span><br>
   <button id="summarize">✦ Summarize now</button>
   <button id="minutes">📝 Generate minutes</button>
   <button id="report">📊 Generate report from selected sessions</button>
@@ -66,7 +67,7 @@
 </div>
 <div class="card">
   <b style="font-size:16px">Past sessions</b>
-  <div id="sessions" style="margin-top:10px;font-size:15px;color:#a8b4c0">
+  <div id="sessions" style="margin-top:10px;font-size:15px;color:#a8b4c0;max-height:300px;overflow-y:auto;padding-right:6px">
     loading…</div>
 </div>
 <script>
@@ -190,14 +191,22 @@ function updateNav(running, latestId) {
     sfx ? " (showing last session " + latestId + ")" : "";
 }
 let latestSessionId = "";
+const sessSelState = new Map();  // id -> checked; survives the 5s re-render
+let sessFirstLoad = true;
 async function loadSessions() {
   const list = await (await fetch("/api/sessions")).json();
   latestSessionId = list.length ? list[0].id : "";
   const box = document.getElementById("sessions");
   if (!list.length) { box.textContent = "none yet — archives appear here when a new session starts"; return; }
-  box.innerHTML = list.map(s2 =>
+  // record current checkbox state before re-render wipes the DOM
+  document.querySelectorAll(".sesssel").forEach(cb =>
+      sessSelState.set(cb.dataset.id, cb.checked));
+  const isChecked = (id, idx) => sessSelState.has(id)
+      ? sessSelState.get(id)
+      : (idx === 0);  // new/first-seen sessions: only the latest defaults on
+  box.innerHTML = list.map((s2, idx) =>
     `<div style="margin-bottom:10px"><label style="cursor:pointer">
-      <input type="checkbox" class="sesssel" data-id="${s2.id}" checked>
+      <input type="checkbox" class="sesssel" data-id="${s2.id}" ${isChecked(s2.id, idx) ? "checked" : ""}>
       <b>${esc(s2.title)}</b></label>
       <a href="#" title="rename" data-id="${s2.id}" class="rename">✎</a><br>
       <span style="color:#7f8c99">${s2.id} · ${s2.segments} segments</span> ·
