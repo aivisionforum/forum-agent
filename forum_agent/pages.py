@@ -56,6 +56,9 @@ def report_page() -> str:
         newer = sorted(d.name for d in root.iterdir() if d.is_dir()
                        and _session_has_material(d)
                        and d.stat().st_mtime > rp.stat().st_mtime)
+        live_tr = Path(TRANSCRIPT_JSONL.format(room="room1"))
+        if live_tr.exists() and live_tr.stat().st_mtime > rp.stat().st_mtime:
+            newer.append("current live session / 当前进行中的会议")
         if newer:
             names = ", ".join(newer)
             banner = ("<blockquote><b>STALE / 报告未包含最新会议</b> — "
