@@ -10,7 +10,7 @@
   h1 { font-size: 22px; font-weight: 600; margin-bottom: 6px; }
   .sub { color: #7f8c99; margin-bottom: 28px; }
   .card { background: #121922; border: 1px solid #1c2530; border-radius: 10px;
-          padding: 24px; max-width: 560px; margin-bottom: 20px; }
+          padding: 24px; }
   button { font-size: 17px; padding: 12px 22px; margin: 6px 10px 6px 0;
            border-radius: 8px; border: 1px solid #2a3a4d; cursor: pointer;
            background: #18222e; color: #f2f5f7; }
@@ -23,6 +23,10 @@
   #status b.idle { color: #7f8c99; }
   a { color: #6ea8fe; }
   .err { color: #f87171; font-size: 14px; margin-top: 8px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+          align-items: start; max-width: 1180px; }
+  .grid .card.wide { grid-column: 1 / -1; }
+  @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -34,6 +38,7 @@
   <a id="nav-min" href="/minutes?room=room1" target="_blank">minutes</a> ·
   <a href="/report" target="_blank" title="Shows the last generated report — pick sessions below and regenerate to change its scope">event report (last generated)</a>
   <span id="nav-note" style="color:#556;font-size:13px"></span></div>
+<div class="grid">
 <div class="card">
   <div id="status">Source: <b class="idle">idle</b></div>
   <div id="phase" style="font-size:18px;min-height:26px;margin-bottom:10px"></div>
@@ -65,10 +70,11 @@
     appear as DRAFT on the insight panel until approved there (operator view).
   </div>
 </div>
-<div class="card">
+<div class="card wide">
   <b style="font-size:16px">Past sessions</b>
   <div id="sessions" style="margin-top:10px;font-size:15px;color:#a8b4c0;max-height:300px;overflow-y:auto;padding-right:6px">
     loading…</div>
+</div>
 </div>
 <script>
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g,
