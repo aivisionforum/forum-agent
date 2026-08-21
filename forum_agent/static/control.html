@@ -50,8 +50,8 @@
   <div class="err" id="err"></div>
 </div>
 <div class="card">
-  <b style="font-size:16px">Insights &amp; minutes — current / latest session</b>
-  <span style="color:#556;font-size:12px">(the report below uses the checked sessions)</span><br>
+  <b style="font-size:16px">Insights, minutes &amp; report</b>
+  <span style="color:#556;font-size:12px">(live session when running; otherwise the checked sessions below)</span><br>
   <button id="summarize">✦ Summarize now</button>
   <button id="minutes">📝 Generate minutes</button>
   <button id="report">📊 Generate report from selected sessions</button>
@@ -81,8 +81,10 @@ const PHASES = {
   "loading models": ["⏳ Loading models — please wait…", "#fbbf24"],
   "live": ["🟢 Live — speak now", "#3ddc84"],
 };
+let lastRunning = false;
 async function refresh() {
   const s = await (await fetch("/api/status")).json();
+  lastRunning = !!s.running;
   const mode = s.running ? s.mode : "idle";
   els.status.innerHTML = `Source: <b class="${mode}">${mode}</b>` +
     (s.running ? ` (room ${s.room})` : "");
@@ -146,7 +148,10 @@ async function runAction(path, busyLabel, doneLabel, openUrl, timeoutMs, bodyObj
     if (!r.ok) throw new Error((await r.json()).detail || "HTTP " + r.status);
     const data = await r.json();
     genBusy(null);
-    if (data.archived) {  // post-session run: open that session's view
+    if (data.processed) {  // idle multi-session run
+      el.textContent = doneLabel + " (" + data.processed.join(", ") + ")";
+      if (openUrl) window.open(openUrl + "&session=" + data.processed[0]);
+    } else if (data.archived) {  // post-session run: open that session's view
       el.textContent = doneLabel + " (session " + data.archived + ")";
       window.open(openUrl + "&session=" + data.archived);
     } else {
@@ -161,13 +166,36 @@ async function runAction(path, busyLabel, doneLabel, openUrl, timeoutMs, bodyObj
   } finally { clearTimeout(timer); }
 }
 document.getElementById("cancelwait").onclick = () => genAbort && genAbort.abort();
-document.getElementById("summarize").onclick = () =>
-  runAction("/api/insights/run", "summarizing", "insights updated",
-            "/insights?room=room1&operator=1", 180000);
-document.getElementById("minutes").onclick = () =>
-  runAction("/api/minutes", "generating minutes", "minutes ready",
-            "/minutes?room=room1", 300000);  // minutes API writes into the
-            // archive itself when idle; the page shows the live-or-latest file
+function checkedSessions() {
+  return [...document.querySelectorAll(".sesssel:checked")]
+      .map(cb => cb.dataset.id);
+}
+document.getElementById("summarize").onclick = () => {
+  const ids = lastRunning ? [] : checkedSessions();
+  if (!lastRunning && !ids.length) {
+    document.getElementById("istatus").textContent =
+        "no live session — check at least one session below to summarize";
+    return;
+  }
+  const label = lastRunning ? "summarizing"
+      : `summarizing ${ids.length} selected session(s)`;
+  runAction("/api/insights/run", label, "insights updated",
+            "/insights?room=room1&operator=1",
+            180000 * Math.max(1, ids.length), {sessions: ids});
+};
+document.getElementById("minutes").onclick = () => {
+  const ids = lastRunning ? [] : checkedSessions();
+  if (!lastRunning && !ids.length) {
+    document.getElementById("istatus").textContent =
+        "no live session — check at least one session below for minutes";
+    return;
+  }
+  const label = lastRunning ? "generating minutes"
+      : `generating minutes for ${ids.length} selected session(s)`;
+  runAction("/api/minutes", label, "minutes ready",
+            "/minutes?room=room1",
+            300000 * Math.max(1, ids.length), {sessions: ids});
+};
 document.getElementById("report").onclick = () => {
   const ids = [...document.querySelectorAll(".sesssel:checked")]
       .map(cb => cb.dataset.id);

@@ -170,14 +170,42 @@ async def api_sessions_delete(body: dict) -> dict:
     return {"deleted": delete_session(body.get("id", ""))}
 
 
+def _selected_sessions(body: dict) -> list[str]:
+    """Validated archive ids from the console. Live session wins: callers
+    only use this when nothing is running."""
+    from forum_agent.constants import SESSIONS_DIR
+    ids = body.get("sessions") or []
+    if not isinstance(ids, list) or not all(isinstance(x, str) for x in ids):
+        raise HTTPException(400, "sessions must be a list of session ids")
+    out = []
+    for sid in ids:
+        if "/" in sid or "\\" in sid or sid in (".", ".."):
+            raise HTTPException(400, f"invalid session id: {sid!r}")
+        if not Path(SESSIONS_DIR, sid).is_dir():
+            raise HTTPException(404, f"unknown session: {sid}")
+        out.append(sid)
+    return out
+
+
 @app.post("/api/insights/run")
 async def api_insights_run(body: dict) -> dict:
-    """Manual 'Summarize now' from the operator console."""
+    """Manual 'Summarize now'. Live session takes priority; when idle,
+    runs per selected archived session."""
     from forum_agent.insights import engine
+    from forum_agent.session import manager
     import anyio
+    import functools
     room = safe_room(body.get("room", "room1"))
+    e = engine(room)
     try:
-        return await anyio.to_thread.run_sync(engine(room).refresh)
+        if not manager.status()["running"]:
+            selected = _selected_sessions(body)
+            if selected:
+                for sid in selected:
+                    await anyio.to_thread.run_sync(
+                        functools.partial(e.refresh_for, sid))
+                return {"processed": selected}
+        return await anyio.to_thread.run_sync(e.refresh)
     except RuntimeError as exc:  # nothing to summarize anywhere
         raise HTTPException(409, str(exc))
 
@@ -200,11 +228,26 @@ async def api_insights_item(body: dict) -> dict:
 
 @app.post("/api/minutes")
 async def api_minutes(body: dict) -> dict:
+    """Live session takes priority; when idle, generates minutes for each
+    selected archived session."""
     from forum_agent.insights import engine
+    from forum_agent.session import manager
     import anyio
+    import functools
     room = safe_room(body.get("room", "room1"))
-    path = await anyio.to_thread.run_sync(engine(room).generate_minutes)
-    return {"path": path}
+    e = engine(room)
+    try:
+        if not manager.status()["running"]:
+            selected = _selected_sessions(body)
+            if selected:
+                for sid in selected:
+                    await anyio.to_thread.run_sync(
+                        functools.partial(e.minutes_for, sid))
+                return {"processed": selected}
+        path = await anyio.to_thread.run_sync(e.generate_minutes)
+        return {"path": path}
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc))
 
 
 @app.post("/api/report")

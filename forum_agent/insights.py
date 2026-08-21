@@ -197,6 +197,44 @@ class InsightEngine:
                 f.write(json.dumps(self.state, ensure_ascii=False) + "\n")
         return self.state
 
+    def refresh_for(self, session_id: str) -> dict:
+        """Insights for one specific archived session (operator-selected)."""
+        from forum_agent.constants import SESSIONS_DIR
+        base_dir = f"{SESSIONS_DIR}/{session_id}"
+        transcript = read_transcript(self.room, base_dir=base_dir)
+        if not transcript.strip():
+            raise RuntimeError(f"session {session_id}: no transcript")
+        return self._refresh_archived(base_dir, transcript)
+
+    def minutes_for(self, session_id: str) -> str:
+        """Minutes for one specific archived session, using that session's
+        own approved insights (never the live room state)."""
+        from forum_agent.constants import SESSIONS_DIR
+        base_dir = f"{SESSIONS_DIR}/{session_id}"
+        transcript = read_transcript(self.room, base_dir=base_dir)
+        if not transcript.strip():
+            raise RuntimeError(f"session {session_id}: no transcript")
+        apath = Path(base_dir) / f"{self.room}_insights.json"
+        approved = {}
+        if apath.exists():
+            data = json.loads(apath.read_text())
+            approved = data.get("approved_log") or data.get("items") or {}
+        prompt = ((_PROMPTS / "minutes.txt").read_text()
+                  .replace("{insights}",
+                           json.dumps(approved, ensure_ascii=False))
+                  .replace("{transcript}", transcript))
+        md = _llm(prompt)
+        md = re.sub(r"^```(markdown)?|```$", "", md.strip(),
+                    flags=re.M).strip()
+        out = Path(base_dir) / f"{self.room}_minutes.md"
+        content = ("> DRAFT — pending human review / 草稿，待人工确认\n\n"
+                   f"{md}\n")
+        out.write_text(content)
+        stamped = out.with_name(out.name.replace(
+            ".md", time.strftime("_%H%M%S.md")))
+        stamped.write_text(content)
+        return str(out)
+
     def _refresh_archived(self, base_dir: str, transcript: str) -> dict:
         """Post-hoc insights for an already-archived session: reads and
         writes that session's own insights file; live state untouched."""
