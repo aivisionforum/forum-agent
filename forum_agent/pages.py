@@ -39,9 +39,32 @@ def minutes_path(room: str, session: str) -> Path:
         else Path(MINUTES_MD.format(room=room))
 
 
+def _session_has_material(d: Path, room: str = "room1") -> bool:
+    return (d / f"{room}_insights.json").exists() or \
+        (d / f"{room}_minutes.md").exists()
+
+
 def report_page() -> str:
-    return render_markdown_page("Report", Path(REPORT_MD),
-                                "No report generated yet.")
+    """Whole-event synthesis. Warns when sessions were archived after the
+    report was generated, so a stale draft is never mistaken for current."""
+    import markdown
+    rp = Path(REPORT_MD)
+    text = rp.read_text() if rp.exists() else "No report generated yet."
+    banner = ""
+    root = Path(SESSIONS_DIR)
+    if rp.exists() and root.exists():
+        newer = sorted(d.name for d in root.iterdir() if d.is_dir()
+                       and _session_has_material(d)
+                       and d.stat().st_mtime > rp.stat().st_mtime)
+        if newer:
+            names = ", ".join(newer)
+            banner = ("<blockquote><b>STALE / 报告未包含最新会议</b> — "
+                      f"generated before session(s): {html.escape(names)}. "
+                      "Click “Generate event report” in the control console "
+                      "to refresh. / 请在控制台点击“Generate event report”"
+                      "重新生成。</blockquote>")
+    md = markdown.markdown(html.escape(text), extensions=["tables"])
+    return _shell("Report", banner + md)
 
 
 def transcript_paths(room: str, session: str) -> tuple[Path, Path]:
