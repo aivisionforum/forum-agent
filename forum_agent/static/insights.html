@@ -29,6 +29,9 @@
                 border-radius: 6px; border: 1px solid #2a3a4d; cursor: pointer;
                 background: #18222e; color: #cbd5e1; }
   #meta { color: #556; font-size: 13px; }
+  /* Projector: lock to one screen — content is auto-zoomed to fit, never
+     scrolled (a wall display cannot be scrolled by anyone). */
+  body.projector { height: 100vh; overflow: hidden; }
 </style>
 </head>
 <body>
@@ -45,6 +48,18 @@
 const params = new URLSearchParams(location.search);
 const room = params.get("room") || "room1";
 const operator = params.get("operator") === "1";
+if (!operator) document.body.classList.add("projector");
+function fitToScreen() {
+  if (operator) return;
+  // start large for TV legibility, shrink until everything fits the screen
+  let z = 1.4;
+  document.body.style.zoom = z;
+  const fits = () =>
+      document.documentElement.scrollHeight <= window.innerHeight &&
+      document.documentElement.scrollWidth <= window.innerWidth;
+  while (z > 0.55 && !fits()) { z -= 0.05; document.body.style.zoom = z; }
+}
+window.addEventListener("resize", fitToScreen);
 const session = params.get("session") || "";
 const KINDS = ["summary_points","emerging_consensus","tensions","open_questions"];
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g,
@@ -95,6 +110,7 @@ function render(s) {
   interval = s.interval || interval;
   engineError = s.error || "";
   tickMeta();
+  fitToScreen();
 }
 
 async function load() {
