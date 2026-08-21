@@ -32,7 +32,7 @@
   <a id="nav-op" href="/insights?room=room1&operator=1" target="_blank">insight panel (operator)</a> ·
   <a id="nav-proj" href="/insights?room=room1" target="_blank">insight panel (projector)</a> ·
   <a id="nav-min" href="/minutes?room=room1" target="_blank">minutes</a> ·
-  <a href="/report" target="_blank" title="Synthesis of ALL archived sessions — regenerate to include the latest">event report (all sessions)</a>
+  <a href="/report" target="_blank" title="Shows the last generated report — pick sessions below and regenerate to change its scope">event report (last generated)</a>
   <span id="nav-note" style="color:#556;font-size:13px"></span></div>
 <div class="card">
   <div id="status">Source: <b class="idle">idle</b></div>
@@ -53,7 +53,7 @@
   <b style="font-size:16px">Insights &amp; minutes</b><br>
   <button id="summarize">✦ Summarize now</button>
   <button id="minutes">📝 Generate minutes</button>
-  <button id="report">📊 Generate event report</button>
+  <button id="report">📊 Generate report from selected sessions</button>
   <button id="cancelwait" style="display:none;color:#f87171">✕ Cancel wait</button>
   <span id="istatus" style="color:#7f8c99;font-size:14px"></span>
   <label><input type="checkbox" id="autoapprove" checked>
@@ -133,14 +133,15 @@ function genBusy(busyLabel) {
     }, 1000);
   }
 }
-async function runAction(path, busyLabel, doneLabel, openUrl, timeoutMs) {
+async function runAction(path, busyLabel, doneLabel, openUrl, timeoutMs, bodyObj) {
   genAbort = new AbortController();
   const timer = setTimeout(() => genAbort.abort(), timeoutMs);
   genBusy(busyLabel);
   const el = document.getElementById("istatus");
   try {
     const r = await fetch(path, {method: "POST", signal: genAbort.signal,
-      headers: {"Content-Type": "application/json"}, body: "{}"});
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(bodyObj || {})});
     if (!r.ok) throw new Error((await r.json()).detail || "HTTP " + r.status);
     const data = await r.json();
     genBusy(null);
@@ -166,9 +167,17 @@ document.getElementById("minutes").onclick = () =>
   runAction("/api/minutes", "generating minutes", "minutes ready",
             "/minutes?room=room1", 300000);  // minutes API writes into the
             // archive itself when idle; the page shows the live-or-latest file
-document.getElementById("report").onclick = () =>
-  runAction("/api/report", "drafting event report", "report ready",
-            "/report", 900000);
+document.getElementById("report").onclick = () => {
+  const ids = [...document.querySelectorAll(".sesssel:checked")]
+      .map(cb => cb.dataset.id);
+  if (!ids.length) {
+    document.getElementById("istatus").textContent =
+        "select at least one session below (checkboxes) for the report";
+    return;
+  }
+  runAction("/api/report", `drafting report (${ids.length} session(s))`,
+            "report ready", "/report", 900000, {sessions: ids});
+};
 setInterval(refresh, 700); refresh();
 function updateNav(running, latestId) {
   // idle console: page links show the latest finished session, not empty
@@ -187,7 +196,9 @@ async function loadSessions() {
   const box = document.getElementById("sessions");
   if (!list.length) { box.textContent = "none yet — archives appear here when a new session starts"; return; }
   box.innerHTML = list.map(s2 =>
-    `<div style="margin-bottom:10px"><b>${esc(s2.title)}</b>
+    `<div style="margin-bottom:10px"><label style="cursor:pointer">
+      <input type="checkbox" class="sesssel" data-id="${s2.id}" checked>
+      <b>${esc(s2.title)}</b></label>
       <a href="#" title="rename" data-id="${s2.id}" class="rename">✎</a><br>
       <span style="color:#7f8c99">${s2.id} · ${s2.segments} segments</span> ·
       <a href="/insights?room=room1&operator=1&session=${s2.id}" target="_blank">insights</a> ·

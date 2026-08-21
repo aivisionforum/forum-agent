@@ -43,24 +43,33 @@ def _session_block(d: Path, room: str = "room1") -> str | None:
     return "\n".join(parts)
 
 
-def generate_report() -> str:
-    """Draft the event synthesis report from every archived session."""
+def generate_report(selected: list[str] | None = None) -> str:
+    """Draft a synthesis report from the chosen archived sessions.
+
+    selected: list of session ids to include; None/empty means all. The
+    operator chooses in the console — archives can belong to unrelated
+    meetings, so aggregating everything by default is only a fallback."""
     root = Path(SESSIONS_DIR)
     blocks = []
+    included = []
     if root.exists():
         for d in sorted(p for p in root.iterdir() if p.is_dir()):
+            if selected and d.name not in selected:
+                continue
             block = _session_block(d)
             if block:
                 blocks.append(block)
+                included.append(d.name)
     if not blocks:
-        raise RuntimeError("no archived sessions with insights or minutes")
+        raise RuntimeError("no archived sessions with insights or minutes "
+                           "matched the selection")
     prompt = (_PROMPTS / "report.txt").read_text().replace(
         "{sessions}", "\n\n".join(blocks))
     md = _llm(prompt)
     md = re.sub(r"^```(markdown)?|```$", "", md.strip(), flags=re.M).strip()
     content = ("> DRAFT — pending human review / 草稿，待组委会审定\n"
                f"> generated {time.strftime('%Y-%m-%d %H:%M')} from "
-               f"{len(blocks)} session(s)\n\n{md}\n")
+               f"{len(blocks)} session(s): {', '.join(included)}\n\n{md}\n")
     out = Path(REPORT_MD)
     out.parent.mkdir(exist_ok=True)
     out.write_text(content)

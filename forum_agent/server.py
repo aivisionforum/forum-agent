@@ -211,7 +211,14 @@ async def api_minutes(body: dict) -> dict:
 async def api_report(body: dict) -> dict:
     from forum_agent.report import generate_report
     import anyio
-    path = await anyio.to_thread.run_sync(generate_report)
+    import functools
+    selected = body.get("sessions") or None
+    if selected is not None and not (
+            isinstance(selected, list)
+            and all(isinstance(x, str) for x in selected)):
+        raise HTTPException(400, "sessions must be a list of session ids")
+    path = await anyio.to_thread.run_sync(
+        functools.partial(generate_report, selected))
     return {"path": path}
 
 
