@@ -11,6 +11,8 @@ import forum_agent.insights as ins
 @pytest.fixture()
 def eng(tmp_path, monkeypatch):
     monkeypatch.setattr(ins, "INSIGHTS_JSON", str(tmp_path / "{room}_i.json"))
+    monkeypatch.setattr(ins, "INSIGHTS_HISTORY",
+                        str(tmp_path / "{room}_i_history.jsonl"))
     monkeypatch.setattr(ins, "MINUTES_MD", str(tmp_path / "{room}_m.md"))
     monkeypatch.setattr(ins, "TRANSCRIPT_JSONL",
                         str(tmp_path / "{room}_t.jsonl"))
