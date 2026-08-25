@@ -13,3 +13,4 @@ websockets==16.1.1
 silero-vad==6.2.1
 Markdown==3.10.2
 mlx-lm==0.31.3
+sounddevice==0.5.6
