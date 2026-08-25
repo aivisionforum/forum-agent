@@ -101,6 +101,7 @@ function fitToScreen() {
   if (operator) return;
   for (const kind of KINDS) {
     const box = document.getElementById(kind);
+    box.style.minHeight = "";
     document.getElementById("sec-" + kind).style.display =
       (OPTIONAL.includes(kind) && !box.children.length) ? "none" : "";
     for (const el of box.children) el.style.display = "";
@@ -117,8 +118,20 @@ function fitToScreen() {
     zoomFit(0.55);
     fixedZoom = Math.min(fixedZoom, parseFloat(document.body.style.zoom));
   }
-  applyPages(pageTick);
+  // Lock every flipping section to its tallest page's height, so the
+  // sections below it hold still while readers are mid-sentence.
   document.body.style.zoom = fixedZoom;
+  const tallest = {};
+  for (let t = 0; t < maxPages; t++) {
+    applyPages(t);
+    for (const kind of KINDS) {
+      const box = document.getElementById(kind);
+      tallest[kind] = Math.max(tallest[kind] || 0, box.offsetHeight);
+    }
+  }
+  for (const kind of KINDS)
+    document.getElementById(kind).style.minHeight = tallest[kind] + "px";
+  applyPages(pageTick);
 }
 setInterval(() => {
   if (paging && !operator) {
