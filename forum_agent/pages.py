@@ -25,13 +25,25 @@ def _shell(title: str, body_html: str, extra_css: str = "") -> str:
             f"</title><style>{_BASE_CSS}{extra_css}</style><body>{body_html}")
 
 
-def render_markdown_page(title: str, path: Path, empty_msg: str) -> str:
+def _busy_banner(busy: dict | None) -> str:
+    """Progress notice + 5s auto-reload while a background AI task runs, so
+    an empty or stale page never looks broken."""
+    if not busy:
+        return ""
+    return ("<meta http-equiv=refresh content=5>"
+            "<blockquote>⏳ <b>WORKING / 生成中</b> — "
+            f"{html.escape(busy['label'])}, running for {busy['seconds']}s. "
+            "This page reloads automatically. / 页面将自动刷新。</blockquote>")
+
+
+def render_markdown_page(title: str, path: Path, empty_msg: str,
+                         busy: dict | None = None) -> str:
     """Markdown file -> page. Source text is escaped first so raw HTML in
     model output renders inert; markdown structure still formats."""
     import markdown
     text = path.read_text() if path.exists() else empty_msg
     md = markdown.markdown(html.escape(text), extensions=["tables"])
-    return _shell(title, md)
+    return _shell(title, _busy_banner(busy) + md)
 
 
 def minutes_path(room: str, session: str) -> Path:
@@ -44,7 +56,7 @@ def _session_has_material(d: Path, room: str = "room1") -> bool:
         (d / f"{room}_minutes.md").exists()
 
 
-def report_page() -> str:
+def report_page(busy: dict | None = None) -> str:
     """Whole-event synthesis. Warns when sessions were archived after the
     report was generated, so a stale draft is never mistaken for current."""
     import markdown
@@ -67,7 +79,7 @@ def report_page() -> str:
                       "to refresh. / 请在控制台点击“Generate event report”"
                       "重新生成。</blockquote>")
     md = markdown.markdown(html.escape(text), extensions=["tables"])
-    return _shell("Report", banner + md)
+    return _shell("Report", _busy_banner(busy) + banner + md)
 
 
 def transcript_paths(room: str, session: str) -> tuple[Path, Path]:

@@ -39,6 +39,7 @@
 <div id="head"><h1>洞察面板 · Insight Panel</h1><span id="meta"></span></div>
 <div id="viewbar" style="font-size:13px;color:#7f8c99;margin-top:6px"></div>
 <div id="conv"></div>
+<div id="empty" style="display:none;color:#7f8c99;font-size:20px;margin:60px 0;text-align:center;line-height:1.8"></div>
 <div class="grid">
   <div class="sec" id="sec-summary_points"><h2>要点摘要 · Key points
     <span class="page" id="page-summary_points"></span></h2>
@@ -145,6 +146,17 @@ function render(s) {
       box.appendChild(d);
     }
   }
+  // Empty panel must explain itself: say what the system is doing and when
+  // content will appear, or a viewer assumes it is broken.
+  const total = KINDS.reduce((n, k) =>
+    n + document.getElementById(k).children.length, 0);
+  const emptyEl = document.getElementById("empty");
+  emptyEl.style.display = total ? "none" : "";
+  if (!total) emptyEl.innerHTML = s.archived
+    ? "该会话尚无洞察 — 在控制台勾选该会话并点击 Summarize now<br>No insights stored for this session — check it in the console and click Summarize now"
+    : s.busy
+      ? `✦ AI 正在总结讨论内容，约需 30–60 秒…<br>Summarizing the discussion now — about 30–60 seconds (running ${s.busy.seconds}s)`
+      : "首次摘要将在会议开始约 3 分钟后自动出现，之后每 3 分钟更新<br>The first summary appears about 3 minutes into the session, then updates every 3 minutes";
   const c = s.convergence_line || {};
   document.getElementById("conv").textContent =
     c.zh ? `▶ ${c.zh} · ${c.en}` : "";
@@ -186,7 +198,7 @@ function tickMeta() {
   el.style.color = engineError ? "#f87171" : "";
 }
 setInterval(tickMeta, 1000);
-load(); if (!session) { connect(); setInterval(load, 30000); }
+load(); if (!session) { connect(); setInterval(load, 10000); }
 </script>
 </body>
 </html>

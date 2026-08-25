@@ -236,7 +236,25 @@ class SessionManager:
         self.phase = ""
         if was_running:  # finished session appears in Past sessions right away
             self.last_session_id = archive_live(self.room)
+            if self.last_session_id:
+                self._auto_minutes(self.last_session_id)
         return self.status()
+
+    def _auto_minutes(self, sid: str) -> None:
+        """Minutes are what people expect right after a meeting ends, so
+        draft them automatically in the background (progress shows via the
+        activity registry on every page)."""
+        from forum_agent.insights import engine
+
+        def _run() -> None:
+            try:
+                engine(self.room).minutes_for(sid)
+                print(f"[session] auto-minutes ready for {sid}")
+            except Exception as exc:  # surfaced on the console via status
+                engine(self.room).error = f"auto-minutes: {exc}"
+                print(f"[session] auto-minutes failed for {sid}: {exc!r}")
+
+        threading.Thread(target=_run, daemon=True).start()
 
 
 manager = SessionManager()

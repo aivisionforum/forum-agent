@@ -23,6 +23,7 @@
   #status b.idle { color: #7f8c99; }
   a { color: #6ea8fe; }
   .err { color: #f87171; font-size: 14px; margin-top: 8px; }
+  #bgstatus { color: #fbbf24; font-size: 14px; margin-top: 8px; min-height: 18px; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
           align-items: start; max-width: 1180px; }
   .grid .card.wide { grid-column: 1 / -1; }
@@ -34,9 +35,7 @@
 <div class="sub">Choose the audio source. Pages:
   <a href="/subtitles?room=room1" target="_blank">subtitles</a> ·
   <a id="nav-op" href="/insights?room=room1&operator=1" target="_blank">insight panel (operator)</a> ·
-  <a id="nav-proj" href="/insights?room=room1" target="_blank">insight panel (projector)</a> ·
-  <a id="nav-min" href="/minutes?room=room1" target="_blank">minutes</a> ·
-  <a href="/report" target="_blank" title="Shows the last generated report — pick sessions below and regenerate to change its scope">event report (last generated)</a>
+  <a id="nav-proj" href="/insights?room=room1" target="_blank">insight panel (projector)</a>
   <span id="nav-note" style="color:#556;font-size:13px"></span></div>
 <div class="grid">
 <div class="card">
@@ -69,6 +68,7 @@
         play test audio on speakers</label>
     </div>
   </details>
+  <div id="bgstatus"></div>
   <div class="err" id="err"></div>
 </div>
 <div class="card">
@@ -77,14 +77,19 @@
   <button id="summarize">✦ Summarize now</button>
   <button id="minutes">📝 Generate minutes</button>
   <button id="report">📊 Generate report from selected sessions</button>
+  <a id="viewreport" href="/report" target="_blank"
+     style="display:none;font-size:13px">view last generated report
+     (its page lists which sessions it covers)</a>
   <button id="cancelwait" style="display:none;color:#f87171">✕ Cancel wait</button>
   <span id="istatus" style="color:#7f8c99;font-size:14px"></span>
   <label><input type="checkbox" id="autoapprove" checked>
-    auto-approve new insights (human corrects on review; uncheck for
-    draft-until-approved gatekeeper mode)</label>
+    auto-approve: new AI points go straight to the projector; the operator
+    fixes mistakes live (edit / hide in the operator view). Uncheck for
+    gatekeeper mode: nothing shows until a human approves it.</label>
   <div style="color:#7f8c99;font-size:13px;margin-top:8px">
-    Auto-summarize runs every 3 minutes while a session is live. All items
-    appear as DRAFT on the insight panel until approved there (operator view).
+    While a session is live, insights auto-refresh every 3 minutes (each run
+    takes ~30–60s — progress shows above). Minutes are drafted automatically
+    when the session stops.
   </div>
 </div>
 <div class="card wide">
@@ -128,9 +133,11 @@ async function refresh() {
       ? "  ⏳ LLM server restarting — translation and insights resume shortly"
       : s.llm === false ? "  ⚠ LLM server not responding — translation and insights are down" : "");
   updateMeter(s.level);
+  document.getElementById("bgstatus").textContent = (s.activity || [])
+    .map(t => `⏳ ${t.label} — ${t.seconds}s`).join("  ·  ");
   els.mic.disabled = els.replay.disabled = busy || s.running;
   els.stop.disabled = busy || !s.running;
-  updateNav(s.running, latestSessionId);
+  updateNav(s, latestSessionId);
 }
 let quietSince = null;  // silence must persist before we warn (pauses are normal)
 function updateMeter(level) {
@@ -272,15 +279,18 @@ document.getElementById("report").onclick = () => {
             "report ready", "/report", 900000, {sessions: ids});
 };
 setInterval(refresh, 700); refresh();
-function updateNav(running, latestId) {
-  // idle console: page links show the latest finished session, not empty
+function updateNav(s, latestId) {
+  // idle console: insight links show the latest finished session, not empty
   // live pages (a fresh session re-points them automatically)
-  const sfx = (!running && latestId) ? "&session=" + latestId : "";
+  const sfx = (!s.running && latestId) ? "&session=" + latestId : "";
   document.getElementById("nav-op").href = "/insights?room=room1&operator=1" + sfx;
   document.getElementById("nav-proj").href = "/insights?room=room1" + sfx;
-  document.getElementById("nav-min").href = "/minutes?room=room1" + sfx;
   document.getElementById("nav-note").textContent =
     sfx ? " (showing last session " + latestId + ")" : "";
+  // the report link only exists once a report does; its page names the
+  // sessions it covers and flags itself STALE when they changed
+  document.getElementById("viewreport").style.display =
+    s.report_exists ? "" : "none";
 }
 document.getElementById("uploadbtn").onclick = async () => {
   const f = document.getElementById("uploadfile").files[0];

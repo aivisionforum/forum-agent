@@ -106,8 +106,13 @@ async def api_status() -> dict:
     # surface a dead LLM server on the console instead of failing silently
     status["llm"] = llm.healthy()
     status["llm_state"] = llm.state()  # "recovering" while watchdog relaunches
-    from forum_agent import preflight
+    from forum_agent import activity, preflight
+    from forum_agent.constants import MINUTES_MD, REPORT_MD
     status["ram_warning"] = preflight.warning
+    status["activity"] = activity.current()
+    status["report_exists"] = Path(REPORT_MD).exists()
+    status["minutes_exists"] = Path(
+        MINUTES_MD.format(room=status["room"])).exists()
     return status
 
 
@@ -150,8 +155,9 @@ async def api_insights(room: str = "room1", session: str = "") -> dict:
             {"items": {}, "convergence_line": {}}
         return {**state, "archived": session}
     from forum_agent.insights import engine
+    from forum_agent import activity
     e = engine(room)
-    return {**e.state, "error": e.error,
+    return {**e.state, "error": e.error, "busy": activity.busy("insights"),
             "interval": INSIGHT_INTERVAL_SECONDS}
 
 
@@ -274,16 +280,18 @@ async def api_report(body: dict) -> dict:
 
 @app.get("/report", response_class=HTMLResponse)
 async def report_page() -> str:
-    from forum_agent import pages
-    return pages.report_page()
+    from forum_agent import activity, pages
+    return pages.report_page(busy=activity.busy("report"))
 
 
 @app.get("/minutes", response_class=HTMLResponse)
 async def minutes_page(room: str = "room1", session: str = "") -> str:
-    from forum_agent import pages
+    from forum_agent import activity, pages
     return pages.render_markdown_page(
         "Minutes", pages.minutes_path(safe_room(room), safe_session(session)),
-        "No minutes generated yet.")
+        "No minutes generated yet. They are generated automatically when a "
+        "session stops, or on demand from the control console.",
+        busy=activity.busy("minutes"))
 
 
 @app.post("/api/ingest")

@@ -44,6 +44,12 @@ def _session_block(d: Path, room: str = "room1") -> str | None:
 
 
 def generate_report(selected: list[str] | None = None) -> str:
+    from forum_agent import activity
+    with activity.task("drafting event report (~5-15 min)"):
+        return _generate_report(selected)
+
+
+def _generate_report(selected: list[str] | None = None) -> str:
     """Draft a synthesis report from the chosen archived sessions.
 
     selected: list of session ids to include; None/empty means all. The

@@ -23,6 +23,21 @@ from forum_agent.constants import (AUTO_APPROVE_DEFAULT, INSIGHT_MAX_ITEMS,
 from forum_agent.server import hub
 
 _PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
+def _tracked(label):
+    """Register the wrapped engine method in the activity registry so every
+    page can show the user what is being generated (and for how long)."""
+    import functools
+
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrap(*a, **k):
+            from forum_agent import activity
+            with activity.task(label):
+                return fn(*a, **k)
+        return wrap
+    return deco
+
+
 KINDS = ["summary_points", "next_steps", "emerging_consensus", "tensions",
          "open_questions"]
 
@@ -114,6 +129,7 @@ class InsightEngine:
         # fs.SESSIONS_DIR (not constants) so both resolve identically
         return f"{fs.SESSIONS_DIR}/{sessions[0]['id']}"
 
+    @_tracked("summarizing insights (~30-60s)")
     def refresh(self) -> dict:
         """One engine run: transcript window + state -> updated draft items.
         With no live session, falls back to the latest archived session and
@@ -199,6 +215,7 @@ class InsightEngine:
                 f.write(json.dumps(self.state, ensure_ascii=False) + "\n")
         return self.state
 
+    @_tracked("summarizing insights (~30-60s)")
     def refresh_for(self, session_id: str) -> dict:
         """Insights for one specific archived session (operator-selected)."""
         from forum_agent.constants import SESSIONS_DIR
@@ -208,6 +225,7 @@ class InsightEngine:
             raise RuntimeError(f"session {session_id}: no transcript")
         return self._refresh_archived(base_dir, transcript)
 
+    @_tracked("generating minutes (~1-2 min)")
     def minutes_for(self, session_id: str) -> str:
         """Minutes for one specific archived session, using that session's
         own approved insights (never the live room state)."""
@@ -321,6 +339,7 @@ class InsightEngine:
         with self._lock:
             self._gen += 1  # invalidate any refresh still in the LLM
 
+    @_tracked("generating minutes (~1-2 min)")
     def generate_minutes(self) -> str:
         """C6: end-of-session bilingual draft minutes as Markdown. If the
         session was already archived (Stop moves the live files), the minutes
