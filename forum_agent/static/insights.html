@@ -115,7 +115,10 @@ function render(s) {
     const box = document.getElementById(kind);
     box.innerHTML = "";
     for (const it of (s.items?.[kind] || [])) {
-      if (it.status === "hidden" && !operator) continue;
+      // Participants' screen: only human-approved content, no workflow
+      // badges — status is operator bookkeeping. (Archived views are
+      // approved-only by construction.)
+      if (!operator && it.status !== "approved") continue;
       const d = document.createElement("div");
       // Status badge always reflects the item's real state so every button
       // click changes something visible; NEW rides along instead of
@@ -127,8 +130,8 @@ function render(s) {
       const badge = (it.status === "approved" ? "✓ 已上屏 on screen"
         : it.status === "hidden" ? "HIDDEN 已隐藏" : "DRAFT 草稿")
         + (isNew ? " · NEW 新" : "");
-      d.innerHTML = `<span class="badge">${badge}</span>
-        <div class="zh">${esc(it.zh)}</div><div class="en">${esc(it.en)}</div>`;
+      d.innerHTML = (operator ? `<span class="badge">${badge}</span>` : "") +
+        `<div class="zh">${esc(it.zh)}</div><div class="en">${esc(it.en)}</div>`;
       if (operator && !session) {
         const ops = document.createElement("div");
         ops.className = "ops";
