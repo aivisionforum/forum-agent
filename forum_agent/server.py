@@ -360,6 +360,37 @@ async def api_polish_config_save(body: dict) -> dict:
     return cloud.save_config(body if isinstance(body, dict) else {})
 
 
+@app.get("/api/polish/models")
+async def api_polish_models(provider: str) -> dict:
+    import anyio
+    import functools
+    from forum_agent import cloud
+    try:
+        return await anyio.to_thread.run_sync(
+            functools.partial(cloud.list_models, provider))
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        raise HTTPException(502, f"could not list models: {exc}")
+
+
+@app.post("/api/polish/test")
+async def api_polish_test(body: dict) -> dict:
+    import anyio
+    import functools
+    from forum_agent import cloud
+    provider, model = str(body.get("provider", "")), str(body.get("model", ""))
+    if not provider or not model:
+        raise HTTPException(400, "provider and model are required")
+    try:
+        return await anyio.to_thread.run_sync(
+            functools.partial(cloud.test_model, provider, model))
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc))
+    except Exception as exc:
+        raise HTTPException(502, f"test failed: {exc}")
+
+
 @app.get("/api/polish/providers")
 async def api_polish_providers() -> list:
     from forum_agent import cloud

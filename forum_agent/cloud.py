@@ -90,12 +90,53 @@ def providers() -> list[dict]:
     try:
         tags = requests.get(f"{_ollama_host()}/api/tags", timeout=2).json()
         cloud = [m["name"] for m in tags.get("models", [])
-                 if m["name"].endswith("-cloud")]
+                 if m["name"].endswith((":cloud", "-cloud"))]
         if cloud:
             out.append({"id": "ollama", "models": sorted(cloud)})
     except (requests.RequestException, ValueError):
         pass  # no local ollama daemon: provider simply not offered
     return out
+
+
+# Sensible defaults per provider for the polish use case, in preference
+# order; the first one present in the live model list is preselected.
+PREFERRED = {
+    "openrouter": [DEFAULT_OPENROUTER_MODEL, "openai/gpt-5.2",
+                   "google/gemini-3-pro", "deepseek/deepseek-v4"],
+    "ollama": ["gpt-oss:120b:cloud", "deepseek-v4-pro:0813:cloud",
+               "qwen3-max:cloud"],
+}
+
+
+def list_models(provider: str) -> dict:
+    """Live model list + preselected default for the console picker."""
+    if provider == "openrouter":
+        if not _openrouter_key():
+            return {"models": [], "default": None}
+        r = requests.get("https://openrouter.ai/api/v1/models", timeout=10)
+        r.raise_for_status()
+        models = sorted(m["id"] for m in r.json().get("data", []))
+    elif provider == "ollama":
+        tags = requests.get(f"{_ollama_host()}/api/tags", timeout=3).json()
+        models = sorted(m["name"] for m in tags.get("models", [])
+                        if m["name"].endswith((":cloud", "-cloud")))
+    else:
+        raise RuntimeError(f"unknown provider: {provider}")
+    configured = _openrouter_model() if provider == "openrouter" else None
+    default = next((m for m in [configured, *PREFERRED.get(provider, [])]
+                    if m in models), models[0] if models else None)
+    return {"models": models, "default": default}
+
+
+def test_model(provider: str, model: str) -> dict:
+    """One tiny round trip so the operator can verify a model before using
+    it on a real draft."""
+    import time
+    t0 = time.time()
+    reply = _chat(provider, model,
+                  "Reply with exactly the two characters: OK")
+    return {"ok": "OK" in reply.upper(), "seconds": round(time.time() - t0, 1),
+            "reply": reply.strip()[:60]}
 
 
 def _chat(provider: str, model: str, prompt: str) -> str:

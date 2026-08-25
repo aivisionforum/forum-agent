@@ -92,14 +92,22 @@
     takes ~30–60s — progress shows above). Minutes are drafted automatically
     when the session stops.
   </div>
-  <div id="polishbox" style="border-top:1px solid #1c2530;margin-top:14px;padding-top:12px">
-    <b style="font-size:14px">Post-event cloud polish</b>
-    <span style="color:#f87171;font-size:12px">sends the draft's text to the
-      selected cloud provider — post-event use only; run the names check
-      first</span><br>
-    <div id="polishrun" style="display:none">
+  <details id="polishwrap" style="border-top:1px solid #1c2530;margin-top:14px;padding-top:12px">
+    <summary style="cursor:pointer"><b style="font-size:14px">Post-event cloud
+      polish 会后云端润色</b>
+      <span style="color:#7f8c99;font-size:12px">(keep collapsed during
+        sessions — sends draft text to a cloud provider)</span></summary>
+    <div id="polishrun" style="display:none;margin-top:8px">
+      <label title="When checked, the Generate minutes / Generate report buttons do BOTH steps: first the normal local draft, then automatically send that draft to the selected cloud model for editorial polish, and open the polished version. The local draft is kept unchanged. Uncheck to stay fully local. Run the names check first - the draft's text leaves this machine.">
+        <input type="checkbox" id="postevent">
+        post-event mode: Generate minutes / report auto-polish with the cloud
+        model <span style="color:#556">(hover for details)</span></label>
+      <select id="polishprov" style="font-size:14px;padding:6px;border-radius:6px;
+        background:#18222e;color:#f2f5f7;border:1px solid #2a3a4d"></select>
       <select id="polishmodel" style="font-size:14px;padding:6px;border-radius:6px;
         background:#18222e;color:#f2f5f7;border:1px solid #2a3a4d;max-width:340px"></select>
+      <button id="polishtest" style="font-size:13px;padding:8px 14px">Test</button>
+      <span id="polishteststate" style="color:#7f8c99;font-size:13px"></span><br>
       <button id="polishmin" style="font-size:14px;padding:8px 14px">Polish
         minutes of checked session</button>
       <button id="polishrep" style="font-size:14px;padding:8px 14px">Polish
@@ -115,11 +123,7 @@
           <input type="password" id="cfg-orkey" placeholder="leave blank to keep current; enter to set"
             style="font-size:14px;padding:6px;border-radius:6px;background:#18222e;
             color:#f2f5f7;border:1px solid #2a3a4d;width:100%;max-width:420px"></label>
-        <label>OpenRouter model<br>
-          <input type="text" id="cfg-ormodel"
-            style="font-size:14px;padding:6px;border-radius:6px;background:#18222e;
-            color:#f2f5f7;border:1px solid #2a3a4d;width:100%;max-width:420px"></label>
-        <label>Ollama host (cloud models must be pulled there, tag "-cloud")<br>
+        <label>Ollama host (cloud models must be pulled there, tag ":cloud")<br>
           <input type="text" id="cfg-ollama"
             style="font-size:14px;padding:6px;border-radius:6px;background:#18222e;
             color:#f2f5f7;border:1px solid #2a3a4d;width:100%;max-width:420px"></label>
@@ -131,7 +135,7 @@
           these settings.</div>
       </div>
     </details>
-  </div>
+  </details>
 </div>
 <div class="card wide">
   <b style="font-size:16px">Past sessions</b>
@@ -270,11 +274,13 @@ async function runAction(path, busyLabel, doneLabel, openUrl, timeoutMs, bodyObj
       el.textContent = doneLabel;
       if (openUrl) window.open(openUrl);
     }
+    return data;
   } catch (e) {
     genBusy(null);
     el.textContent = e.name === "AbortError"
       ? busyLabel + " — stopped waiting (it may still finish in the background; check the page in a minute)"
       : busyLabel + " failed: " + (e.message || e);
+    return null;
   } finally { clearTimeout(timer); }
 }
 document.getElementById("cancelwait").onclick = () => genAbort && genAbort.abort();
@@ -295,7 +301,7 @@ document.getElementById("summarize").onclick = () => {
             "/insights?room=room1&operator=1",
             180000 * Math.max(1, ids.length), {sessions: ids});
 };
-document.getElementById("minutes").onclick = () => {
+document.getElementById("minutes").onclick = async () => {
   const ids = lastRunning ? [] : checkedSessions();
   if (!lastRunning && !ids.length) {
     document.getElementById("istatus").textContent =
@@ -304,11 +310,18 @@ document.getElementById("minutes").onclick = () => {
   }
   const label = lastRunning ? "generating minutes"
       : `generating minutes for ${ids.length} selected session(s)`;
-  runAction("/api/minutes", label, "minutes ready",
-            "/minutes?room=room1",
+  const post = postEventOn() && !lastRunning;
+  const data = await runAction("/api/minutes", label, "minutes ready",
+            post ? null : "/minutes?room=room1",
             300000 * Math.max(1, ids.length), {sessions: ids});
+  // post-event mode: chain the cloud polish onto the fresh local draft
+  if (post && data) {
+    const sid = (data.processed && data.processed[0]) || data.archived
+        || ids[0];
+    if (sid && confirmPolish()) await cloudPolish("minutes", sid);
+  }
 };
-document.getElementById("report").onclick = () => {
+document.getElementById("report").onclick = async () => {
   const ids = [...document.querySelectorAll(".sesssel:checked")]
       .map(cb => cb.dataset.id);
   if (!ids.length) {
@@ -316,8 +329,11 @@ document.getElementById("report").onclick = () => {
         "select at least one session below (checkboxes) for the report";
     return;
   }
-  runAction("/api/report", `drafting report (${ids.length} session(s))`,
-            "report ready", "/report", 900000, {sessions: ids});
+  const post = postEventOn();
+  const data = await runAction("/api/report",
+            `drafting report (${ids.length} session(s))`,
+            "report ready", post ? null : "/report", 900000, {sessions: ids});
+  if (post && data && confirmPolish()) await cloudPolish("report");
 };
 setInterval(refresh, 700); refresh();
 function updateNav(s, latestId) {
@@ -333,31 +349,62 @@ function updateNav(s, latestId) {
   document.getElementById("viewreport").style.display =
     s.report_exists ? "" : "none";
 }
+let polishModels = {};  // provider -> {models, default}
 async function loadPolish() {
   const provs = await (await fetch("/api/polish/providers")).json();
-  const sel = document.getElementById("polishmodel");
-  const prev = sel.value;
-  sel.innerHTML = "";
-  for (const pr of provs) for (const m of pr.models) {
+  const psel = document.getElementById("polishprov");
+  const prevProv = psel.value;
+  psel.innerHTML = "";
+  for (const pr of provs) {
     const o = document.createElement("option");
-    o.value = pr.id + "|" + m; o.textContent = pr.id + ": " + m;
-    sel.appendChild(o);
+    o.value = pr.id; o.textContent = pr.id;
+    psel.appendChild(o);
   }
-  if (prev) sel.value = prev;
+  if (prevProv && provs.some(pr => pr.id === prevProv)) psel.value = prevProv;
   document.getElementById("polishrun").style.display = provs.length ? "" : "none";
   document.getElementById("polishnone").style.display = provs.length ? "none" : "";
+  if (provs.length) await loadPolishModels();
   const cfg = await (await fetch("/api/polish/config")).json();
   document.getElementById("orstate").textContent = cfg.openrouter_configured
     ? "(configured via " + cfg.openrouter_key_source + ")" : "(not set)";
-  const om = document.getElementById("cfg-ormodel");
-  if (!om.value) om.value = cfg.openrouter_model || "";
   const oh = document.getElementById("cfg-ollama");
   if (!oh.value) oh.value = cfg.ollama_host || "";
 }
+async function loadPolishModels() {
+  const prov = document.getElementById("polishprov").value;
+  if (!prov) return;
+  const msel = document.getElementById("polishmodel");
+  msel.innerHTML = "<option>loading models…</option>";
+  try {
+    const d = await (await fetch("/api/polish/models?provider=" + prov)).json();
+    polishModels[prov] = d;
+    msel.innerHTML = "";
+    for (const m of d.models) {
+      const o = document.createElement("option");
+      o.value = m; o.textContent = m;
+      msel.appendChild(o);
+    }
+    if (d.default) msel.value = d.default;  // preselected for this use case
+  } catch (e) {
+    msel.innerHTML = "<option value=''>could not load models</option>";
+  }
+  document.getElementById("polishteststate").textContent = "";
+}
+document.getElementById("polishprov").onchange = loadPolishModels;
+document.getElementById("polishtest").onclick = async () => {
+  const st = document.getElementById("polishteststate");
+  st.textContent = "testing…";
+  const r = await fetch("/api/polish/test", {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({provider: document.getElementById("polishprov").value,
+                          model: document.getElementById("polishmodel").value})});
+  if (!r.ok) { st.textContent = "test failed: " + await r.text(); return; }
+  const d = await r.json();
+  st.textContent = d.ok ? `working (${d.seconds}s)` : `unexpected reply: ${d.reply}`;
+};
 loadPolish();
 document.getElementById("cfg-save").onclick = async () => {
-  const body = {openrouter_model: document.getElementById("cfg-ormodel").value,
-                ollama_host: document.getElementById("cfg-ollama").value};
+  const body = {ollama_host: document.getElementById("cfg-ollama").value};
   const key = document.getElementById("cfg-orkey").value;
   if (key) body.openrouter_api_key = key;  // blank = keep the current key
   await fetch("/api/polish/config", {method: "POST",
@@ -373,25 +420,46 @@ document.getElementById("cfg-clearkey").onclick = async () => {
   document.getElementById("istatus").textContent = "saved key removed";
   loadPolish();
 };
+function cloudSelection() {
+  return {provider: document.getElementById("polishprov").value,
+          model: document.getElementById("polishmodel").value};
+}
+function postEventOn() {
+  return document.getElementById("postevent").checked &&
+         document.getElementById("polishrun").style.display !== "none";
+}
+async function cloudPolish(target, sessionId) {
+  const el = document.getElementById("istatus");
+  const {provider, model} = cloudSelection();
+  const body = {provider, model, target};
+  let openUrl = "/polished?target=report";
+  if (target === "minutes") {
+    body.sessions = [sessionId];
+    openUrl = "/polished?session=" + sessionId;
+  }
+  el.textContent = "cloud polishing with " + provider + ":" + model + "…";
+  const r = await fetch("/api/polish", {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  if (!r.ok) { el.textContent = "cloud polish failed: " + await r.text(); return; }
+  el.textContent = "polished version ready";
+  window.open(openUrl, "_blank");
+}
+function confirmPolish() {
+  const {provider, model} = cloudSelection();
+  return confirm("This sends the draft's full text to " + provider + " (" + model +
+      ").\nPost-event use only. Run the names check first.\nContinue?");
+}
 async function runPolish(target) {
   const el = document.getElementById("istatus");
   if (lastRunning) { el.textContent = "post-event only — stop the session first"; return; }
-  const [provider, model] = document.getElementById("polishmodel").value.split("|");
-  let body = {provider, model, target};
-  let openUrl = "/polished?target=report";
+  let sid = null;
   if (target === "minutes") {
-    const ids = [...document.querySelectorAll(".sesssel:checked")].map(cb => cb.dataset.id);
+    const ids = checkedSessions();
     if (ids.length !== 1) { el.textContent = "check exactly one session below to polish its minutes"; return; }
-    body.sessions = ids; openUrl = "/polished?session=" + ids[0];
+    sid = ids[0];
   }
-  if (!confirm("This sends the draft's full text to " + provider + " (" + model +
-      ").\nPost-event use only. Run the names check first.\nContinue?")) return;
-  el.textContent = "polishing with " + provider + " — progress shows above…";
-  const r = await fetch("/api/polish", {method: "POST",
-    headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
-  if (!r.ok) { el.textContent = "polish failed: " + await r.text(); return; }
-  el.textContent = "polished version ready";
-  window.open(openUrl, "_blank");
+  if (!confirmPolish()) return;
+  await cloudPolish(target, sid);
 }
 document.getElementById("polishmin").onclick = () => runPolish("minutes");
 document.getElementById("polishrep").onclick = () => runPolish("report");
