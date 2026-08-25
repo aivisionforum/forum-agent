@@ -32,6 +32,7 @@
   /* Projector: lock to one screen — content is auto-zoomed to fit, never
      scrolled (a wall display cannot be scrolled by anyone). */
   body.projector { height: 100vh; overflow: hidden; }
+  .page { font-size: 13px; color: #556; margin-left: 8px; }
 </style>
 </head>
 <body>
@@ -39,29 +40,70 @@
 <div id="viewbar" style="font-size:13px;color:#7f8c99;margin-top:6px"></div>
 <div id="conv"></div>
 <div class="grid">
-  <div class="sec"><h2>要点摘要 · Summary</h2><div id="summary_points"></div></div>
-  <div class="sec"><h2>正在形成的共识 · Emerging consensus</h2><div id="emerging_consensus"></div></div>
-  <div class="sec"><h2>主要分歧 · Tensions</h2><div id="tensions"></div></div>
-  <div class="sec"><h2>待回答的问题 · Open questions</h2><div id="open_questions"></div></div>
+  <div class="sec" id="sec-summary_points"><h2>要点摘要 · Key points
+    <span class="page" id="page-summary_points"></span></h2>
+    <div id="summary_points"></div></div>
+  <div class="sec" id="sec-next_steps"><h2>行动项 · Next steps
+    <span class="page" id="page-next_steps"></span></h2>
+    <div id="next_steps"></div></div>
+  <div class="sec" id="sec-emerging_consensus"><h2>正在形成的共识 · Emerging consensus
+    <span class="page" id="page-emerging_consensus"></span></h2>
+    <div id="emerging_consensus"></div></div>
+  <div class="sec" id="sec-tensions"><h2>主要分歧 · Tensions
+    <span class="page" id="page-tensions"></span></h2>
+    <div id="tensions"></div></div>
+  <div class="sec" id="sec-open_questions"><h2>待回答的问题 · Open questions
+    <span class="page" id="page-open_questions"></span></h2>
+    <div id="open_questions"></div></div>
 </div>
 <script>
 const params = new URLSearchParams(location.search);
 const room = params.get("room") || "room1";
 const operator = params.get("operator") === "1";
 if (!operator) document.body.classList.add("projector");
-function fitToScreen() {
-  if (operator) return;
-  // start large for TV legibility, shrink until everything fits the screen
+// Projector layout: zoom-to-fit first; if content cannot fit at readable
+// size, overflowing sections page-flip like an airport board (nobody can
+// scroll a wall display).
+const PAGE = 3;              // items shown at once in a flipping section
+const MIN_READABLE = 0.9;    // never shrink below this just to avoid flipping
+let paging = false, pageTick = 0;
+function zoomFit(floor) {
   let z = 1.4;
   document.body.style.zoom = z;
   const fits = () =>
       document.documentElement.scrollHeight <= window.innerHeight &&
       document.documentElement.scrollWidth <= window.innerWidth;
-  while (z > 0.55 && !fits()) { z -= 0.05; document.body.style.zoom = z; }
+  while (z > floor && !fits()) { z -= 0.05; document.body.style.zoom = z; }
+  return fits();
 }
+function fitToScreen() {
+  if (operator) return;
+  for (const kind of KINDS) {
+    const box = document.getElementById(kind);
+    document.getElementById("sec-" + kind).style.display =
+      (OPTIONAL.includes(kind) && !box.children.length) ? "none" : "";
+    for (const el of box.children) el.style.display = "";
+    document.getElementById("page-" + kind).textContent = "";
+  }
+  paging = !zoomFit(MIN_READABLE);
+  if (!paging) return;
+  for (const kind of KINDS) {
+    const els2 = [...document.getElementById(kind).children];
+    if (els2.length <= PAGE) continue;
+    const pages = Math.ceil(els2.length / PAGE);
+    const pi = pageTick % pages;
+    els2.forEach((el, i) => el.style.display =
+      (i >= pi * PAGE && i < (pi + 1) * PAGE) ? "" : "none");
+    document.getElementById("page-" + kind).textContent = `${pi + 1}/${pages}`;
+  }
+  zoomFit(0.55);  // pages are small; this normally fits well above the floor
+}
+setInterval(() => { if (paging && !operator) { pageTick++; fitToScreen(); } },
+            8000);
 window.addEventListener("resize", fitToScreen);
 const session = params.get("session") || "";
-const KINDS = ["summary_points","emerging_consensus","tensions","open_questions"];
+const KINDS = ["summary_points","next_steps","emerging_consensus","tensions","open_questions"];
+const OPTIONAL = KINDS.slice(1);  // Key points always shows; the rest only when non-empty (projector)
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 let interval = 180, engineError = "";

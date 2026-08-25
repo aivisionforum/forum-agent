@@ -58,8 +58,9 @@ INSIGHT_TIMEOUT_SECONDS = 180
 # (human-on-the-loop); False = every item is DRAFT until approved (gatekeeper
 # mode, for high-stakes projector use). Toggle live on the console.
 AUTO_APPROVE_DEFAULT = True
-INSIGHT_MAX_ITEMS = {"summary_points": 6, "emerging_consensus": 4,
-                     "tensions": 4, "open_questions": 4}
+INSIGHT_MAX_ITEMS = {"summary_points": 6, "next_steps": 4,
+                     "emerging_consensus": 4, "tensions": 4,
+                     "open_questions": 4}
 # Report drafter (C7): batch job, quality over latency -> the big model is
 # fine here (nothing else needs the GPU when the report runs).
 REPORT_MODEL = "mlx-community/Qwen2.5-32B-Instruct-4bit"

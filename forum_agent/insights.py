@@ -23,7 +23,8 @@ from forum_agent.constants import (AUTO_APPROVE_DEFAULT, INSIGHT_MAX_ITEMS,
 from forum_agent.server import hub
 
 _PROMPTS = Path(__file__).resolve().parent.parent / "prompts"
-KINDS = ["summary_points", "emerging_consensus", "tensions", "open_questions"]
+KINDS = ["summary_points", "next_steps", "emerging_consensus", "tensions",
+         "open_questions"]
 
 
 def _llm(prompt: str) -> str:
@@ -163,7 +164,8 @@ class InsightEngine:
             hidden = set(self.state.get("hidden_zh", []))
             for kind in KINDS:
                 fresh = parsed.get(kind, []) or []
-                prev = {i["zh"]: i for i in self.state["items"][kind]}
+                prev = {i["zh"]: i
+                        for i in self.state["items"].get(kind, [])}
                 # The panel is a bounded live snapshot: each refresh REPLACES
                 # the section with the LLM's current best items. Superseded
                 # items retire (history + approved_log keep them); operator
@@ -181,7 +183,7 @@ class InsightEngine:
                         "added": now})
                 self.state["items"][kind] = items[:INSIGHT_MAX_ITEMS[kind]]
                 if self.auto_approve:  # supervisor mode: log for the minutes
-                    for it in self.state["items"][kind]:
+                    for it in self.state["items"].get(kind, []):
                         self._log_approved(kind, it)
             line = parsed.get("convergence_line") or {}
             if isinstance(line, dict) and line.get("zh"):
@@ -277,7 +279,7 @@ class InsightEngine:
         """Operator console: approve / hide / edit a single item."""
         with self._lock:
             for kind in KINDS:
-                for it in self.state["items"][kind]:
+                for it in self.state["items"].get(kind, []):
                     if it["id"] != item_id:
                         continue
                     if action == "edit":
@@ -335,7 +337,7 @@ class InsightEngine:
         if not transcript.strip():
             raise RuntimeError("no transcript available for minutes")
         approved = self.state.get("approved_log") or {
-            k: [i for i in self.state["items"][k]
+            k: [i for i in self.state["items"].get(k, [])
                 if i["status"] == "approved"] for k in KINDS}
         prompt = ((_PROMPTS / "minutes.txt").read_text()
                   .replace("{insights}",

@@ -5,6 +5,7 @@ Below is (1) the running state of the session so far and (2) the transcript of t
 Return ONLY a JSON object, no markdown fences, with exactly these keys:
 {
   "summary_points": [ {"zh": "...", "en": "..."} ],        // 3-6 key points of the session SO FAR (cumulative, not only the window)
+  "next_steps": [ {"zh": "...", "en": "..."} ],            // 0-4 concrete actions / next steps actually proposed in the room; empty if none were
   "emerging_consensus": [ {"zh": "...", "en": "..."} ],    // 0-4 points the room is converging on
   "tensions": [ {"zh": "...", "en": "..."} ],              // 0-4 main disagreements
   "open_questions": [ {"zh": "...", "en": "..."} ],        // 0-4 questions raised but not answered
