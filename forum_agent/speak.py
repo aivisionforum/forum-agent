@@ -10,6 +10,15 @@ VOICE_EN = "Samantha"   # macOS built-in English voice
 MAX_POINTS = 4          # keep the spoken summary under ~a minute
 
 _speaking = threading.Lock()
+_current = {"proc": None, "stop": False}
+
+
+def stop_speaking() -> None:
+    """Cut the voice off mid-sentence (console Stop button)."""
+    _current["stop"] = True
+    proc = _current["proc"]
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
 
 
 def build_script(state: dict) -> list[tuple[str, str]]:
@@ -40,8 +49,13 @@ def speak_summary(state: dict) -> None:
         raise RuntimeError("already speaking — wait for it to finish")
     try:
         from forum_agent import activity
+        _current["stop"] = False
         with activity.task("speaking summary aloud"):
             for voice, text in chunks:
-                subprocess.run(["say", "-v", voice, text], check=False)
+                if _current["stop"]:
+                    break
+                proc = subprocess.Popen(["say", "-v", voice, text])
+                _current["proc"] = proc
+                proc.wait()
     finally:
         _speaking.release()

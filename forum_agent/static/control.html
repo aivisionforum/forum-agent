@@ -80,7 +80,8 @@
   <a id="viewreport" href="/report" target="_blank"
      style="display:none;font-size:13px">view last generated report
      (its page lists which sessions it covers)</a>
-  <button id="speak">🔊 Speak key points aloud</button>
+  <button id="speak" title="Live session when running; otherwise the checked session below">🔊 Speak key points aloud</button>
+  <button id="speakstop" style="display:none;color:#f87171">■ Stop voice</button>
   <button id="cancelwait" style="display:none;color:#f87171">✕ Cancel wait</button>
   <span id="istatus" style="color:#7f8c99;font-size:14px"></span>
   <label><input type="checkbox" id="autoapprove" checked>
@@ -466,16 +467,27 @@ document.getElementById("polishrep").onclick = () => runPolish("report");
 document.getElementById("speak").onclick = async () => {
   const el = document.getElementById("istatus");
   const b = document.getElementById("speak");
-  b.disabled = true;
-  el.textContent = "speaking key points through the speakers…";
+  const stopBtn = document.getElementById("speakstop");
+  // live session wins; when idle, speak the ONE checked session below
+  const ids = lastRunning ? [] : checkedSessions();
+  if (!lastRunning && ids.length !== 1) {
+    el.textContent = "check exactly one session below to speak its key points";
+    return;
+  }
+  const target = lastRunning ? "the live session" : "session " + ids[0];
+  b.disabled = true; stopBtn.style.display = "";
+  el.textContent = "speaking key points of " + target + "…";
   try {
     const r = await fetch("/api/speak", {method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({room: "room1"})});
-    el.textContent = r.ok ? "done speaking" : "speak failed: " + await r.text();
+      body: JSON.stringify({room: "room1", sessions: ids})});
+    el.textContent = r.ok ? "done speaking (" + target + ")"
+                          : "speak failed: " + await r.text();
   } catch (e) { el.textContent = "speak failed: " + e;
-  } finally { b.disabled = false; }
+  } finally { b.disabled = false; stopBtn.style.display = "none"; }
 };
+document.getElementById("speakstop").onclick = () =>
+  fetch("/api/speak/stop", {method: "POST"});
 document.getElementById("uploadbtn").onclick = async () => {
   const f = document.getElementById("uploadfile").files[0];
   const st = document.getElementById("uploadstatus");

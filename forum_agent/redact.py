@@ -13,6 +13,7 @@ from forum_agent.constants import SESSIONS_DIR, TRANSLATE_MODEL
 _PROMPT = Path(__file__).resolve().parent.parent.joinpath(
     "prompts/redact.txt").read_text()
 REDACTION_MD = "redaction_report.md"
+CHUNK_LINES = 120  # ~15 min of speech per LLM call: fits the 8B context
 
 
 def check_session(session_id: str) -> Path:
@@ -29,10 +30,21 @@ def check_session(session_id: str) -> Path:
                 lines.append(raw)  # keep numbering aligned with the file
     if not lines:
         raise RuntimeError(f"session {session_id} has no transcript")
-    numbered = "\n".join(f"{i}: {t}" for i, t in enumerate(lines))
-    reply = llm.chat(TRANSLATE_MODEL, _PROMPT.replace("{transcript}", numbered),
-                     temperature=0.0, timeout=300)
-    names = _parse_names(reply)
+    # Chunked: a 90-minute transcript in one prompt overflows the 8B
+    # context and the tail is silently never scanned. Global line numbers
+    # are preserved so the report's references stay correct.
+    merged: dict[str, set] = {}
+    for start in range(0, len(lines), CHUNK_LINES):
+        chunk = lines[start:start + CHUNK_LINES]
+        numbered = "\n".join(f"{start + i}: {t}"
+                              for i, t in enumerate(chunk))
+        reply = llm.chat(TRANSLATE_MODEL,
+                         _PROMPT.replace("{transcript}", numbered),
+                         temperature=0.0, timeout=300)
+        for n in _parse_names(reply):
+            merged.setdefault(n.get("name", "?"), set()).update(
+                i for i in n.get("lines", []) if isinstance(i, int))
+    names = [{"name": k, "lines": sorted(v)} for k, v in merged.items()]
     report = sdir / REDACTION_MD
     report.write_text(_render(session_id, names, lines))
     return report

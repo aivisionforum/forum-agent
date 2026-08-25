@@ -454,14 +454,34 @@ async def api_speak(body: dict) -> dict:
     uninvited."""
     import anyio
     from forum_agent import speak
+    from forum_agent.constants import SESSIONS_DIR
     from forum_agent.insights import engine
+    from forum_agent.session import manager
     room = safe_room(body.get("room", "room1"))
+    if manager.status()["running"]:
+        state, target = engine(room).state, "live session"
+    else:
+        # idle: same rule as every other button — act on the checked session
+        ids = _selected_sessions(body)
+        if len(ids) != 1:
+            raise HTTPException(400, "check exactly one session to speak")
+        p = Path(SESSIONS_DIR) / ids[0] / f"{room}_insights.json"
+        if not p.exists():
+            raise HTTPException(409, f"session {ids[0]} has no insights yet")
+        state, target = json.loads(p.read_text()), f"session {ids[0]}"
     try:
         await anyio.to_thread.run_sync(
-            lambda: speak.speak_summary(engine(room).state))
+            lambda: speak.speak_summary(state))
     except RuntimeError as exc:
         raise HTTPException(409, str(exc))
-    return {"spoken": True}
+    return {"spoken": True, "target": target}
+
+
+@app.post("/api/speak/stop")
+async def api_speak_stop() -> dict:
+    from forum_agent import speak
+    speak.stop_speaking()
+    return {"stopped": True}
 
 
 @app.post("/api/redact")

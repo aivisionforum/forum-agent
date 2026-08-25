@@ -199,8 +199,11 @@ class SessionManager:
             hub.broadcast_from_thread(room, {"type": MSG_SESSION_RESET})
             self.mode, self.room, self.error = MODE_REPLAY, room, None
             self.phase = "processing upload"
+            from forum_agent import activity
             try:
-                replay.run_replay(wav_path, room, play=False, realtime=False)
+                with activity.task(f"processing upload {title} (batch)"):
+                    replay.run_replay(wav_path, room, play=False,
+                                      realtime=False)
             except Exception as exc:
                 self.error = f"{type(exc).__name__}: {exc}"
                 raise
