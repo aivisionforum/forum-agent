@@ -127,14 +127,20 @@ class SessionManager:
         self.phase = ""
         self.error: str | None = None
         self.last_session_id: str | None = None
+        # latest mic frame level {"peak","rms","ts"} for the console meter
+        self.level: dict | None = None
 
     def status(self) -> dict:
         running = self._thread is not None and self._thread.is_alive()
         if not running and self.mode != MODE_IDLE:
             self.mode = MODE_IDLE  # session finished on its own
             self.phase = ""
+        # stale level (mic thread wedged / not mic mode) must not show as live
+        fresh = (running and self.mode == MODE_MIC and self.level is not None
+                 and time.time() - self.level["ts"] < 3)
         return {"mode": self.mode, "room": self.room, "running": running,
-                "phase": self.phase, "error": self.error}
+                "phase": self.phase, "error": self.error,
+                "level": self.level if fresh else None}
 
     def start(self, mode: str, room: str = "room1",
               wav: str = FIXTURE_WAV, play: bool = True,
@@ -160,7 +166,11 @@ class SessionManager:
             try:
                 if mode == MODE_MIC:
                     replay.run_mic(room, stop_event=stop, device=device,
-                                   on_phase=lambda p: setattr(self, "phase", p))
+                                   on_phase=lambda p: setattr(self, "phase", p),
+                                   on_level=lambda pk, rm: setattr(
+                                       self, "level",
+                                       {"peak": pk, "rms": rm,
+                                        "ts": time.time()}))
                 else:
                     replay.run_replay(wav, room, play=play, stop_event=stop,
                                       on_phase=lambda p: setattr(self, "phase", p))

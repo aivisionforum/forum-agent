@@ -42,6 +42,12 @@
 <div class="card">
   <div id="status">Source: <b class="idle">idle</b></div>
   <div id="phase" style="font-size:18px;min-height:26px;margin-bottom:10px"></div>
+  <div id="meterwrap" style="display:none;margin-bottom:12px">
+    <div style="background:#18222e;border:1px solid #2a3a4d;border-radius:4px;height:14px;overflow:hidden">
+      <div id="meterbar" style="height:100%;width:0%;background:#3ddc84;transition:width .2s"></div>
+    </div>
+    <div id="meternote" style="font-size:13px;color:#7f8c99;margin-top:4px">audio level</div>
+  </div>
   <label>audio input device<br>
     <select id="device" style="font-size:15px;padding:8px;border-radius:6px;
       background:#18222e;color:#f2f5f7;border:1px solid #2a3a4d;width:100%">
@@ -106,9 +112,37 @@ async function refresh() {
     (s.llm_state === "recovering"
       ? "  ⏳ LLM server restarting — translation and insights resume shortly"
       : s.llm === false ? "  ⚠ LLM server not responding — translation and insights are down" : "");
+  updateMeter(s.level);
   els.mic.disabled = els.replay.disabled = busy || s.running;
   els.stop.disabled = busy || !s.running;
   updateNav(s.running, latestSessionId);
+}
+let quietSince = null;  // silence must persist before we warn (pauses are normal)
+function updateMeter(level) {
+  const wrap = document.getElementById("meterwrap");
+  if (!level) { wrap.style.display = "none"; quietSince = null; return; }
+  wrap.style.display = "";
+  const bar = document.getElementById("meterbar");
+  const note = document.getElementById("meternote");
+  // dB scale: -60 dBFS..0 dBFS mapped to 0..100%
+  const db = 20 * Math.log10(Math.max(level.peak, 1e-6));
+  bar.style.width = Math.max(0, Math.min(100, (db + 60) / 60 * 100)) + "%";
+  if (level.peak > 0.98) {
+    bar.style.background = "#f87171";
+    note.textContent = "⚠ clipping — lower the input gain";
+    note.style.color = "#f87171"; quietSince = null;
+  } else if (level.peak < 0.005) {
+    quietSince = quietSince ?? Date.now();
+    const quiet = Date.now() - quietSince > 10000;
+    bar.style.background = quiet ? "#fbbf24" : "#3ddc84";
+    note.textContent = quiet
+      ? "⚠ no signal for 10s — check the mic / input device" : "audio level";
+    note.style.color = quiet ? "#fbbf24" : "#7f8c99";
+  } else {
+    quietSince = null;
+    bar.style.background = "#3ddc84";
+    note.textContent = "audio level"; note.style.color = "#7f8c99";
+  }
 }
 async function post(path, body) {
   busy = true; refresh();

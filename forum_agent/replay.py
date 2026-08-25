@@ -43,7 +43,8 @@ def feed_frame(pipe: Pipeline, seg: Segmenter, frame, start: float,
 
 def run_mic(room: str, duration: float | None = None,
             stop_event: threading.Event | None = None,
-            on_phase=None, device: int | None = None) -> Pipeline:
+            on_phase=None, device: int | None = None,
+            on_level=None) -> Pipeline:
     """Live capture from the default input device (MacBook mic or a USB
     mixer feed) through the same pipeline as replay. Uses the Silero neural
     VAD: no noise-floor calibration or sensitivity tuning needed."""
@@ -101,6 +102,8 @@ def run_mic(room: str, duration: float | None = None,
                     if overflowed:
                         print("[mic] input overflow: audio dropped by OS")
                     peak = float(np.max(np.abs(raw)))
+                    if on_level is not None:  # console level meter (issue #7)
+                        on_level(peak, float(np.sqrt(np.mean(raw ** 2))))
                     raw_peak = max(raw_peak, peak)
                     dead_frames = dead_frames + 1 if peak == 0.0 else 0
                     if dead_frames >= max_dead:
