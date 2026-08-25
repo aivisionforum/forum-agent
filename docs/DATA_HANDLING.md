@@ -41,6 +41,19 @@ appears in. The operator reviews the report and edits the transcript/minutes
 by hand before anything leaves the machine. The check is advisory — a draft
 for a human, like every other AI output here. It never modifies files itself.
 
+## Post-event cloud polish / 会后云端润色
+
+Everything above stays local. One explicit exception exists for the
+production phase after the event: the operator can send a single draft
+(one session's minutes, or the event report) to a cloud model (OpenRouter
+or an Ollama cloud model) for editorial polish. This is opt-in per run
+with an on-screen warning, available only when the operator has configured
+credentials in the environment (`OPENROUTER_API_KEY`, or a local Ollama
+with `-cloud` models). What is sent is exactly the draft's text — run the
+names check and edit the draft first, because names spoken aloud would
+otherwise leave the machine. The polished copy is written beside the
+draft, clearly labelled as cloud-produced, and the draft is never modified.
+
 ## Retention and deletion / 保留与删除
 
 - There is no automatic retention: archives stay until the operator deletes

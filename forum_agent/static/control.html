@@ -92,6 +92,18 @@
     takes ~30–60s — progress shows above). Minutes are drafted automatically
     when the session stops.
   </div>
+  <div id="polishbox" style="display:none;border-top:1px solid #1c2530;margin-top:14px;padding-top:12px">
+    <b style="font-size:14px">Post-event cloud polish</b>
+    <span style="color:#f87171;font-size:12px">sends the draft's text to the
+      selected cloud provider — post-event use only; run the names check
+      first</span><br>
+    <select id="polishmodel" style="font-size:14px;padding:6px;border-radius:6px;
+      background:#18222e;color:#f2f5f7;border:1px solid #2a3a4d;max-width:340px"></select>
+    <button id="polishmin" style="font-size:14px;padding:8px 14px">Polish
+      minutes of checked session</button>
+    <button id="polishrep" style="font-size:14px;padding:8px 14px">Polish
+      event report</button>
+  </div>
 </div>
 <div class="card wide">
   <b style="font-size:16px">Past sessions</b>
@@ -293,6 +305,39 @@ function updateNav(s, latestId) {
   document.getElementById("viewreport").style.display =
     s.report_exists ? "" : "none";
 }
+(async () => {
+  const provs = await (await fetch("/api/polish/providers")).json();
+  if (!provs.length) return;  // no cloud credentials configured: stay hidden
+  const sel = document.getElementById("polishmodel");
+  for (const pr of provs) for (const m of pr.models) {
+    const o = document.createElement("option");
+    o.value = pr.id + "|" + m; o.textContent = pr.id + ": " + m;
+    sel.appendChild(o);
+  }
+  document.getElementById("polishbox").style.display = "";
+})();
+async function runPolish(target) {
+  const el = document.getElementById("istatus");
+  if (lastRunning) { el.textContent = "post-event only — stop the session first"; return; }
+  const [provider, model] = document.getElementById("polishmodel").value.split("|");
+  let body = {provider, model, target};
+  let openUrl = "/polished?target=report";
+  if (target === "minutes") {
+    const ids = [...document.querySelectorAll(".sesssel:checked")].map(cb => cb.dataset.id);
+    if (ids.length !== 1) { el.textContent = "check exactly one session below to polish its minutes"; return; }
+    body.sessions = ids; openUrl = "/polished?session=" + ids[0];
+  }
+  if (!confirm("This sends the draft's full text to " + provider + " (" + model +
+      ").\nPost-event use only. Run the names check first.\nContinue?")) return;
+  el.textContent = "polishing with " + provider + " — progress shows above…";
+  const r = await fetch("/api/polish", {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  if (!r.ok) { el.textContent = "polish failed: " + await r.text(); return; }
+  el.textContent = "polished version ready";
+  window.open(openUrl, "_blank");
+}
+document.getElementById("polishmin").onclick = () => runPolish("minutes");
+document.getElementById("polishrep").onclick = () => runPolish("report");
 document.getElementById("speak").onclick = async () => {
   const el = document.getElementById("istatus");
   const b = document.getElementById("speak");
@@ -358,6 +403,7 @@ async function loadSessions() {
       <a href="/minutes?room=room1&session=${s2.id}" target="_blank">minutes</a> ·
       <a href="/transcript?room=room1&session=${s2.id}" target="_blank">transcript</a> ·
       <a href="#" title="local LLM lists personal names for review — changes nothing" onclick="nameCheck('${s2.id}');return false">names check</a> ·
+      ${s2.files.some(f => f.endsWith("_minutes_polished.md")) ? `<a href="/polished?session=${s2.id}" target="_blank">polished minutes</a> · ` : ""}
       ${s2.files.some(f => f.endsWith("_recording.wav")) ? `<a href="/api/audio?room=room1&session=${s2.id}">audio</a> · ` : ""}
       <a href="#" style="color:#f87171" onclick="deleteSession('${s2.id}');return false">delete</a></div>`
   ).join("");

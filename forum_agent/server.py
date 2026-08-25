@@ -343,6 +343,62 @@ async def api_ingest(request: Request, name: str = "upload",
     return {"session": sid}
 
 
+@app.get("/api/polish/providers")
+async def api_polish_providers() -> list:
+    from forum_agent import cloud
+    return cloud.providers()
+
+
+@app.post("/api/polish")
+async def api_polish(body: dict) -> dict:
+    """Post-event cloud polish (issue #15): explicit opt-in per run; sends
+    ONE local draft (a session's minutes, or the event report) to the chosen
+    cloud provider and writes *_polished.md beside it."""
+    import anyio
+    import functools
+    from forum_agent import cloud
+    from forum_agent.constants import REPORT_MD, SESSIONS_DIR
+    from forum_agent.session import manager
+    if manager.status()["running"]:
+        raise HTTPException(409, "post-event only: stop the session first")
+    provider = str(body.get("provider", ""))
+    model = str(body.get("model", ""))
+    if not provider or not model:
+        raise HTTPException(400, "provider and model are required")
+    target = body.get("target", "minutes")
+    if target == "report":
+        src, dest = Path(REPORT_MD), Path(REPORT_MD).with_name(
+            "report_polished.md")
+    else:
+        sids = _selected_sessions(body)
+        if len(sids) != 1:
+            raise HTTPException(400, "pick exactly one session to polish")
+        d = Path(SESSIONS_DIR) / sids[0]
+        src, dest = d / "room1_minutes.md", d / "room1_minutes_polished.md"
+    try:
+        await anyio.to_thread.run_sync(functools.partial(
+            cloud.polish_file, src, dest, provider, model))
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc))
+    except Exception as exc:  # provider/network errors, surfaced verbatim
+        raise HTTPException(502, f"cloud polish failed: {exc}")
+    return {"polished": str(dest), "target": target}
+
+
+@app.get("/polished", response_class=HTMLResponse)
+async def polished_page(session: str = "", target: str = "minutes") -> str:
+    from forum_agent import activity, pages
+    from forum_agent.constants import REPORT_MD, SESSIONS_DIR
+    if target == "report":
+        p = Path(REPORT_MD).with_name("report_polished.md")
+    else:
+        safe_session(session)
+        p = Path(SESSIONS_DIR) / session / "room1_minutes_polished.md"
+    return pages.render_markdown_page(
+        "Polished (cloud)", p, "No polished version yet.",
+        busy=activity.busy("cloud"))
+
+
 @app.post("/api/speak")
 async def api_speak(body: dict) -> dict:
     """Invoked voice summary (issue #14): read the current approved key
