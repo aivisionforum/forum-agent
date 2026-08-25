@@ -260,8 +260,11 @@ async def api_report(body: dict) -> dict:
             isinstance(selected, list)
             and all(isinstance(x, str) for x in selected)):
         raise HTTPException(400, "sessions must be a list of session ids")
-    path = await anyio.to_thread.run_sync(
-        functools.partial(generate_report, selected))
+    try:
+        path = await anyio.to_thread.run_sync(
+            functools.partial(generate_report, selected))
+    except RuntimeError as exc:  # nothing to synthesize, same as C6/C4
+        raise HTTPException(409, str(exc))
     return {"path": path}
 
 
