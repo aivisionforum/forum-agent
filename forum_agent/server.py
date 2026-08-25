@@ -343,6 +343,23 @@ async def api_ingest(request: Request, name: str = "upload",
     return {"session": sid}
 
 
+@app.post("/api/speak")
+async def api_speak(body: dict) -> dict:
+    """Invoked voice summary (issue #14): read the current approved key
+    points aloud. Moderator-triggered only — the agent never speaks
+    uninvited."""
+    import anyio
+    from forum_agent import speak
+    from forum_agent.insights import engine
+    room = safe_room(body.get("room", "room1"))
+    try:
+        await anyio.to_thread.run_sync(
+            lambda: speak.speak_summary(engine(room).state))
+    except RuntimeError as exc:
+        raise HTTPException(409, str(exc))
+    return {"spoken": True}
+
+
 @app.post("/api/redact")
 async def api_redact(body: dict) -> dict:
     """Name check (issue #10): list personal names in archived transcripts

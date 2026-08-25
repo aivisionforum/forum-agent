@@ -80,6 +80,7 @@
   <a id="viewreport" href="/report" target="_blank"
      style="display:none;font-size:13px">view last generated report
      (its page lists which sessions it covers)</a>
+  <button id="speak">🔊 Speak key points aloud</button>
   <button id="cancelwait" style="display:none;color:#f87171">✕ Cancel wait</button>
   <span id="istatus" style="color:#7f8c99;font-size:14px"></span>
   <label><input type="checkbox" id="autoapprove" checked>
@@ -292,6 +293,19 @@ function updateNav(s, latestId) {
   document.getElementById("viewreport").style.display =
     s.report_exists ? "" : "none";
 }
+document.getElementById("speak").onclick = async () => {
+  const el = document.getElementById("istatus");
+  const b = document.getElementById("speak");
+  b.disabled = true;
+  el.textContent = "speaking key points through the speakers…";
+  try {
+    const r = await fetch("/api/speak", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({room: "room1"})});
+    el.textContent = r.ok ? "done speaking" : "speak failed: " + await r.text();
+  } catch (e) { el.textContent = "speak failed: " + e;
+  } finally { b.disabled = false; }
+};
 document.getElementById("uploadbtn").onclick = async () => {
   const f = document.getElementById("uploadfile").files[0];
   const st = document.getElementById("uploadstatus");
