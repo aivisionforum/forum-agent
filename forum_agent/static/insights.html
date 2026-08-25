@@ -24,7 +24,8 @@
   .draft .badge { background: #78350f; color: #fcd34d; }
   .approved .badge { background: #14532d; color: #86efac; }
   .new .badge { background: #1e3a8a; color: #93c5fd; }
-  .hidden-item { display: none; }
+  .hiddenst { opacity: 0.45; }
+  .hiddenst .badge { background: #2a2a33; color: #99a; }
   .ops button { font-size: 12px; margin: 8px 6px 0 0; padding: 4px 10px;
                 border-radius: 6px; border: 1px solid #2a3a4d; cursor: pointer;
                 background: #18222e; color: #cbd5e1; }
@@ -116,16 +117,26 @@ function render(s) {
     for (const it of (s.items?.[kind] || [])) {
       if (it.status === "hidden" && !operator) continue;
       const d = document.createElement("div");
+      // Status badge always reflects the item's real state so every button
+      // click changes something visible; NEW rides along instead of
+      // replacing it (a NEW badge that masked status made approve/hide
+      // look broken).
       const isNew = it.added && s.updated && (s.updated - it.added) < 5;
-      d.className = "item " + (isNew ? "new" : it.status === "approved" ? "approved" : "draft");
-      const badge = isNew ? "NEW 新" : it.status === "approved" ? "✓" : "DRAFT 草稿";
+      d.className = "item " + (it.status === "approved" ? "approved"
+        : it.status === "hidden" ? "hiddenst" : "draft");
+      const badge = (it.status === "approved" ? "✓ 已上屏 on screen"
+        : it.status === "hidden" ? "HIDDEN 已隐藏" : "DRAFT 草稿")
+        + (isNew ? " · NEW 新" : "");
       d.innerHTML = `<span class="badge">${badge}</span>
         <div class="zh">${esc(it.zh)}</div><div class="en">${esc(it.en)}</div>`;
       if (operator && !session) {
         const ops = document.createElement("div");
         ops.className = "ops";
-        for (const [label, action] of [["✓ approve","approved"],
-            ["draft","draft"], ["✕ hide","hidden"], ["✎ edit","edit"]]) {
+        const acts = it.status === "hidden"
+          ? [["↩ unhide","draft"], ["✎ edit","edit"]]
+          : [["✓ approve","approved"], ["draft","draft"],
+             ["✕ hide","hidden"], ["✎ edit","edit"]];
+        for (const [label, action] of acts) {
           const b = document.createElement("button");
           b.textContent = label;
           b.onclick = async () => {

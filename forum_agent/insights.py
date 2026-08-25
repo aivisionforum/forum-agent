@@ -311,10 +311,13 @@ class InsightEngine:
                         it["status"] = action
                         if action == "approved":
                             self._log_approved(kind, it)
-                        elif action == "hidden":  # stays suppressed on refresh
+                        if action == "hidden":  # stays suppressed on refresh
                             self.state.setdefault("hidden_zh", []).append(it["zh"])
                             log = self.state.get("approved_log", {}).get(kind, [])
                             log[:] = [e for e in log if e["zh"] != it["zh"]]
+                        else:  # approve/unhide lifts refresh suppression too
+                            hid = self.state.get("hidden_zh", [])
+                            hid[:] = [z for z in hid if z != it["zh"]]
             self._save_and_broadcast()
         return self.state
 
