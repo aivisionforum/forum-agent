@@ -65,6 +65,10 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m forum_agent.server
 ```
 
+The browser is only a viewer — recording, transcription, translation, and
+auto-insights all run in the server process, so closing every browser window
+does not interrupt a session. Reopen the console anytime to catch up.
+
 Open <http://127.0.0.1:8710/control>: pick the audio input device, then
 "Start microphone" for live capture or "Start test audio file" for the
 fixture replay. Subtitles: <http://127.0.0.1:8710/subtitles?room=room1>
