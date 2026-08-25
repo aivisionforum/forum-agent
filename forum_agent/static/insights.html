@@ -193,9 +193,9 @@ setInterval(() => { if (window._ws && window._ws.readyState === 1) window._ws.se
 if (session) {
   document.getElementById("viewbar").innerHTML =
     "ARCHIVED SESSION " + session + " (read-only)";
-} else document.getElementById("viewbar").innerHTML = operator
-  ? "OPERATOR VIEW — approve/hide buttons active · <a style='color:#6ea8fe' href='?room=" + room + "'>switch to projector view</a>"
-  : "PROJECTOR VIEW (read-only) · <a style='color:#6ea8fe' href='?room=" + room + "&operator=1'>switch to operator view</a>";
+} else if (operator) document.getElementById("viewbar").innerHTML =
+  "OPERATOR VIEW — approve/hide buttons active · <a style='color:#6ea8fe' href='?room=" + room + "'>switch to projector view</a>";
+// projector: no view bar — the audience screen carries no operator chrome
 let lastUpdated = 0;
 let autoStarted = null, clockOffset = 0, lastBusy = null, busyAt = 0;
 const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
