@@ -78,6 +78,25 @@ function zoomFit(floor) {
   while (z > floor && !fits()) { z -= 0.05; document.body.style.zoom = z; }
   return fits();
 }
+let fixedZoom = null;  // one zoom for every page, so flips never resize
+function applyPages(tick) {
+  let maxPages = 1;
+  for (const kind of KINDS) {
+    const els2 = [...document.getElementById(kind).children];
+    if (els2.length <= PAGE) {
+      els2.forEach(el => el.style.display = "");
+      document.getElementById("page-" + kind).textContent = "";
+      continue;
+    }
+    const pages = Math.ceil(els2.length / PAGE);
+    maxPages = Math.max(maxPages, pages);
+    const pi = tick % pages;
+    els2.forEach((el, i) => el.style.display =
+      (i >= pi * PAGE && i < (pi + 1) * PAGE) ? "" : "none");
+    document.getElementById("page-" + kind).textContent = `${pi + 1}/${pages}`;
+  }
+  return maxPages;
+}
 function fitToScreen() {
   if (operator) return;
   for (const kind of KINDS) {
@@ -89,19 +108,25 @@ function fitToScreen() {
   }
   paging = !zoomFit(MIN_READABLE);
   if (!paging) return;
-  for (const kind of KINDS) {
-    const els2 = [...document.getElementById(kind).children];
-    if (els2.length <= PAGE) continue;
-    const pages = Math.ceil(els2.length / PAGE);
-    const pi = pageTick % pages;
-    els2.forEach((el, i) => el.style.display =
-      (i >= pi * PAGE && i < (pi + 1) * PAGE) ? "" : "none");
-    document.getElementById("page-" + kind).textContent = `${pi + 1}/${pages}`;
+  // Fixed zoom = the one that fits the TALLEST page: flipping to a shorter
+  // page must not resize the whole screen every 8 seconds.
+  const maxPages = applyPages(0);
+  fixedZoom = 1.4;
+  for (let t = 0; t < maxPages; t++) {
+    applyPages(t);
+    zoomFit(0.55);
+    fixedZoom = Math.min(fixedZoom, parseFloat(document.body.style.zoom));
   }
-  zoomFit(0.55);  // pages are small; this normally fits well above the floor
+  applyPages(pageTick);
+  document.body.style.zoom = fixedZoom;
 }
-setInterval(() => { if (paging && !operator) { pageTick++; fitToScreen(); } },
-            8000);
+setInterval(() => {
+  if (paging && !operator) {
+    pageTick++;
+    applyPages(pageTick);
+    document.body.style.zoom = fixedZoom;  // never re-fit on a flip
+  }
+}, 8000);
 window.addEventListener("resize", fitToScreen);
 const session = params.get("session") || "";
 const KINDS = ["summary_points","next_steps","emerging_consensus","tensions","open_questions"];
