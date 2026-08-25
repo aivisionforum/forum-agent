@@ -24,9 +24,12 @@ def eng(tmp_path, monkeypatch):
     return ins.InsightEngine("room1")
 
 
+# quotes anchor to the fixture transcript line (issue #12 grounding)
 LLM_JSON = json.dumps({
-    "summary_points": [{"zh": "要点一", "en": "Point one"}],
-    "emerging_consensus": [{"zh": "共识一", "en": "Consensus one"}],
+    "summary_points": [{"zh": "要点一", "en": "Point one",
+                        "quote": "meaningful human control"}],
+    "emerging_consensus": [{"zh": "共识一", "en": "Consensus one",
+                            "quote": "我们需要"}],
     "tensions": [], "open_questions": [],
     "convergence_line": {"zh": "收敛线", "en": "Converging line"}})
 
@@ -89,7 +92,8 @@ def test_empty_transcript_no_archive_raises(eng, monkeypatch, tmp_path):
 
 
 def test_minutes_written_with_draft_banner(eng, monkeypatch):
-    monkeypatch.setattr(ins, "_llm", lambda p: "## 会议纪要（草稿）\n- 要点")
+    monkeypatch.setattr(ins, "_llm",
+                    lambda p, **k: "## 会议纪要（草稿）\n- 要点")
     path = eng.generate_minutes()
     content = open(path).read()
     assert content.startswith("> DRAFT")

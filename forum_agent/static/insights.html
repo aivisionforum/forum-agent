@@ -172,9 +172,12 @@ function render(s) {
         : it.status === "hidden" ? "hiddenst" : "draft");
       const badge = (it.status === "approved" ? "✓ 已上屏 on screen"
         : it.status === "hidden" ? "HIDDEN 已隐藏" : "DRAFT 草稿")
-        + (isNew ? " · NEW 新" : "");
+        + (isNew ? " · NEW 新" : "")
+        + (operator && it.grounded === false ? " · 无出处 NO SOURCE" : "");
+      const src = operator && it.quote
+        ? `<div style="font-size:12px;color:#556;margin-top:4px">出处 source: “${esc(it.quote)}”</div>` : "";
       d.innerHTML = (operator ? `<span class="badge">${badge}</span>` : "") +
-        `<div class="zh">${esc(it.zh)}</div><div class="en">${esc(it.en)}</div>`;
+        `<div class="zh">${esc(it.zh)}</div><div class="en">${esc(it.en)}</div>` + src;
       if (operator && !session) {
         const ops = document.createElement("div");
         ops.className = "ops";

@@ -42,9 +42,29 @@ KINDS = ["summary_points", "next_steps", "emerging_consensus", "tensions",
          "open_questions"]
 
 
-def _llm(prompt: str) -> str:
+def _llm(prompt: str, big: bool = False) -> str:
+    """big=True: post-session work (archived insights, minutes) — the GPU is
+    free then, so the 32B report model's quality is affordable (issue #13).
+    Live refresh stays on the 8B (ADR 0001: never starve translation)."""
+    if big:
+        from forum_agent.constants import (REPORT_MODEL,
+                                           REPORT_TIMEOUT_SECONDS)
+        return llm.chat(REPORT_MODEL, prompt,
+                        timeout=REPORT_TIMEOUT_SECONDS)
     return llm.chat(INSIGHT_MODEL, prompt, think=INSIGHT_THINK,
                     timeout=INSIGHT_TIMEOUT_SECONDS)
+
+
+def _norm(text: str) -> str:
+    """Normalization for quote grounding: strip whitespace/punct, casefold."""
+    return re.sub(r"[\W_]+", "", text, flags=re.UNICODE).casefold()
+
+
+def _is_grounded(item: dict, transcript_norm: str) -> bool:
+    """An item is grounded when its verbatim quote actually appears in the
+    transcript window (issue #12: hallucinated points must not auto-approve)."""
+    q = _norm(item.get("quote", "") or "")
+    return len(q) >= 4 and q in transcript_norm
 
 
 def _parse_json(text: str) -> dict:
@@ -179,6 +199,7 @@ class InsightEngine:
             return self.state
         with self._lock:
             hidden = set(self.state.get("hidden_zh", []))
+            tnorm = _norm(transcript)
             for kind in KINDS:
                 fresh = parsed.get(kind, []) or []
                 prev = {i["zh"]: i
@@ -193,10 +214,16 @@ class InsightEngine:
                             or it["zh"] in hidden:
                         continue
                     old = prev.get(it["zh"])
+                    grounded = _is_grounded(it, tnorm)
+                    # ungrounded (no verbatim source in the transcript) stays
+                    # DRAFT even with auto-approve on: a human must vouch for
+                    # anything the model cannot anchor (issue #12)
                     items.append(old or {
                         "id": uuid.uuid4().hex[:8],
                         "zh": it["zh"], "en": it.get("en", ""),
-                        "status": "approved" if self.auto_approve else "draft",
+                        "quote": it.get("quote", ""), "grounded": grounded,
+                        "status": "approved"
+                        if self.auto_approve and grounded else "draft",
                         "added": now})
                 self.state["items"][kind] = items[:INSIGHT_MAX_ITEMS[kind]]
                 if self.auto_approve:  # supervisor mode: log for the minutes
@@ -244,7 +271,7 @@ class InsightEngine:
                   .replace("{insights}",
                            json.dumps(approved, ensure_ascii=False))
                   .replace("{transcript}", transcript))
-        md = _llm(prompt)
+        md = _llm(prompt, big=True)
         md = re.sub(r"^```(markdown)?|```$", "", md.strip(),
                     flags=re.M).strip()
         out = Path(base_dir) / f"{self.room}_minutes.md"
@@ -268,23 +295,32 @@ class InsightEngine:
                   .replace("{state}",
                            json.dumps(state["items"], ensure_ascii=False))
                   .replace("{transcript}", transcript))
-        parsed = _parse_json(_llm(prompt))
-        return self._store_archived(base_dir, state, parsed)
+        parsed = _parse_json(_llm(prompt, big=True))
+        return self._store_archived(base_dir, state, parsed,
+                                    transcript=transcript)
 
     def _store_archived(self, base_dir: str, state: dict,
-                        parsed: dict) -> dict:
+                        parsed: dict, transcript: str = "") -> dict:
         import uuid as _uuid
         apath = Path(base_dir) / f"{self.room}_insights.json"
         now = time.time()
+        tnorm = _norm(transcript)
         for kind in KINDS:
-            items = [{"id": _uuid.uuid4().hex[:8], "zh": it["zh"],
-                      "en": it.get("en", ""), "status": "approved",
-                      "added": now}
-                     for it in (parsed.get(kind, []) or [])
-                     if isinstance(it, dict) and it.get("zh")]
+            items = []
+            for it in (parsed.get(kind, []) or []):
+                if not (isinstance(it, dict) and it.get("zh")):
+                    continue
+                grounded = not transcript or _is_grounded(it, tnorm)
+                items.append({"id": _uuid.uuid4().hex[:8], "zh": it["zh"],
+                              "en": it.get("en", ""),
+                              "quote": it.get("quote", ""),
+                              "grounded": grounded,
+                              "status": "approved" if grounded else "draft",
+                              "added": now})
             state["items"][kind] = items[:INSIGHT_MAX_ITEMS[kind]]
             state["approved_log"][kind] = [
-                {"zh": i["zh"], "en": i["en"]} for i in state["items"][kind]]
+                {"zh": i["zh"], "en": i["en"]}
+                for i in state["items"][kind] if i["status"] == "approved"]
         for key in ("convergence_line", "session_topic"):
             val = parsed.get(key) or {}
             if isinstance(val, dict) and val.get("zh"):
@@ -369,7 +405,10 @@ class InsightEngine:
                   .replace("{insights}",
                            json.dumps(approved, ensure_ascii=False))
                   .replace("{transcript}", transcript))
-        md = _llm(prompt)
+        from forum_agent.session import manager
+        # mid-session minutes must not put the 32B on the GPU that live
+        # translation is using; post-session gets the big model
+        md = _llm(prompt, big=not manager.status()["running"])
         md = re.sub(r"^```(markdown)?|```$", "", md.strip(), flags=re.M).strip()
         out = (Path(base_dir) / f"{self.room}_minutes.md") if base_dir \
             else Path(MINUTES_MD.format(room=self.room))
