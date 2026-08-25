@@ -131,10 +131,20 @@ def run_mic(room: str, duration: float | None = None,
     return pipe
 
 
-def _drain_and_close(pipe: Pipeline) -> None:
-    """Let pending ASR finals and translations finish, then stop workers."""
-    pipe.idle.wait(timeout=60)
-    deadline = time.monotonic() + 90
+def _drain_and_close(pipe: Pipeline, budget: float | None = None) -> None:
+    """Let pending ASR finals and translations finish, then stop workers.
+
+    The default budget suits a live feed: wall-clock pinning keeps ASR in
+    step with the input, so at end-of-feed only an utterance or two is
+    queued. Batch processing removes that pacing -- the feed can push an
+    hour of audio through the VAD in a couple of minutes, leaving the whole
+    file in the queues -- and close() discards whatever is still pending,
+    silently truncating transcript and translations alike. Callers that feed
+    faster than real time must pass a budget scaled to the audio.
+    """
+    idle_budget = 60.0 if budget is None else budget
+    pipe.idle.wait(timeout=idle_budget)
+    deadline = time.monotonic() + (90.0 if budget is None else budget)
     while not pipe.translate_q.empty() and time.monotonic() < deadline:
         time.sleep(0.5)
     pipe.close()
@@ -181,7 +191,10 @@ def run_replay(wav_path: str, room: str, play: bool = False,
         pipe.submit_final(seg.open_segment.t_start, seg.open_segment.audio, start)
     if player is not None:
         player.terminate()
-    _drain_and_close(pipe)
+    # Batch runs finish the queued work however long it takes (bounded well
+    # above the ~0.3x real time the pipeline needs), rather than truncating.
+    _drain_and_close(pipe, budget=None if realtime
+                     else max(300.0, 3.0 * len(audio) / SAMPLE_RATE))
     return pipe
 
 
