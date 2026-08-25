@@ -122,6 +122,7 @@ async function refresh() {
   const [txt, color] = (s.running && PHASES[s.phase]) || ["", ""];
   els.phase.textContent = txt; els.phase.style.color = color;
   els.err.textContent = (s.error || "") +
+    (s.ram_warning ? "  ⚠ " + s.ram_warning : "") +
     (s.llm_state === "recovering"
       ? "  ⏳ LLM server restarting — translation and insights resume shortly"
       : s.llm === false ? "  ⚠ LLM server not responding — translation and insights are down" : "");

@@ -106,6 +106,8 @@ async def api_status() -> dict:
     # surface a dead LLM server on the console instead of failing silently
     status["llm"] = llm.healthy()
     status["llm_state"] = llm.state()  # "recovering" while watchdog relaunches
+    from forum_agent import preflight
+    status["ram_warning"] = preflight.warning
     return status
 
 
@@ -399,7 +401,8 @@ def main() -> None:
     Also launches and owns the mlx-lm model server (one-command startup)."""
     import atexit
     import uvicorn
-    from forum_agent import llm
+    from forum_agent import llm, preflight
+    preflight.check()  # refuse/warn on undersized machines before loading
     from forum_agent.constants import SERVER_HOST, SERVER_PORT
     proc = llm.launch_server()
     llm.start_watchdog(proc)   # relaunch if it dies mid-forum (issue #9)
