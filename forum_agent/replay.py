@@ -22,6 +22,7 @@ from forum_agent.constants import (DEAD_STREAM_SECONDS, FRAME_SECONDS,
 from forum_agent.pipeline import Pipeline
 from forum_agent.segmenter import Segmenter
 from forum_agent.server import app
+from forum_agent.vad import AutoGain, SileroSpeech
 
 
 
@@ -142,7 +143,14 @@ def run_replay(wav_path: str, room: str, play: bool = False,
     pipe = Pipeline(room)
     pipe.warmup()
     phase("live")
-    seg = Segmenter()
+    # Same front end as run_mic: auto-gain into the Silero neural VAD. With
+    # the default energy VAD, replay gates on absolute level
+    # (VAD_ENERGY_THRESHOLD = 1e-4 mean-square = -40 dBFS), so any recording
+    # whose room tone sits above that is one unbroken utterance and turns
+    # close only at MAX_SEGMENT_SECONDS. That also made the replay path
+    # behave differently from the live path it is meant to rehearse.
+    seg = Segmenter(speech_fn=SileroSpeech())
+    agc = AutoGain()
     frame_len = int(FRAME_SECONDS * SAMPLE_RATE)
     player = None
     if play:  # audible monitor of the replay, synced to the same clock
@@ -157,8 +165,8 @@ def run_replay(wav_path: str, room: str, play: bool = False,
         delay = target - time.monotonic()
         if delay > 0:
             time.sleep(delay)  # pin replay to wall clock = simulate live feed
-        next_partial = feed_frame(pipe, seg, audio[i:i + frame_len], start,
-                                  next_partial)
+        next_partial = feed_frame(pipe, seg, agc(audio[i:i + frame_len]),
+                                  start, next_partial)
     if seg.open_segment is not None:
         pipe.submit_final(seg.open_segment.t_start, seg.open_segment.audio, start)
     if player is not None:
