@@ -53,6 +53,10 @@
       background:#18222e;color:#f2f5f7;border:1px solid #2a3a4d;width:100%">
       <option value="auto">Auto (built-in mic preferred)</option>
     </select></label>
+  <label><input type="checkbox" id="record">
+    save raw audio recording (WAV) — off by default; tell the room first
+    (<a href="https://github.com/aivisionforum/forum-agent/blob/main/docs/DATA_HANDLING.md"
+        target="_blank">data handling</a>)</label>
   <button class="primary" id="mic">🎙 Start microphone</button>
   <button class="danger" id="stop">■ Stop</button>
   <details style="margin-top:14px">
@@ -152,6 +156,7 @@ async function post(path, body) {
   finally { busy = false; refresh(); }
 }
 els.mic.onclick = () => post("/api/start", {source: "mic",
+  record: document.getElementById("record").checked,
   device: document.getElementById("device").value});
 (async () => {
   const sel = document.getElementById("device");
@@ -266,6 +271,17 @@ function updateNav(running, latestId) {
   document.getElementById("nav-note").textContent =
     sfx ? " (showing last session " + latestId + ")" : "";
 }
+async function nameCheck(id) {
+  if (lastRunning) { alert("Stop the session first."); return; }
+  const el = document.getElementById("istatus");
+  el.textContent = "scanning " + id + " for personal names…";
+  const r = await fetch("/api/redact", {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({sessions: [id]})});
+  if (!r.ok) { el.textContent = "name check failed: " + await r.text(); return; }
+  el.textContent = "name check done";
+  window.open("/redaction?session=" + id, "_blank");
+}
 let latestSessionId = "";
 const sessSelState = new Map();  // id -> checked; survives the 5s re-render
 let sessFirstLoad = true;
@@ -289,6 +305,7 @@ async function loadSessions() {
       <a href="/insights?room=room1&operator=1&session=${s2.id}" target="_blank">insights</a> ·
       <a href="/minutes?room=room1&session=${s2.id}" target="_blank">minutes</a> ·
       <a href="/transcript?room=room1&session=${s2.id}" target="_blank">transcript</a> ·
+      <a href="#" title="local LLM lists personal names for review — changes nothing" onclick="nameCheck('${s2.id}');return false">names check</a> ·
       ${s2.files.some(f => f.endsWith("_recording.wav")) ? `<a href="/api/audio?room=room1&session=${s2.id}">audio</a> · ` : ""}
       <a href="#" style="color:#f87171" onclick="deleteSession('${s2.id}');return false">delete</a></div>`
   ).join("");

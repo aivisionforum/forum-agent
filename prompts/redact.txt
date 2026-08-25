@@ -1,0 +1,14 @@
+You are a privacy reviewer for a Chatham House Rule meeting transcript.
+Find every PERSONAL NAME of a real individual mentioned in the transcript
+below (given names, family names, nicknames used as names — in any
+language, including Chinese names). Do NOT flag: company or product names,
+place names, project names, or the anonymised speaker labels (Speaker A/B/C
+etc.).
+
+Return STRICT JSON only, no prose, in this shape:
+{"names": [{"name": "<as written>", "lines": [<0-based transcript line numbers where it appears>]}]}
+
+If no personal names appear, return {"names": []}.
+
+Transcript (one line per utterance, numbered):
+{transcript}

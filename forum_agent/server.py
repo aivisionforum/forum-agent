@@ -125,6 +125,7 @@ async def api_start(body: dict) -> dict:
     return await anyio.to_thread.run_sync(
         lambda: manager.start(body.get("source", "replay"), room,
                               play=bool(body.get("play", True)),
+                              record=bool(body.get("record", False)),
                               device=(int(body["device"])
                                       if body.get("device")
                                       not in (None, "", "auto") else None)))
@@ -281,6 +282,39 @@ async def minutes_page(room: str = "room1", session: str = "") -> str:
     return pages.render_markdown_page(
         "Minutes", pages.minutes_path(safe_room(room), safe_session(session)),
         "No minutes generated yet.")
+
+
+@app.post("/api/redact")
+async def api_redact(body: dict) -> dict:
+    """Name check (issue #10): list personal names in archived transcripts
+    for operator review. Advisory only — modifies no files."""
+    import functools
+    import anyio
+    from forum_agent import redact
+    from forum_agent.session import manager
+    if manager.status()["running"]:
+        raise HTTPException(409, "stop the session before the name check")
+    ids = _selected_sessions(body)
+    if not ids:
+        raise HTTPException(400, "pick at least one session")
+    for sid in ids:
+        try:
+            await anyio.to_thread.run_sync(
+                functools.partial(redact.check_session, sid))
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+    return {"processed": ids}
+
+
+@app.get("/redaction", response_class=HTMLResponse)
+async def redaction_page(session: str) -> str:
+    from forum_agent import pages, redact
+    from forum_agent.constants import SESSIONS_DIR
+    safe_session(session)
+    return pages.render_markdown_page(
+        f"Name check — {session}",
+        Path(SESSIONS_DIR) / session / redact.REDACTION_MD,
+        "No name check run yet — use the console.")
 
 
 @app.get("/transcript", response_class=HTMLResponse)
