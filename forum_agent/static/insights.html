@@ -101,7 +101,7 @@ function fitToScreen() {
   if (operator) return;
   for (const kind of KINDS) {
     const box = document.getElementById(kind);
-    box.style.minHeight = "";
+    box.style.height = ""; box.style.overflow = "";
     document.getElementById("sec-" + kind).style.display =
       (OPTIONAL.includes(kind) && !box.children.length) ? "none" : "";
     for (const el of box.children) el.style.display = "";
@@ -129,8 +129,13 @@ function fitToScreen() {
       tallest[kind] = Math.max(tallest[kind] || 0, box.offsetHeight);
     }
   }
-  for (const kind of KINDS)
-    document.getElementById(kind).style.minHeight = tallest[kind] + "px";
+  for (const kind of KINDS) {
+    // hard height (not min-height): even a 1px measurement wobble on the
+    // tallest page must not move the sections below during a flip
+    const box = document.getElementById(kind);
+    box.style.height = tallest[kind] + "px";
+    box.style.overflow = "hidden";
+  }
   applyPages(pageTick);
 }
 setInterval(() => {
