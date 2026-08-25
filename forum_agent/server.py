@@ -105,6 +105,7 @@ async def api_status() -> dict:
     status = manager.status()
     # surface a dead LLM server on the console instead of failing silently
     status["llm"] = llm.healthy()
+    status["llm_state"] = llm.state()  # "recovering" while watchdog relaunches
     return status
 
 
@@ -329,8 +330,8 @@ def main() -> None:
     from forum_agent import llm
     from forum_agent.constants import SERVER_HOST, SERVER_PORT
     proc = llm.launch_server()
-    if proc is not None:
-        atexit.register(proc.terminate)
+    llm.start_watchdog(proc)   # relaunch if it dies mid-forum (issue #9)
+    atexit.register(llm.shutdown)  # terminates whichever proc we own by then
     import threading
     threading.Thread(target=llm.prewarm, daemon=True).start()
     print(f"Control: http://{SERVER_HOST}:{SERVER_PORT}/control")

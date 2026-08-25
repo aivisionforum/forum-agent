@@ -84,3 +84,81 @@ def launch_server() -> subprocess.Popen | None:
         time.sleep(0.5)
     proc.terminate()
     raise RuntimeError("mlx-lm server failed to start within 30s")
+
+
+# ---------------------------------------------------------------------------
+# Watchdog (issue #9): a dead model server never came back — transcripts kept
+# flowing while translations silently became empty strings. The watchdog
+# health-checks the server and relaunches it after repeated failures.
+
+_watchdog = {"proc": None, "state": "ok"}  # state: "ok" | "recovering"
+
+
+def state() -> str:
+    """Watchdog view of the model server, for /api/status."""
+    return _watchdog["state"]
+
+
+def shutdown() -> None:
+    """Terminate the managed server process, if we own one (atexit)."""
+    proc = _watchdog["proc"]
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+
+
+def start_watchdog(proc) -> None:
+    """Own `proc` (None if the server is external) and keep the model server
+    alive: relaunch after LLM_WATCHDOG_FAILURES consecutive failed checks."""
+    import threading
+    from forum_agent.constants import LLM_WATCHDOG_INTERVAL_SECONDS
+    _watchdog["proc"] = proc
+
+    def loop() -> None:
+        fails = 0
+        while True:
+            time.sleep(LLM_WATCHDOG_INTERVAL_SECONDS)
+            fails = _watchdog_step(fails)
+
+    threading.Thread(target=loop, daemon=True, name="llm-watchdog").start()
+
+
+def _watchdog_step(fails: int, check=None, relaunch=None) -> int:
+    """One health-check tick; returns the updated failure count. `check` and
+    `relaunch` are injectable for tests."""
+    from forum_agent.constants import LLM_WATCHDOG_FAILURES
+    check = check or (lambda: healthy(timeout=3))
+    relaunch = relaunch or _relaunch
+    if check():
+        if _watchdog["state"] != "ok":
+            print("[llm] model server healthy again")
+        _watchdog["state"] = "ok"
+        return 0
+    fails += 1
+    if fails < LLM_WATCHDOG_FAILURES:
+        return fails
+    _watchdog["state"] = "recovering"
+    print(f"[llm] model server unresponsive ({fails} checks); relaunching")
+    if relaunch():
+        _watchdog["state"] = "ok"
+        return 0
+    return fails  # stay in "recovering", retry next tick
+
+
+def _relaunch() -> bool:
+    """Kill our dead child (if any) and start a fresh server."""
+    proc = _watchdog["proc"]
+    if proc is not None and proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    try:
+        new = launch_server()
+        if new is not None:
+            _watchdog["proc"] = new
+        print("[llm] model server relaunched")
+        return True
+    except RuntimeError as exc:
+        print(f"[llm] relaunch failed: {exc}")
+        return False

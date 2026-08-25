@@ -81,6 +81,12 @@ LANG_MIXED = "mixed"
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8710
 
+# LLM watchdog: the mlx-lm server dies silently under memory pressure and
+# translations become empty strings (stress/RESULTS.md). The watchdog checks
+# health every interval and relaunches after this many consecutive failures.
+LLM_WATCHDOG_INTERVAL_SECONDS = 10
+LLM_WATCHDOG_FAILURES = 3
+
 # Message types on the websocket
 MSG_PARTIAL = "partial"
 MSG_FINAL = "final"
