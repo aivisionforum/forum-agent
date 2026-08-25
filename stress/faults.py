@@ -89,27 +89,79 @@ def check_stop_mid_inference():
            f"archived={archived}")
 
 
-def check_llm_death():
-    """Kill the model server mid-session: the app launches mlx-lm only at
-    startup, so nothing relaunches it."""
+def _trans_lines(room: str = "room1") -> int:
+    from pathlib import Path
+    p = Path(f"data/{room}_translations.jsonl")
+    return len(p.read_text().splitlines()) if p.exists() else 0
+
+
+def check_llm_watchdog():
+    """Kill the model server mid-session and watch the watchdog (issue #9).
+
+    "Recovered" is not the health flag flipping back — it is translations
+    reaching the subtitle file again, so this measures that too.
+    """
     post("/api/start", {"source": "replay", "room": "room1", "play": False})
-    time.sleep(15)
+    time.sleep(25)  # let a couple of segments translate normally
+    before = _trans_lines()
     subprocess.run(["pkill", "-f", "mlx_lm server"], check=False)
-    time.sleep(20)
+    killed_at = time.time()
+
+    saw_recovering = False
+    detect = recover = None
+    deadline = killed_at + 240
+    while time.time() < deadline:
+        s = status()
+        if s.get("llm_state") == "recovering" and detect is None:
+            detect = time.time() - killed_at
+            saw_recovering = True
+        if detect is not None and s.get("llm") is True:
+            recover = time.time() - killed_at
+            break
+        time.sleep(2)
+
     s = status()
-    visible = s.get("llm") is False
-    record("model server killed mid-session",
-           "ok" if visible else "bug",
-           f"/api/status llm={s.get('llm')}, session still running="
-           f"{s.get('running')} -- the console renders '⚠ LLM server not "
-           "responding' (control.html:106), so an operator watching it sees "
-           "the degradation; transcript continues, translations go empty")
-    post("/api/stop", {}, timeout=200)
-    wait_idle()
-    s2 = status()
-    record("model server auto-recovery", "risk" if s2.get("llm") is False else "ok",
-           f"after stop, llm={s2.get('llm')} (no code path relaunches it; "
-           "operator must restart the app)")
+    if recover is None:
+        record("watchdog relaunches the model server", "bug",
+               f"no recovery within 240s; llm={s.get('llm')} "
+               f"state={s.get('llm_state')!r}")
+    else:
+        record("watchdog relaunches the model server", "ok",
+               f"detected in {detect:.0f}s, healthy again {recover:.0f}s "
+               f"after the kill; session kept running={s.get('running')}")
+    record("console can show the outage", "ok" if saw_recovering else "risk",
+           f"llm_state reached 'recovering' = {saw_recovering} "
+           "(control.html renders it while the watchdog works)")
+
+    # the flag is cheap; the real question is whether subtitles resume
+    if recover is not None:
+        end = time.time() + 150
+        while time.time() < end and _trans_lines() <= before:
+            time.sleep(3)
+        after = _trans_lines()
+        record("translations resume after recovery",
+               "ok" if after > before else "bug",
+               f"translation lines {before} -> {after}")
+
+    # a second kill proves the watchdog adopted the NEW process
+    subprocess.run(["pkill", "-f", "mlx_lm server"], check=False)
+    k2 = time.time()
+    ok2 = False
+    while time.time() < k2 + 240:
+        if status().get("llm") is True:
+            ok2 = True
+            break
+        time.sleep(2)
+    record("watchdog survives a second failure", "ok" if ok2 else "bug",
+           f"recovered again = {ok2} after {time.time() - k2:.0f}s")
+
+    procs = subprocess.run(["pgrep", "-f", "mlx_lm server"],
+                           capture_output=True, text=True).stdout.split()
+    record("no orphaned model servers", "ok" if len(procs) <= 1 else "bug",
+           f"{len(procs)} mlx_lm process(es) running after two kills")
+
+    post("/api/stop", {}, timeout=300)
+    wait_idle(300)
 
 
 def check_bad_device():
@@ -204,7 +256,7 @@ def main() -> None:
     check_stop_mid_inference()
     check_bad_device()
     check_websockets()
-    check_llm_death()
+    check_llm_watchdog()
     from pathlib import Path
     Path("data/stress/faults.json").write_text(
         json.dumps(RESULTS, ensure_ascii=False, indent=1))
