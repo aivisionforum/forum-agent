@@ -158,6 +158,7 @@ async def api_insights(room: str = "room1", session: str = "") -> dict:
     from forum_agent import activity
     e = engine(room)
     return {**e.state, "error": e.error, "busy": activity.busy("insights"),
+            "auto_started": e.auto_started, "now": __import__("time").time(),
             "interval": INSIGHT_INTERVAL_SECONDS}
 
 

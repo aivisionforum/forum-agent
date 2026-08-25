@@ -160,17 +160,12 @@ function render(s) {
       box.appendChild(d);
     }
   }
-  // Empty panel must explain itself: say what the system is doing and when
-  // content will appear, or a viewer assumes it is broken.
-  const total = KINDS.reduce((n, k) =>
-    n + document.getElementById(k).children.length, 0);
-  const emptyEl = document.getElementById("empty");
-  emptyEl.style.display = total ? "none" : "";
-  if (!total) emptyEl.innerHTML = s.archived
-    ? "该会话尚无洞察 — 在控制台勾选该会话并点击 Summarize now<br>No insights stored for this session — check it in the console and click Summarize now"
-    : s.busy
-      ? `✦ AI 正在总结讨论内容，约需 30–60 秒…<br>Summarizing the discussion now — about 30–60 seconds (running ${s.busy.seconds}s)`
-      : "首次摘要将在会议开始约 3 分钟后自动出现，之后每 3 分钟更新<br>The first summary appears about 3 minutes into the session, then updates every 3 minutes";
+  // Empty panel must explain itself: what the system is doing and a LIVE
+  // countdown to the first summary, or a viewer assumes it is broken.
+  if ("auto_started" in s) autoStarted = s.auto_started;
+  if (s.now) clockOffset = Date.now() / 1000 - s.now;
+  if ("busy" in s) { lastBusy = s.busy; busyAt = Date.now() / 1000; }
+  updateEmpty();
   const c = s.convergence_line || {};
   document.getElementById("conv").textContent =
     c.zh ? `▶ ${c.zh} · ${c.en}` : "";
@@ -202,16 +197,49 @@ if (session) {
   ? "OPERATOR VIEW — approve/hide buttons active · <a style='color:#6ea8fe' href='?room=" + room + "'>switch to projector view</a>"
   : "PROJECTOR VIEW (read-only) · <a style='color:#6ea8fe' href='?room=" + room + "&operator=1'>switch to operator view</a>";
 let lastUpdated = 0;
+let autoStarted = null, clockOffset = 0, lastBusy = null, busyAt = 0;
+const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+function updateEmpty() {
+  const total = KINDS.reduce((n, k) =>
+    n + document.getElementById(k).children.length, 0);
+  const emptyEl = document.getElementById("empty");
+  emptyEl.style.display = total ? "none" : "";
+  if (total) return;
+  if (session) {
+    emptyEl.innerHTML = "该会话尚无洞察 — 在控制台勾选该会话并点击 Summarize now<br>No insights stored for this session — check it in the console and click Summarize now";
+    return;
+  }
+  const nowSrv = Date.now() / 1000 - clockOffset;
+  if (lastBusy) {
+    const el = Math.floor(lastBusy.seconds + (Date.now() / 1000 - busyAt));
+    emptyEl.innerHTML = `✦ AI 正在总结讨论内容，约需 30–60 秒（已进行 ${el} 秒）<br>Summarizing the discussion now — about 30–60 seconds (running ${el}s)`;
+  } else if (autoStarted) {
+    const remain = interval - (nowSrv - autoStarted);
+    emptyEl.innerHTML = remain > 0
+      ? `⏱ 首次摘要倒计时 ${mmss(remain)}<br>First summary in ${mmss(remain)}`
+      : "✦ 即将开始生成首次摘要…<br>Starting the first summary…";
+  } else {
+    emptyEl.innerHTML = "会议开始后，首次摘要约 3 分钟后自动出现，之后每 3 分钟更新<br>Once a session starts, the first summary appears in about 3 minutes, then updates every 3 minutes";
+  }
+}
 function tickMeta() {
   const el = document.getElementById("meta");
-  if (!lastUpdated) { el.textContent = "waiting for first refresh…"; return; }
+  if (!lastUpdated) {
+    const remain = autoStarted
+      ? interval - (Date.now() / 1000 - clockOffset - autoStarted) : 0;
+    el.textContent = remain > 0
+      ? "first summary in " + mmss(remain) : "waiting for first summary…";
+    return;
+  }
   const next = Math.max(0, interval - (Date.now()/1000 - lastUpdated));
   el.textContent = (engineError ? "⚠ " + engineError + " · " : "")
     + "updated " + new Date(lastUpdated * 1000).toLocaleTimeString()
-    + (session ? "" : ` · next auto-update in ${Math.floor(next/60)}:${String(Math.floor(next%60)).padStart(2,"0")}`);
+    + (session ? "" : autoStarted
+        ? ` · next auto-update in ${mmss(next)}`
+        : " · 会议已结束，停止自动更新 session stopped — no more auto-updates");
   el.style.color = engineError ? "#f87171" : "";
 }
-setInterval(tickMeta, 1000);
+setInterval(() => { tickMeta(); updateEmpty(); }, 1000);
 load(); if (!session) { connect(); setInterval(load, 10000); }
 </script>
 </body>

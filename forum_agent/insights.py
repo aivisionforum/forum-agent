@@ -89,6 +89,7 @@ class InsightEngine:
         self._thread: threading.Thread | None = None
         self.error: str | None = None
         self.auto_approve = AUTO_APPROVE_DEFAULT
+        self.auto_started: float | None = None  # panel countdown to 1st run
         self._gen = 0  # bumped on reset/stop: in-flight refreshes discard
 
     def reset(self) -> None:
@@ -323,6 +324,7 @@ class InsightEngine:
         return self.state
 
     def start_auto(self) -> None:
+        self.auto_started = time.time()
         self._stop = threading.Event()
         stop = self._stop
 
@@ -339,6 +341,7 @@ class InsightEngine:
         self._thread.start()
 
     def stop_auto(self) -> None:
+        self.auto_started = None
         self._stop.set()
         with self._lock:
             self._gen += 1  # invalidate any refresh still in the LLM
