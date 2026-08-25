@@ -270,10 +270,17 @@ function tickMeta() {
     return;
   }
   const next = Math.max(0, interval - (Date.now()/1000 - lastUpdated));
+  // A countdown stuck at 0:00 looks broken: once the update is due, say
+  // what the engine is actually doing (the run itself takes ~30-60s).
+  const busyEl = lastBusy
+    ? Math.floor(lastBusy.seconds + (Date.now() / 1000 - busyAt)) : 0;
   el.textContent = (engineError ? "⚠ " + engineError + " · " : "")
     + "updated " + new Date(lastUpdated * 1000).toLocaleTimeString()
     + (session ? "" : autoStarted
-        ? ` · next auto-update in ${mmss(next)}`
+        ? (lastBusy
+            ? ` · ✦ 正在总结 summarizing now (${busyEl}s)`
+            : next > 0 ? ` · next auto-update in ${mmss(next)}`
+                       : " · update due — starting…")
         : " · 会议已结束，停止自动更新 session stopped — no more auto-updates");
   el.style.color = engineError ? "#f87171" : "";
 }
