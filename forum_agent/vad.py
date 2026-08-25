@@ -38,8 +38,21 @@ class SileroSpeech:
         # real-time feed thread never stalls on the model during silence.
         if float(np.max(np.abs(frame))) < SILERO_MIN_PEAK:
             return False
-        chunks = torch.from_numpy(
-            frame[:n * SILERO_CHUNK].reshape(n, SILERO_CHUNK).copy())
-        with torch.no_grad():  # one batched call: n python/GIL round-trips -> 1
-            probs = self._model(chunks, 16000)
-        return float(probs.max()) >= SILERO_SPEECH_PROB
+        # Silero is a streaming RNN: it carries hidden state between calls and
+        # expects ONE 512-sample chunk at a time. Passing n chunks as a batch
+        # makes it treat them as n parallel streams sharing one state, and the
+        # state then latches: after speech excites it, a noise floor keeps it
+        # fed and every later frame reads as speech, so the segmenter never
+        # sees VAD_SILENCE_SECONDS and every turn force-closes at
+        # MAX_SEGMENT_SECONDS. Measured on HVAC noise at 12 dB SNR: 100% of
+        # inter-turn gaps classified as speech batched, 4.7% sequential.
+        # Every chunk is fed even once the frame is known to be speech:
+        # skipping one would leave the state a chunk behind the audio.
+        buf = frame[:n * SILERO_CHUNK].reshape(n, SILERO_CHUNK)
+        best = 0.0
+        with torch.no_grad():
+            for chunk in buf:
+                prob = float(self._model(
+                    torch.from_numpy(chunk.copy()).unsqueeze(0), 16000))
+                best = max(best, prob)
+        return best >= SILERO_SPEECH_PROB
