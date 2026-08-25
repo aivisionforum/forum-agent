@@ -284,6 +284,44 @@ async def minutes_page(room: str = "room1", session: str = "") -> str:
         "No minutes generated yet.")
 
 
+@app.post("/api/ingest")
+async def api_ingest(request: Request, name: str = "upload",
+                     room: str = "room1") -> dict:
+    """Upload a recording (raw bytes body, any ffmpeg-readable format) and
+    batch-process it into an archived session (issue #8)."""
+    import subprocess
+    import tempfile
+    import anyio
+    from forum_agent.constants import SAMPLE_RATE
+    from forum_agent.session import manager
+    room = safe_room(room)
+    if manager.status()["running"]:
+        raise HTTPException(409, "stop the live session before uploading")
+    data = await request.body()
+    if not data:
+        raise HTTPException(400, "empty upload")
+    name = Path(name).name  # strip any path the browser sent
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / name
+        src.write_bytes(data)
+        wav = Path(td) / "converted.wav"
+        conv = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(src), "-ac", "1",
+             "-ar", str(SAMPLE_RATE), str(wav)],
+            capture_output=True, text=True)
+        if conv.returncode != 0:
+            raise HTTPException(
+                400, f"ffmpeg could not read the file: {conv.stderr[-400:]}")
+        try:
+            sid = await anyio.to_thread.run_sync(
+                lambda: manager.ingest(str(wav), room, title=name))
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc))
+    if sid is None:
+        raise HTTPException(422, "no speech detected in the upload")
+    return {"session": sid}
+
+
 @app.post("/api/redact")
 async def api_redact(body: dict) -> dict:
     """Name check (issue #10): list personal names in archived transcripts

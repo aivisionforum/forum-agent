@@ -88,6 +88,15 @@
 </div>
 <div class="card wide">
   <b style="font-size:16px">Past sessions</b>
+  <div style="margin-top:8px;font-size:14px;color:#a8b4c0">
+    <input type="file" id="uploadfile" accept="audio/*,video/*,.m4a,.mp3,.wav,.mp4">
+    <button id="uploadbtn" style="font-size:14px;padding:8px 14px">⇪ Process
+      recording into a session</button>
+    <span id="uploadstatus" style="color:#7f8c99"></span>
+    <div style="color:#556;font-size:13px;margin-top:4px">Runs the full
+      pipeline on an uploaded file (faster than real time) and archives it
+      below — then generate minutes/report from it as usual.</div>
+  </div>
   <div id="sessions" style="margin-top:10px;font-size:15px;color:#a8b4c0;max-height:300px;overflow-y:auto;padding-right:6px">
     loading…</div>
 </div>
@@ -271,6 +280,23 @@ function updateNav(running, latestId) {
   document.getElementById("nav-note").textContent =
     sfx ? " (showing last session " + latestId + ")" : "";
 }
+document.getElementById("uploadbtn").onclick = async () => {
+  const f = document.getElementById("uploadfile").files[0];
+  const st = document.getElementById("uploadstatus");
+  if (!f) { st.textContent = "choose a file first"; return; }
+  if (lastRunning) { st.textContent = "stop the live session first"; return; }
+  document.getElementById("uploadbtn").disabled = true;
+  st.textContent = "processing " + f.name + " — can take a while on long recordings…";
+  try {
+    const r = await fetch("/api/ingest?name=" + encodeURIComponent(f.name),
+      {method: "POST", body: f});
+    if (!r.ok) { st.textContent = "failed: " + await r.text(); return; }
+    const d = await r.json();
+    st.textContent = "done — archived as session " + d.session;
+    loadSessions();
+  } catch (e) { st.textContent = "failed: " + e;
+  } finally { document.getElementById("uploadbtn").disabled = false; }
+};
 async function nameCheck(id) {
   if (lastRunning) { alert("Stop the session first."); return; }
   const el = document.getElementById("istatus");

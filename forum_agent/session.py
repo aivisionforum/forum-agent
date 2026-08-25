@@ -184,6 +184,36 @@ class SessionManager:
         self._thread.start()
         return self.status()
 
+    def ingest(self, wav_path: str, room: str, title: str) -> str | None:
+        """Batch-process an uploaded recording (issue #8): run the replay
+        pipeline unpinned from wall clock, then archive as a normal session.
+        Synchronous; refuses while a live session runs. Returns the session
+        id, or None if the audio produced no transcript."""
+        with self._op_lock:
+            if self._thread is not None and self._thread.is_alive():
+                raise RuntimeError("stop the live session before uploading")
+            from forum_agent.insights import engine
+            from forum_agent.server import hub
+            archive_live(room)
+            engine(room).reset()
+            hub.broadcast_from_thread(room, {"type": MSG_SESSION_RESET})
+            self.mode, self.room, self.error = MODE_REPLAY, room, None
+            self.phase = "processing upload"
+            try:
+                replay.run_replay(wav_path, room, play=False, realtime=False)
+            except Exception as exc:
+                self.error = f"{type(exc).__name__}: {exc}"
+                raise
+            finally:
+                self.mode, self.phase = MODE_IDLE, ""
+            sid = archive_live(room)
+            if sid:
+                meta = Path(SESSIONS_DIR) / sid / "meta.json"
+                meta.write_text(json.dumps(
+                    {"title": f"{title} (uploaded)"}, ensure_ascii=False))
+                self.last_session_id = sid
+            return sid
+
     def stop(self) -> dict:
       with self._op_lock:
         from forum_agent.insights import engine

@@ -142,7 +142,10 @@ def _drain_and_close(pipe: Pipeline) -> None:
 
 def run_replay(wav_path: str, room: str, play: bool = False,
                stop_event: threading.Event | None = None,
-               on_phase=None) -> Pipeline:
+               on_phase=None, realtime: bool = True) -> Pipeline:
+    """realtime=True pins frames to wall clock (simulates a live feed);
+    realtime=False feeds as fast as inference allows — batch processing of
+    an uploaded recording (issue #8)."""
     phase = on_phase or (lambda p: None)
     audio, sr = sf.read(wav_path, dtype="float32")
     assert sr == SAMPLE_RATE, f"fixture must be {SAMPLE_RATE} Hz"
@@ -160,7 +163,7 @@ def run_replay(wav_path: str, room: str, play: bool = False,
     agc = AutoGain()
     frame_len = int(FRAME_SECONDS * SAMPLE_RATE)
     player = None
-    if play:  # audible monitor of the replay, synced to the same clock
+    if play and realtime:  # audible monitor of the replay, synced to the clock
         import subprocess
         player = subprocess.Popen(["afplay", wav_path])
     start = time.monotonic()
@@ -168,10 +171,10 @@ def run_replay(wav_path: str, room: str, play: bool = False,
     for i in range(0, len(audio), frame_len):
         if stop_event is not None and stop_event.is_set():
             break
-        target = start + i / SAMPLE_RATE
-        delay = target - time.monotonic()
-        if delay > 0:
-            time.sleep(delay)  # pin replay to wall clock = simulate live feed
+        if realtime:
+            delay = start + i / SAMPLE_RATE - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)  # pin to wall clock = simulate live feed
         next_partial = feed_frame(pipe, seg, agc(audio[i:i + frame_len]),
                                   start, next_partial)
     if seg.open_segment is not None:
