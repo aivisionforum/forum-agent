@@ -28,7 +28,13 @@ PEAK_NORM_TARGET = 0.9       # amplify quiet mic segments before Whisper
 
 # Diarization
 SPEAKER_SIM_THRESHOLD = 0.72
-MAX_SPEAKERS = 8
+# Afternoon working sessions are roundtables — 20+ people may speak. New
+# centroids past the cap are merged into the nearest existing speaker, so a
+# low cap silently mislabels; 24 keeps labels honest for a working session.
+# Trade-off: with many similar voices, online clustering gets noisier — the
+# labels stay anonymous (Speaker A/B/...) so errors cost readability, not
+# privacy.
+MAX_SPEAKERS = 24
 MIN_EMBED_SECONDS = 0.8
 
 # Local LLM serving: mlx-lm server (OpenAI-compatible), launched and managed
