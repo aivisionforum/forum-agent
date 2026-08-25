@@ -100,3 +100,6 @@ TRANSLATIONS_JSONL = "data/{room}_translations.jsonl"
 RECORDING_WAV = "data/{room}_recording.wav"  # raw session audio (C3)
 FIXTURE_WAV = "data/fixture_meeting.wav"
 FIXTURE_REF_JSON = "data/fixture_reference.json"
+# Cloud-polish settings entered on the console (issue #15). Lives under
+# data/ (wholesale gitignored) so the API key can never reach the repo.
+CLOUD_CONFIG_JSON = "data/cloud_config.json"

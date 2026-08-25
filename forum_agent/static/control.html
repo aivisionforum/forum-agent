@@ -92,17 +92,45 @@
     takes ~30–60s — progress shows above). Minutes are drafted automatically
     when the session stops.
   </div>
-  <div id="polishbox" style="display:none;border-top:1px solid #1c2530;margin-top:14px;padding-top:12px">
+  <div id="polishbox" style="border-top:1px solid #1c2530;margin-top:14px;padding-top:12px">
     <b style="font-size:14px">Post-event cloud polish</b>
     <span style="color:#f87171;font-size:12px">sends the draft's text to the
       selected cloud provider — post-event use only; run the names check
       first</span><br>
-    <select id="polishmodel" style="font-size:14px;padding:6px;border-radius:6px;
-      background:#18222e;color:#f2f5f7;border:1px solid #2a3a4d;max-width:340px"></select>
-    <button id="polishmin" style="font-size:14px;padding:8px 14px">Polish
-      minutes of checked session</button>
-    <button id="polishrep" style="font-size:14px;padding:8px 14px">Polish
-      event report</button>
+    <div id="polishrun" style="display:none">
+      <select id="polishmodel" style="font-size:14px;padding:6px;border-radius:6px;
+        background:#18222e;color:#f2f5f7;border:1px solid #2a3a4d;max-width:340px"></select>
+      <button id="polishmin" style="font-size:14px;padding:8px 14px">Polish
+        minutes of checked session</button>
+      <button id="polishrep" style="font-size:14px;padding:8px 14px">Polish
+        event report</button>
+    </div>
+    <div id="polishnone" style="color:#7f8c99;font-size:13px;margin-top:6px">
+      No cloud provider configured yet — set one up below.</div>
+    <details style="margin-top:8px">
+      <summary style="cursor:pointer;color:#7f8c99;font-size:13px">Configure
+        cloud providers</summary>
+      <div style="margin-top:8px;font-size:14px;color:#a8b4c0">
+        <label>OpenRouter API key <span id="orstate" style="color:#7f8c99"></span><br>
+          <input type="password" id="cfg-orkey" placeholder="leave blank to keep current; enter to set"
+            style="font-size:14px;padding:6px;border-radius:6px;background:#18222e;
+            color:#f2f5f7;border:1px solid #2a3a4d;width:100%;max-width:420px"></label>
+        <label>OpenRouter model<br>
+          <input type="text" id="cfg-ormodel"
+            style="font-size:14px;padding:6px;border-radius:6px;background:#18222e;
+            color:#f2f5f7;border:1px solid #2a3a4d;width:100%;max-width:420px"></label>
+        <label>Ollama host (cloud models must be pulled there, tag "-cloud")<br>
+          <input type="text" id="cfg-ollama"
+            style="font-size:14px;padding:6px;border-radius:6px;background:#18222e;
+            color:#f2f5f7;border:1px solid #2a3a4d;width:100%;max-width:420px"></label>
+        <button id="cfg-save" style="font-size:14px;padding:8px 14px">Save settings</button>
+        <button id="cfg-clearkey" style="font-size:13px;padding:8px 14px">Remove saved key</button>
+        <div style="color:#556;font-size:12px;margin-top:4px">Stored locally in
+          data/cloud_config.json (git-ignored, owner-only permissions). The key
+          is never shown again after saving. Environment variables override
+          these settings.</div>
+      </div>
+    </details>
   </div>
 </div>
 <div class="card wide">
@@ -305,17 +333,46 @@ function updateNav(s, latestId) {
   document.getElementById("viewreport").style.display =
     s.report_exists ? "" : "none";
 }
-(async () => {
+async function loadPolish() {
   const provs = await (await fetch("/api/polish/providers")).json();
-  if (!provs.length) return;  // no cloud credentials configured: stay hidden
   const sel = document.getElementById("polishmodel");
+  const prev = sel.value;
+  sel.innerHTML = "";
   for (const pr of provs) for (const m of pr.models) {
     const o = document.createElement("option");
     o.value = pr.id + "|" + m; o.textContent = pr.id + ": " + m;
     sel.appendChild(o);
   }
-  document.getElementById("polishbox").style.display = "";
-})();
+  if (prev) sel.value = prev;
+  document.getElementById("polishrun").style.display = provs.length ? "" : "none";
+  document.getElementById("polishnone").style.display = provs.length ? "none" : "";
+  const cfg = await (await fetch("/api/polish/config")).json();
+  document.getElementById("orstate").textContent = cfg.openrouter_configured
+    ? "(configured via " + cfg.openrouter_key_source + ")" : "(not set)";
+  const om = document.getElementById("cfg-ormodel");
+  if (!om.value) om.value = cfg.openrouter_model || "";
+  const oh = document.getElementById("cfg-ollama");
+  if (!oh.value) oh.value = cfg.ollama_host || "";
+}
+loadPolish();
+document.getElementById("cfg-save").onclick = async () => {
+  const body = {openrouter_model: document.getElementById("cfg-ormodel").value,
+                ollama_host: document.getElementById("cfg-ollama").value};
+  const key = document.getElementById("cfg-orkey").value;
+  if (key) body.openrouter_api_key = key;  // blank = keep the current key
+  await fetch("/api/polish/config", {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  document.getElementById("cfg-orkey").value = "";
+  document.getElementById("istatus").textContent = "cloud settings saved";
+  loadPolish();
+};
+document.getElementById("cfg-clearkey").onclick = async () => {
+  await fetch("/api/polish/config", {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({openrouter_api_key: ""})});
+  document.getElementById("istatus").textContent = "saved key removed";
+  loadPolish();
+};
 async function runPolish(target) {
   const el = document.getElementById("istatus");
   if (lastRunning) { el.textContent = "post-event only — stop the session first"; return; }

@@ -343,6 +343,23 @@ async def api_ingest(request: Request, name: str = "upload",
     return {"session": sid}
 
 
+@app.get("/api/polish/config")
+async def api_polish_config() -> dict:
+    """Sanitized cloud-polish settings for the console form. Reports whether
+    a key is set and where it came from — never the key itself."""
+    from forum_agent import cloud
+    return cloud.config_view()
+
+
+@app.post("/api/polish/config")
+async def api_polish_config_save(body: dict) -> dict:
+    """Save console-entered cloud settings to data/cloud_config.json
+    (gitignored, chmod 600). Empty string clears a field. The server binds
+    to 127.0.0.1 only, so this form is reachable solely from this machine."""
+    from forum_agent import cloud
+    return cloud.save_config(body if isinstance(body, dict) else {})
+
+
 @app.get("/api/polish/providers")
 async def api_polish_providers() -> list:
     from forum_agent import cloud

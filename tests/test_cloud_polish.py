@@ -38,3 +38,33 @@ def test_missing_draft_raises(tmp_path):
     with pytest.raises(RuntimeError):
         cloud.polish_file(tmp_path / "none.md", tmp_path / "o.md",
                           "openrouter", "m")
+
+
+def test_console_config_round_trip(tmp_path, monkeypatch):
+    monkeypatch.setattr(cloud, "CLOUD_CONFIG_JSON",
+                        str(tmp_path / "cloud_config.json"))
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    view = cloud.save_config({"openrouter_api_key": "sk-test",
+                              "openrouter_model": "meta/llama-4"})
+    assert view["openrouter_configured"] is True
+    assert view["openrouter_key_source"] == "file"
+    assert "sk-test" not in str(view)          # key never leaves the server
+    assert cloud._openrouter_key() == "sk-test"
+    assert cloud._openrouter_model() == "meta/llama-4"
+    # env still wins over the file
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-env")
+    assert cloud._openrouter_key() == "sk-env"
+    assert cloud.config_view()["openrouter_key_source"] == "env"
+    # clearing with an empty string removes the stored key
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    assert cloud.save_config({"openrouter_api_key": ""})[
+        "openrouter_configured"] is False
+
+
+def test_config_file_is_owner_only(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setattr(cloud, "CLOUD_CONFIG_JSON",
+                        str(tmp_path / "cloud_config.json"))
+    cloud.save_config({"openrouter_api_key": "sk-x"})
+    mode = os.stat(tmp_path / "cloud_config.json").st_mode & 0o777
+    assert mode == 0o600
