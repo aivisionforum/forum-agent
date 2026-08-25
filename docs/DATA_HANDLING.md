@@ -18,15 +18,18 @@ reports all run on local models, and the web server binds to 127.0.0.1 only.
 | `data/<room>_translations.jsonl` | machine translations of the above | always |
 | `data/<room>_insights*.json(l)` | AI summaries (drafts until approved) | always |
 | `data/<room>_minutes*.md`, `data/report_draft.md` | AI minutes / report drafts | on demand |
-| `data/<room>_recording.wav` | raw room audio | **only if recording is opted in** (console checkbox) |
+| `data/<room>_recording.wav` | raw room audio | **on by default** as a backup; disable per session (console checkbox) |
 | `data/sessions/<id>/` | all of the above, archived per session | on session stop |
 
-## Recording is opt-in / 录音需明确开启
+## Recording / 录音
 
-Raw audio recording (录音) is **off by default**. The operator enables it per
-session with the "save raw audio recording" checkbox on the console, and
-should do so only after the room has been told it is being recorded. Live
-subtitles, transcripts and insights work identically with recording off.
+Raw audio recording is **on by default**: the WAV is the backup that lets a
+session be re-processed if anything in the live pipeline fails (upload it
+back through "Process recording into a session"). The room should be told it
+is being recorded. For a session that must not be recorded, untick the
+"save raw audio recording" checkbox before starting (or pass `--no-record`
+on the CLI) — live subtitles, transcripts and insights work identically
+without it.
 
 ## Names in transcripts / 转录中的人名
 

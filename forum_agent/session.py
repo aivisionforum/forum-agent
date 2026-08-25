@@ -144,7 +144,7 @@ class SessionManager:
 
     def start(self, mode: str, room: str = "room1",
               wav: str = FIXTURE_WAV, play: bool = True,
-              device: int | None = None, record: bool = False) -> dict:
+              device: int | None = None, record: bool = True) -> dict:
       with self._op_lock:
         self.stop()
         if self._thread is not None:  # stop() timed out; refuse to double-run

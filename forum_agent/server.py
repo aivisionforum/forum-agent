@@ -127,7 +127,7 @@ async def api_start(body: dict) -> dict:
     return await anyio.to_thread.run_sync(
         lambda: manager.start(body.get("source", "replay"), room,
                               play=bool(body.get("play", True)),
-                              record=bool(body.get("record", False)),
+                              record=bool(body.get("record", True)),
                               device=(int(body["device"])
                                       if body.get("device")
                                       not in (None, "", "auto") else None)))

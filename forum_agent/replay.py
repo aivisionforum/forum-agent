@@ -44,7 +44,7 @@ def feed_frame(pipe: Pipeline, seg: Segmenter, frame, start: float,
 def run_mic(room: str, duration: float | None = None,
             stop_event: threading.Event | None = None,
             on_phase=None, device: int | None = None,
-            on_level=None, record: bool = False) -> Pipeline:
+            on_level=None, record: bool = True) -> Pipeline:
     """Live capture from the default input device (MacBook mic or a USB
     mixer feed) through the same pipeline as replay. Uses the Silero neural
     VAD: no noise-floor calibration or sensitivity tuning needed."""
@@ -58,7 +58,7 @@ def run_mic(room: str, duration: float | None = None,
     agc = AutoGain()
     frame_len = int(FRAME_SECONDS * SAMPLE_RATE)
     import numpy as np
-    # C3 raw audio — opt-in per session (issue #10, docs/DATA_HANDLING.md)
+    # C3 raw audio backup — on by default, disable per session (docs/DATA_HANDLING.md)
     recorder = sf.SoundFile(RECORDING_WAV.format(room=room), "w",
                             samplerate=SAMPLE_RATE, channels=1) \
         if record else None
@@ -194,9 +194,9 @@ def main() -> None:
     ap.add_argument("--duration", type=float, default=None,
                     help="stop mic capture after N seconds (default: Ctrl-C)")
     ap.add_argument("--room", default="room1")
-    ap.add_argument("--record", action="store_true",
-                    help="save raw mic audio to WAV (opt-in; see "
-                         "docs/DATA_HANDLING.md)")
+    ap.add_argument("--no-record", action="store_true",
+                    help="do not save raw mic audio to WAV (saved by "
+                         "default as backup; see docs/DATA_HANDLING.md)")
     ap.add_argument("--play", action="store_true",
                     help="also play the audio on the speakers, in sync")
     ap.add_argument("--stats-out", default="data/replay_stats.json")
@@ -217,7 +217,7 @@ def main() -> None:
     asr.warmup()
     print("Mic starting." if args.mic else "Replay starting.")
     if args.mic:
-        pipe = run_mic(args.room, duration=args.duration, record=args.record)
+        pipe = run_mic(args.room, duration=args.duration, record=not args.no_record)
     else:
         pipe = run_replay(args.wav, args.room, play=args.play)
     if not pipe.lags:
