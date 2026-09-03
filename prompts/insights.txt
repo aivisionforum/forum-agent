@@ -13,7 +13,14 @@ Return ONLY a JSON object, no markdown fences, with exactly these keys:
   "session_topic": {"zh": "...", "en": "..."}              // 5-15字的会议主题短语 / short noun-phrase naming the session's topic. A label, NOT a sentence: never start with 该房间/本次会议/The room/This session
 }
 
-Every item's "quote" must be a short excerpt (5-25 characters) copied EXACTLY, character for character, from the transcript below — the words that support the point. Do NOT paraphrase the quote, do not translate it, do not fix its errors. A point you cannot support with an exact quote should not be emitted. Each item must exist in both languages (translate faithfully). Be concrete and specific to what was actually said; do not invent content. Return the CURRENT BEST snapshot: merge or drop stale points, and make sure genuinely new topics from the recent window are represented — do not just repeat the previous state. If the transcript window is empty or trivial, keep the previous state's content.
+Every item's "quote" must be a short excerpt (5-25 characters) copied EXACTLY, character for character, from the transcript below — the words that support the point. Do NOT paraphrase the quote, do not translate it, do not fix its errors. A point you cannot support with an exact quote should not be emitted.
+
+CRITICAL — the recent window rules the snapshot:
+- Read the RECENT TRANSCRIPT WINDOW first. If the discussion has moved to a new topic, at least HALF of summary_points must be NEW points quoting the recent window. Repeating the running state while ignoring the window is the worst possible output.
+- Older points from the running state survive only if they still matter; drop them to make room for the new topic.
+- Each point is a full informative sentence (中文 10-25 字), never a 4-6 character label.
+
+Each item must exist in both languages (translate faithfully). Be concrete and specific to what was actually said; do not invent content. Only if the recent window is empty or pure noise, keep the previous state's content.
 
 (1) Running state (may be empty at session start):
 {state}
