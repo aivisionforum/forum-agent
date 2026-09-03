@@ -25,12 +25,13 @@ def test_phases_split_on_convergence_change(tmp_path):
     ]))
     phases = sofar.build("room1", base_dir=str(tmp_path))
     assert len(phases) == 2
-    assert phases[0]["label"] == "签证规则"
+    # latest phase first, newest points first within a section
+    assert phases[0]["label"] == "Linux桌面"
     assert [i["zh"] for i in phases[0]["items"]["summary_points"]] \
-        == ["过境规则", "入境点"]          # dedup: 过境规则 appears once
-    assert phases[1]["label"] == "Linux桌面"
-    assert [i["zh"] for i in phases[1]["items"]["summary_points"]] \
         == ["桌面生态"]                    # drafts never included
+    assert phases[1]["label"] == "签证规则"
+    assert [i["zh"] for i in phases[1]["items"]["summary_points"]] \
+        == ["入境点", "过境规则"]          # dedup: 过境规则 appears once
 
 
 def test_empty_and_torn_lines_are_safe(tmp_path):

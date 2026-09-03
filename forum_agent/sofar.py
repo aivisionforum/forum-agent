@@ -43,8 +43,10 @@ def build(room: str, base_dir: str | None = None) -> list[dict]:
                 zh = it.get("zh")
                 if it.get("status") == "approved" and zh and zh not in seen:
                     seen.add(zh)
-                    phases[-1]["items"][kind].append(
-                        {"zh": zh, "en": it.get("en", "")})
+                    # newest first: the moderator reads the top of the page,
+                    # so fresh points must not pile up below the fold
+                    phases[-1]["items"][kind].insert(
+                        0, {"zh": zh, "en": it.get("en", "")})
     phases = [p for p in phases
               if any(p["items"][k] for k, _ in KIND_TITLES)]
     # phase label fallback: the model sometimes returns no convergence
@@ -54,6 +56,7 @@ def build(room: str, base_dir: str | None = None) -> list[dict]:
             first = next((it["zh"] for k, _ in KIND_TITLES
                           for it in ph["items"][k]), "")
             ph["label"] = first[:24]
+    phases.reverse()  # latest phase at the top of the page
     return phases
 
 
