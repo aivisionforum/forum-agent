@@ -69,6 +69,19 @@
         play test audio on speakers</label>
     </div>
   </details>
+  <details style="margin-top:10px">
+    <summary style="cursor:pointer;color:#7f8c99;font-size:14px">Maintenance
+      维护</summary>
+    <div style="margin-top:8px">
+      <button id="restartapp" style="font-size:14px;padding:8px 14px">↻ Restart
+        app 重启程序</button>
+      <span id="restartstate" style="color:#7f8c99;font-size:13px"></span>
+      <div style="color:#556;font-size:12px;margin-top:4px">Only when idle.
+        The app exits and the launcher window restarts it automatically
+        (~30s while models reload). Use after an update or if anything
+        misbehaves. 仅空闲时可用；程序退出后启动器窗口会自动重启（约 30 秒）。</div>
+    </div>
+  </details>
   <div id="bgstatus"></div>
   <div class="err" id="err"></div>
 </div>
@@ -465,6 +478,19 @@ async function runPolish(target) {
 }
 document.getElementById("polishmin").onclick = () => runPolish("minutes");
 document.getElementById("polishrep").onclick = () => runPolish("report");
+document.getElementById("restartapp").onclick = async () => {
+  const st = document.getElementById("restartstate");
+  if (lastRunning) { st.textContent = "stop the session first"; return; }
+  if (!confirm("Restart the Forum Agent app now?\n重启程序？约 30 秒后恢复。")) return;
+  st.textContent = "restarting — page will reconnect in ~30s…";
+  try { await fetch("/api/server/restart", {method: "POST"}); } catch (e) {}
+  const wait = setInterval(async () => {
+    try {
+      const r = await fetch("/api/status");
+      if (r.ok) { clearInterval(wait); location.reload(); }
+    } catch (e) {}
+  }, 3000);
+};
 document.getElementById("speak").onclick = async () => {
   const el = document.getElementById("istatus");
   const b = document.getElementById("speak");

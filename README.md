@@ -14,6 +14,14 @@ source and input device. See [docs/SPEC.md](docs/SPEC.md) for the full
 requirement spec (C1–C10) and [PROMPT.md](PROMPT.md) for the build plan
 (next: insight engine, operator console, minutes, two-room mode).
 
+## Operating at the venue (no terminal needed)
+
+Double-click **`Forum Agent.command`** to start — it opens a terminal window
+that supervises the app: if the app exits (the console's "Restart app"
+button, a crash, or an update), it restarts automatically in ~2 seconds.
+Close that window to shut everything down. Operators restart the app from
+the console's Maintenance section; they never need a shell.
+
 ## Screenshots
 
 Operator console — audio source, generation controls (live session when

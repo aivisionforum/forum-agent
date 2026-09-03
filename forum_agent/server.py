@@ -447,6 +447,31 @@ async def polished_page(session: str = "", target: str = "minutes") -> str:
         busy=activity.busy("cloud"))
 
 
+@app.post("/api/server/restart")
+async def api_server_restart() -> dict:
+    """Operator self-service restart (no terminal needed): exits the process
+    after replying; the 'Forum Agent.command' supervisor loop starts it
+    again in ~2s with the current code. Refused while anything is running."""
+    from forum_agent import activity, llm
+    from forum_agent.session import manager
+    if manager.status()["running"]:
+        raise HTTPException(409, "stop the session before restarting")
+    if activity.current():
+        labels = ", ".join(t["label"] for t in activity.current())
+        raise HTTPException(409, f"wait for background work to finish: {labels}")
+    import threading
+    import time as _time
+
+    def _die() -> None:
+        _time.sleep(0.5)  # let the HTTP response flush
+        llm.shutdown()    # take the model server down with us
+        import os
+        os._exit(0)       # supervisor loop restarts us
+
+    threading.Thread(target=_die, daemon=True).start()
+    return {"restarting": True}
+
+
 @app.post("/api/speak")
 async def api_speak(body: dict) -> dict:
     """Invoked voice summary (issue #14): read the current approved key
