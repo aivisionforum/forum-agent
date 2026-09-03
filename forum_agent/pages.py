@@ -91,15 +91,16 @@ def sofar_page(room: str) -> str:
     upd = last_updated(room)
     total = sum(len(ph["items"][k]) for ph in phases for k, _ in KIND_TITLES)
     stamp = (f"数据更新于 data updated "
-             f"{_time.strftime('%H:%M:%S', _time.localtime(upd))} · "
+             f"{_time.strftime('%I:%M:%S %p', _time.localtime(upd))} · "
              f"{total} 条要点 points" if upd else "")
     if not phases:
         body = "<p>还没有已批准的洞察。No approved insights yet.</p>"
     else:
         parts = []
         for n, ph in enumerate(phases, 1):
-            t = _time.strftime("%H:%M", _time.localtime(ph["start"])) \
+            t = _time.strftime("%I:%M %p", _time.localtime(ph["start"])) \
                 if ph["start"] else ""
+            t = ("started 开始于 " + t) if t else ""
             parts.append(f"<h2>阶段 Phase {n}"
                          f"{' · ' + html.escape(ph['label']) if ph['label'] else ''}"
                          f" <small style='color:#7f8c99'>{t}</small></h2>")
