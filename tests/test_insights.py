@@ -224,3 +224,12 @@ def test_stale_refresh_redirects_to_archive(eng, monkeypatch, tmp_path):
     saved = json.loads((d / "room1_insights.json").read_text())
     assert saved["items"]["summary_points"][0]["zh"] == "要点一"
     assert eng.state["updated"] == 0  # live state untouched
+
+
+def test_parse_json_repairs_raw_quotes_in_values():
+    # ASR text copied verbatim into "quote" carries raw double quotes,
+    # which silently killed every refresh before the repair pass
+    bad = ('{"summary_points": [{"zh": "要点", "en": "said "harnessing"", '
+           '"quote": "called "harnessing" today"},], "next_steps": []}')
+    d = ins._parse_json(bad)
+    assert d["summary_points"][0]["quote"] == 'called "harnessing" today'

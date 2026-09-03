@@ -256,6 +256,10 @@ function updateEmpty() {
     return;
   }
   const nowSrv = Date.now() / 1000 - clockOffset;
+  if (engineError && !lastBusy) {
+    emptyEl.innerHTML = "⚠ 摘要生成失败，将于下一周期自动重试<br>Summary failed — will retry next cycle: <span style='font-size:0.8em'>" + engineError.replace(/[<>&]/g, "") + "</span>";
+    return;
+  }
   if (lastBusy) {
     const el = Math.floor(lastBusy.seconds + (Date.now() / 1000 - busyAt));
     emptyEl.innerHTML = `✦ AI 正在总结讨论内容，约需 30–60 秒（已进行 ${el} 秒）<br>Summarizing the discussion now — about 30–60 seconds (running ${el}s)`;
@@ -273,8 +277,10 @@ function tickMeta() {
   if (!lastUpdated) {
     const remain = autoStarted
       ? interval - (Date.now() / 1000 - clockOffset - autoStarted) : 0;
-    el.textContent = remain > 0
-      ? "first summary in " + mmss(remain) : "waiting for first summary…";
+    el.textContent = (engineError ? "⚠ " + engineError + " · " : "")
+      + (remain > 0 ? "first summary in " + mmss(remain)
+                    : "waiting for first summary…");
+    el.style.color = engineError ? "#f87171" : "";
     return;
   }
   const next = Math.max(0, interval - (Date.now()/1000 - lastUpdated));

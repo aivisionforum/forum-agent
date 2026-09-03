@@ -70,7 +70,45 @@ def _is_grounded(item: dict, transcript_norm: str) -> bool:
 def _parse_json(text: str) -> dict:
     text = re.sub(r"^```(json)?|```$", "", text.strip(), flags=re.M).strip()
     start, end = text.find("{"), text.rfind("}")
-    return json.loads(text[start:end + 1])
+    text = text[start:end + 1]
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return json.loads(_repair_json(text))
+
+
+def _repair_json(text: str) -> str:
+    """The verbatim "quote" fields copy transcript text that may contain raw
+    double quotes (ASR writes English quotes literally), which breaks the
+    model's JSON and — before this repair — silently killed every refresh.
+    Scan strings and escape any inner quote that cannot be a closer (i.e. is
+    not followed by , } ] : or end of line); drop trailing commas."""
+    out = []
+    i, n = 0, len(text)
+    in_str = False
+    while i < n:
+        c = text[i]
+        if not in_str:
+            if c == '"':
+                in_str = True
+            out.append(c)
+        elif c == "\\" and i + 1 < n:
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        elif c == '"':
+            j = i + 1
+            while j < n and text[j] in " \t":
+                j += 1
+            if j >= n or text[j] in ",}]:\n\r":
+                in_str = False
+                out.append(c)
+            else:  # a quote mid-sentence: escape it
+                out.append('\\"')
+        else:
+            out.append(c)
+        i += 1
+    return re.sub(r",\s*([}\]])", r"\1", "".join(out))
 
 
 def read_transcript(room: str, window_s: float | None = None,
