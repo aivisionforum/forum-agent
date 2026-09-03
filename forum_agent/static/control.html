@@ -480,15 +480,24 @@ document.getElementById("polishmin").onclick = () => runPolish("minutes");
 document.getElementById("polishrep").onclick = () => runPolish("report");
 document.getElementById("restartapp").onclick = async () => {
   const st = document.getElementById("restartstate");
-  if (lastRunning) { st.textContent = "stop the session first"; return; }
-  if (!confirm("Restart the Forum Agent app now?\n重启程序？约 30 秒后恢复。")) return;
-  st.textContent = "restarting — page will reconnect in ~30s…";
+  const msg = lastRunning
+    ? "A session is LIVE. Restart will: stop it (archived, minutes " +
+      "auto-generated, ~2 min), then restart the app.\n当前会话进行中：将先" +
+      "停止并归档、自动生成纪要（约 2 分钟），然后重启程序。继续？"
+    : "Restart the Forum Agent app now?\n重启程序？约 30 秒后恢复。";
+  if (!confirm(msg)) return;
+  st.textContent = lastRunning
+    ? "stopping session, generating minutes, then restarting — a few minutes…"
+    : "restarting — page will reconnect in ~30s…";
+  let wasUp = true;
   try { await fetch("/api/server/restart", {method: "POST"}); } catch (e) {}
   const wait = setInterval(async () => {
     try {
       const r = await fetch("/api/status");
-      if (r.ok) { clearInterval(wait); location.reload(); }
-    } catch (e) {}
+      if (r.ok) {
+        if (!wasUp) { clearInterval(wait); location.reload(); }
+      } else { wasUp = false; }
+    } catch (e) { wasUp = false; }  // server down = old process exited
   }, 3000);
 };
 document.getElementById("speak").onclick = async () => {

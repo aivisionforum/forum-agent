@@ -449,27 +449,33 @@ async def polished_page(session: str = "", target: str = "minutes") -> str:
 
 @app.post("/api/server/restart")
 async def api_server_restart() -> dict:
-    """Operator self-service restart (no terminal needed): exits the process
-    after replying; the 'Forum Agent.command' supervisor loop starts it
-    again in ~2s with the current code. Refused while anything is running."""
+    """Operator self-service restart (no terminal needed): if a session is
+    live it is stopped and archived first, background work (auto-minutes)
+    is allowed to finish, then the process exits; the 'Forum Agent.command'
+    supervisor loop starts it again with the current code."""
     from forum_agent import activity, llm
     from forum_agent.session import manager
-    if manager.status()["running"]:
-        raise HTTPException(409, "stop the session before restarting")
-    if activity.current():
-        labels = ", ".join(t["label"] for t in activity.current())
-        raise HTTPException(409, f"wait for background work to finish: {labels}")
     import threading
     import time as _time
+    was_running = manager.status()["running"]
 
-    def _die() -> None:
-        _time.sleep(0.5)  # let the HTTP response flush
-        llm.shutdown()    # take the model server down with us
+    def _stop_drain_die() -> None:
+        _time.sleep(0.5)              # let the HTTP response flush
+        if manager.status()["running"]:
+            with activity.task("restart: stopping session"):
+                manager.stop()        # archives + kicks off auto-minutes
+        deadline = _time.time() + 600  # let minutes finish; cap at 10 min
+        while _time.time() < deadline:
+            if not [t for t in activity.current()
+                    if "restart" not in t["label"]]:
+                break
+            _time.sleep(3)
+        llm.shutdown()                # take the model server down with us
         import os
-        os._exit(0)       # supervisor loop restarts us
+        os._exit(0)                   # supervisor loop restarts us
 
-    threading.Thread(target=_die, daemon=True).start()
-    return {"restarting": True}
+    threading.Thread(target=_stop_drain_die, daemon=True).start()
+    return {"restarting": True, "stopping_session_first": was_running}
 
 
 @app.post("/api/speak")
