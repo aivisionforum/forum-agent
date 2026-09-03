@@ -490,7 +490,13 @@ document.getElementById("restartapp").onclick = async () => {
     ? "stopping session, generating minutes, then restarting — a few minutes…"
     : "restarting — page will reconnect in ~30s…";
   let wasUp = true;
-  try { await fetch("/api/server/restart", {method: "POST"}); } catch (e) {}
+  try {
+    const r = await fetch("/api/server/restart", {method: "POST"});
+    if (!r.ok) {  // never wait silently on a refusal
+      st.textContent = "restart refused: " + (await r.json()).detail;
+      return;
+    }
+  } catch (e) {}
   const wait = setInterval(async () => {
     try {
       const r = await fetch("/api/status");
