@@ -86,8 +86,13 @@ def sofar_page(room: str) -> str:
     """Operator-only 'session so far': approved points grouped into topic
     phases (issue #17). Auto-reloads; never shown on the projector."""
     import time as _time
-    from forum_agent.sofar import KIND_TITLES, build
+    from forum_agent.sofar import KIND_TITLES, build, last_updated
     phases = build(room)
+    upd = last_updated(room)
+    total = sum(len(ph["items"][k]) for ph in phases for k, _ in KIND_TITLES)
+    stamp = (f"数据更新于 data updated "
+             f"{_time.strftime('%H:%M:%S', _time.localtime(upd))} · "
+             f"{total} 条要点 points" if upd else "")
     if not phases:
         body = "<p>还没有已批准的洞察。No approved insights yet.</p>"
     else:
@@ -114,7 +119,12 @@ def sofar_page(room: str) -> str:
             "<h1>本场会议至今 · Session so far</h1>"
             "<p style='color:#7f8c99'>已批准要点按话题阶段汇总，供主持人使用；"
             "大屏不显示本页。Approved points grouped by topic phase, for the "
-            "moderator; not shown on the projector. 页面每 30 秒自动刷新。</p>")
+            "moderator; not shown on the projector. 页面每 30 秒自动刷新。"
+            "每条要点只出现一次，归入它首次出现的阶段与栏目，因此与实时面板的"
+            "分栏可能不同。Each point appears once, in the phase and section "
+            "where it first surfaced, so grouping can differ from the live "
+            "panel.</p>"
+            f"<p style='color:#86efac;font-size:0.95em'>{stamp}</p>")
     return _shell("Session so far", head + body)
 
 

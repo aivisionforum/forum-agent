@@ -45,5 +45,27 @@ def build(room: str, base_dir: str | None = None) -> list[dict]:
                     seen.add(zh)
                     phases[-1]["items"][kind].append(
                         {"zh": zh, "en": it.get("en", "")})
-    return [p for p in phases
-            if any(p["items"][k] for k, _ in KIND_TITLES)]
+    phases = [p for p in phases
+              if any(p["items"][k] for k, _ in KIND_TITLES)]
+    # phase label fallback: the model sometimes returns no convergence
+    # line, leaving one giant unlabeled phase — use the first key point
+    for ph in phases:
+        if not ph["label"]:
+            first = next((it["zh"] for k, _ in KIND_TITLES
+                          for it in ph["items"][k]), "")
+            ph["label"] = first[:24]
+    return phases
+
+
+def last_updated(room: str, base_dir: str | None = None) -> float:
+    """Timestamp of the newest history snapshot, for the freshness stamp."""
+    path = (Path(base_dir) / f"{room}_insights_history.jsonl") if base_dir \
+        else Path(INSIGHTS_HISTORY.format(room=room))
+    if not path.exists():
+        return 0.0
+    for line in reversed(path.read_text().splitlines()):
+        try:
+            return float(json.loads(line).get("updated", 0))
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+    return 0.0
