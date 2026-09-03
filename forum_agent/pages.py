@@ -82,6 +82,42 @@ def report_page(busy: dict | None = None) -> str:
     return _shell("Report", _busy_banner(busy) + banner + md)
 
 
+def sofar_page(room: str) -> str:
+    """Operator-only 'session so far': approved points grouped into topic
+    phases (issue #17). Auto-reloads; never shown on the projector."""
+    import time as _time
+    from forum_agent.sofar import KIND_TITLES, build
+    phases = build(room)
+    if not phases:
+        body = "<p>还没有已批准的洞察。No approved insights yet.</p>"
+    else:
+        parts = []
+        for n, ph in enumerate(phases, 1):
+            t = _time.strftime("%H:%M", _time.localtime(ph["start"])) \
+                if ph["start"] else ""
+            parts.append(f"<h2>阶段 Phase {n}"
+                         f"{' · ' + html.escape(ph['label']) if ph['label'] else ''}"
+                         f" <small style='color:#7f8c99'>{t}</small></h2>")
+            for kind, title_ in KIND_TITLES:
+                items = ph["items"].get(kind, [])
+                if not items:
+                    continue
+                parts.append(f"<h3>{html.escape(title_)}</h3><ul>")
+                for it in items:
+                    parts.append(
+                        f"<li>{html.escape(it['zh'])}"
+                        f"<br><span style='color:#a8b4c0;font-size:0.9em'>"
+                        f"{html.escape(it['en'])}</span></li>")
+                parts.append("</ul>")
+        body = "".join(parts)
+    head = ("<meta http-equiv=refresh content=30>"
+            "<h1>本场会议至今 · Session so far</h1>"
+            "<p style='color:#7f8c99'>已批准要点按话题阶段汇总，供主持人使用；"
+            "大屏不显示本页。Approved points grouped by topic phase, for the "
+            "moderator; not shown on the projector. 页面每 30 秒自动刷新。</p>")
+    return _shell("Session so far", head + body)
+
+
 def transcript_paths(room: str, session: str) -> tuple[Path, Path]:
     if session:
         base = Path(SESSIONS_DIR) / session

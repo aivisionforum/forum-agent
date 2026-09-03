@@ -240,7 +240,7 @@ if (session) {
   document.getElementById("viewbar").innerHTML =
     "ARCHIVED SESSION " + session + " (read-only)";
 } else if (operator) document.getElementById("viewbar").innerHTML =
-  "OPERATOR VIEW — approve/hide buttons active · <a style='color:#6ea8fe' href='?room=" + room + "'>switch to projector view</a>";
+  "OPERATOR VIEW — approve/hide buttons active · <a style='color:#6ea8fe' href='?room=" + room + "'>switch to projector view</a> · <a style='color:#6ea8fe' target='_blank' href='/sofar?room=" + room + "'>session so far</a>";
 // projector: no view bar — the audience screen carries no operator chrome
 let lastUpdated = 0;
 let autoStarted = null, clockOffset = 0, lastBusy = null, busyAt = 0;

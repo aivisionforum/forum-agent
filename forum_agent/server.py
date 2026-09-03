@@ -517,6 +517,12 @@ async def redaction_page(session: str) -> str:
         "No name check run yet — use the console.")
 
 
+@app.get("/sofar", response_class=HTMLResponse)
+async def sofar_page(room: str = "room1") -> str:
+    from forum_agent import pages
+    return pages.sofar_page(safe_room(room))
+
+
 @app.get("/transcript", response_class=HTMLResponse)
 async def transcript_page(room: str = "room1", session: str = "") -> str:
     from forum_agent import pages
