@@ -13,7 +13,7 @@ Return ONLY a JSON object, no markdown fences, with exactly these keys:
   "session_topic": {"zh": "...", "en": "..."}              // 5-15字的会议主题短语 / short noun-phrase naming the session's topic. A label, NOT a sentence: never start with 该房间/本次会议/The room/This session
 }
 
-Every item's "quote" must be a short excerpt (5-25 characters) copied EXACTLY, character for character, from the transcript below — the words that support the point. Do NOT paraphrase the quote, do not translate it, do not fix its errors. A point you cannot support with an exact quote should not be emitted.
+Every item's "quote" must be a short excerpt (5-25 characters) copied from the transcript below — the words that support the point. Do NOT paraphrase the quote, do not translate it, do not fix its errors. ONE exception for valid JSON: remove any double-quote (") characters from the copied text — never include a " inside the quote value. A point you cannot support with a quote should not be emitted.
 
 CRITICAL — the recent window rules the snapshot:
 - Read the RECENT TRANSCRIPT WINDOW first. If the discussion has moved to a new topic, at least HALF of summary_points must be NEW points quoting the recent window. Repeating the running state while ignoring the window is the worst possible output.

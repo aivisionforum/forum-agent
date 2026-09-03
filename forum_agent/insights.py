@@ -67,6 +67,18 @@ def _is_grounded(item: dict, transcript_norm: str) -> bool:
     return len(q) >= 4 and q in transcript_norm
 
 
+def _ask(prompt: str, big: bool = False) -> dict:
+    """LLM call + parse, with one retry: small models occasionally emit
+    invalid JSON (raw quotes inside strings) that no repair can fix."""
+    try:
+        return _parse_json(_llm(prompt, big=big))
+    except json.JSONDecodeError:
+        fixup = (prompt + "\n\nREMINDER: your previous attempt was INVALID "
+                 "JSON. Output strict JSON only, and the quote values must "
+                 "not contain any double-quote characters — remove them.")
+        return _parse_json(_llm(fixup, big=big))
+
+
 def _parse_json(text: str) -> dict:
     text = re.sub(r"^```(json)?|```$", "", text.strip(), flags=re.M).strip()
     start, end = text.find("{"), text.rfind("}")
@@ -215,7 +227,7 @@ class InsightEngine:
                            json.dumps(self.state["items"], ensure_ascii=False))
                   .replace("{transcript}", transcript))
         gen = self._gen
-        parsed = _parse_json(_llm(prompt))
+        parsed = _ask(prompt)
         now = time.time()
         with self._lock:
             stale = gen != self._gen
@@ -347,7 +359,7 @@ class InsightEngine:
                   .replace("{state}",
                            json.dumps(state["items"], ensure_ascii=False))
                   .replace("{transcript}", transcript))
-        parsed = _parse_json(_llm(prompt, big=True))
+        parsed = _ask(prompt, big=True)
         return self._store_archived(base_dir, state, parsed,
                                     transcript=transcript)
 

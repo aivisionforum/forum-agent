@@ -35,7 +35,7 @@ LLM_JSON = json.dumps({
 
 
 def test_refresh_parses_and_auto_approves(eng, monkeypatch):
-    monkeypatch.setattr(ins, "_llm", lambda p: f"```json\n{LLM_JSON}\n```")
+    monkeypatch.setattr(ins, "_llm", lambda p, **k: f"```json\n{LLM_JSON}\n```")
     state = eng.refresh()
     assert state["items"]["summary_points"][0]["zh"] == "要点一"
     assert state["items"]["summary_points"][0]["status"] == "approved"  # default
@@ -44,14 +44,14 @@ def test_refresh_parses_and_auto_approves(eng, monkeypatch):
 
 def test_gatekeeper_mode_marks_draft(eng, monkeypatch):
     eng.auto_approve = False
-    monkeypatch.setattr(ins, "_llm", lambda p: LLM_JSON)
+    monkeypatch.setattr(ins, "_llm", lambda p, **k: LLM_JSON)
     state = eng.refresh()
     assert state["items"]["summary_points"][0]["status"] == "draft"
 
 
 def test_panel_replaced_but_approvals_logged(eng, monkeypatch):
     eng.auto_approve = False
-    monkeypatch.setattr(ins, "_llm", lambda p: LLM_JSON)
+    monkeypatch.setattr(ins, "_llm", lambda p, **k: LLM_JSON)
     state = eng.refresh()
     item_id = state["items"]["summary_points"][0]["id"]
     eng.set_item(item_id, "approved")
@@ -59,7 +59,7 @@ def test_panel_replaced_but_approvals_logged(eng, monkeypatch):
                       "emerging_consensus": [], "tensions": [],
                       "open_questions": [],
                       "convergence_line": {"zh": "x", "en": "y"}})
-    monkeypatch.setattr(ins, "_llm", lambda p: new)
+    monkeypatch.setattr(ins, "_llm", lambda p, **k: new)
     state = eng.refresh()
     zhs = [i["zh"] for i in state["items"]["summary_points"]]
     assert zhs == ["新要点"]  # panel is a live snapshot: old item retired
@@ -68,7 +68,7 @@ def test_panel_replaced_but_approvals_logged(eng, monkeypatch):
 
 
 def test_hidden_items_stay_suppressed(eng, monkeypatch):
-    monkeypatch.setattr(ins, "_llm", lambda p: LLM_JSON)
+    monkeypatch.setattr(ins, "_llm", lambda p, **k: LLM_JSON)
     state = eng.refresh()
     item_id = state["items"]["summary_points"][0]["id"]
     eng.set_item(item_id, "hidden")
@@ -84,7 +84,7 @@ def test_empty_transcript_no_archive_raises(eng, monkeypatch, tmp_path):
     monkeypatch.setattr(fs, "SESSIONS_DIR", str(tmp_path / "none"))
     (tmp_path / "room1_t.jsonl").write_text("")
     called = []
-    monkeypatch.setattr(ins, "_llm", lambda p: called.append(1) or LLM_JSON)
+    monkeypatch.setattr(ins, "_llm", lambda p, **k: called.append(1) or LLM_JSON)
     import pytest
     with pytest.raises(RuntimeError):
         eng.refresh()  # R14: nothing to summarize -> error, not vacuous run
@@ -215,7 +215,7 @@ def test_stale_refresh_redirects_to_archive(eng, monkeypatch, tmp_path):
     d.mkdir(parents=True)
     (d / "room1_transcript.jsonl").write_text('{"t_end": 1}\n')
 
-    def llm_and_stop(prompt):
+    def llm_and_stop(prompt, **k):
         eng.stop_auto()  # session stops while the LLM call is in flight
         return LLM_JSON
     monkeypatch.setattr(ins, "_llm", llm_and_stop)
