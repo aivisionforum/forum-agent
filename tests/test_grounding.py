@@ -1,6 +1,8 @@
 """Issue #12: insight items must be anchored to a verbatim transcript quote;
 ungrounded items never auto-approve. Issue #13: post-session generation uses
 the big model."""
+import json
+
 from forum_agent import insights
 from forum_agent.constants import INSIGHT_MODEL, REPORT_MODEL
 from forum_agent.insights import _is_grounded, _norm
@@ -52,3 +54,35 @@ def test_big_flag_routes_to_report_model(monkeypatch):
     insights._llm("p")
     insights._llm("p", big=True)
     assert calls == [INSIGHT_MODEL, REPORT_MODEL]
+
+
+def test_carried_over_point_expires_when_topic_moves(monkeypatch):
+    """Structural freshness: a point the model re-emits survives only while
+    its quote appears in the CURRENT window."""
+    import forum_agent.insights as ins
+    e = ins.InsightEngine("room1")
+    e.state = {"updated": 0, "items": {k: [] for k in ins.KINDS},
+               "convergence_line": {"zh": "", "en": ""}, "hidden_zh": [],
+               "approved_log": {k: [] for k in ins.KINDS}}
+    e.state["items"]["summary_points"] = [
+        {"id": "old1", "zh": "旧话题要点", "en": "old", "status": "approved",
+         "quote": "签证十天规则", "added": 1}]
+    monkeypatch.setattr(ins, "read_transcript",
+                        lambda *a, **k: "[0-9] Speaker A (zh): 我们讨论行业战略与发展现状")
+    monkeypatch.setattr(ins, "_llm", lambda p, **k: json.dumps({
+        "summary_points": [
+            {"zh": "旧话题要点", "en": "old", "quote": "签证十天规则"},
+            {"zh": "行业战略讨论", "en": "strategy", "quote": "行业战略与发展现状"}],
+        "next_steps": [], "emerging_consensus": [], "tensions": [],
+        "open_questions": [],
+        "convergence_line": {"zh": "x", "en": "x"},
+        "session_topic": {"zh": "y", "en": "y"}}, ensure_ascii=False))
+    monkeypatch.setattr(ins.hub, "broadcast_from_thread", lambda *a, **k: None)
+    monkeypatch.setattr(e, "_save_and_broadcast", lambda: None)
+    import forum_agent.session as fs
+    monkeypatch.setattr(fs.manager, "status",
+                        lambda: {"running": True})
+    state = e.refresh()
+    zhs = [i["zh"] for i in state["items"]["summary_points"]]
+    assert "行业战略讨论" in zhs          # new-topic point admitted
+    assert "旧话题要点" not in zhs        # stale point expired with its topic

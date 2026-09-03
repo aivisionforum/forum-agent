@@ -215,10 +215,24 @@ class InsightEngine:
                         continue
                     old = prev.get(it["zh"])
                     grounded = _is_grounded(it, tnorm)
+                    if old is not None:
+                        # Structural freshness (the 8B ignores prompt-level
+                        # "drop stale points" and parrots the fed state): a
+                        # carried-over point survives only while its quote —
+                        # old or newly supplied — appears in the CURRENT
+                        # window. When the room moves on, points expire and
+                        # the panel follows; history/approved_log keep them.
+                        old_ok = _is_grounded(old, tnorm)
+                        if not (old_ok or grounded):
+                            continue  # stale: topic no longer in the window
+                        if grounded and not old_ok:
+                            old["quote"] = it.get("quote", "")
+                        items.append(old)
+                        continue
                     # ungrounded (no verbatim source in the transcript) stays
                     # DRAFT even with auto-approve on: a human must vouch for
                     # anything the model cannot anchor (issue #12)
-                    items.append(old or {
+                    items.append({
                         "id": uuid.uuid4().hex[:8],
                         "zh": it["zh"], "en": it.get("en", ""),
                         "quote": it.get("quote", ""), "grounded": grounded,
