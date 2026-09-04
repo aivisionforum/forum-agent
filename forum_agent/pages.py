@@ -17,7 +17,15 @@ _BASE_CSS = ("body{background:#0b0f14;color:#f2f5f7;font-family:"
              "margin:28px 0 12px}h3{color:#6ea8fe;margin:18px 0 8px}"
              "li{margin:6px 0}hr{border:0;border-top:1px solid #1c2530;"
              "margin:34px 0}blockquote{color:#fcd34d;border-left:3px solid "
-             "#78350f;padding-left:12px;margin-bottom:20px}")
+             "#78350f;padding-left:12px;margin-bottom:20px}"
+             # printer-friendly: these pages become the forum's paper
+             # deliverables, so print must be ink-on-white and clean
+             "@media print{body{background:#fff;color:#111;max-width:100%;"
+             "margin:0;padding:0 4mm;font-size:11pt;line-height:1.55}"
+             "h1{color:#000}h2{color:#000;border-bottom-color:#bbb}"
+             "h3{color:#1a2b4a}a{color:#1a2b4a;text-decoration:none}"
+             "blockquote{color:#555;border-left-color:#999;background:none}"
+             "hr{border-top-color:#bbb}}")
 
 
 def _shell(title: str, body_html: str, extra_css: str = "") -> str:
