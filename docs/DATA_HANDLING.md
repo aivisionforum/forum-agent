@@ -50,9 +50,12 @@ model, or the operator's own Claude Code / Codex CLI subscriptions
 (text then goes to Anthropic / OpenAI under that account). This is opt-in per run
 with an on-screen warning, available only when the operator has configured
 credentials in the environment (`OPENROUTER_API_KEY`, or a local Ollama
-with `-cloud` models). What is sent is exactly the draft's text — run the
-names check and edit the draft first, because names spoken aloud would
-otherwise leave the machine. The polished copy is written beside the
+with `-cloud` models). By default what is sent is exactly the draft's text. An explicit extra
+opt-in ("include full transcript") additionally sends the verbatim
+transcript(s) so the cloud model can correct the draft from source —
+that is every word spoken, so run the names check and edit first;
+the prompt instructs the model to preserve Chatham House anonymity in
+its output, but the input still leaves the machine. The polished copy is written beside the
 draft, clearly labelled as cloud-produced, and the draft is never modified.
 
 ## Retention and deletion / 保留与删除

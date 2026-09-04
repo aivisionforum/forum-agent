@@ -443,7 +443,9 @@ async def api_polish(body: dict) -> dict:
     if not provider or not model:
         raise HTTPException(400, "provider and model are required")
     target = body.get("target", "minutes")
-    meta: dict = {"target": target}
+    include_tr = bool(body.get("include_transcript"))
+    meta: dict = {"target": target, "transcript_included": include_tr}
+    transcript = ""
     if target == "report":
         src, dest = Path(REPORT_MD), Path(REPORT_MD).with_name(
             "report_polished.md")
@@ -457,6 +459,15 @@ async def api_polish(body: dict) -> dict:
                     metas[0].read_text()).get("sessions", [])
             except json.JSONDecodeError:
                 pass
+        if include_tr:
+            from forum_agent.insights import read_transcript
+            parts = []
+            for sid in meta.get("sessions", []):
+                t = read_transcript("room1",
+                                    base_dir=f"{SESSIONS_DIR}/{sid}")
+                if t.strip():
+                    parts.append(f"=== session {sid} ===\n{t}")
+            transcript = "\n\n".join(parts)
     else:
         sids = _selected_sessions(body)
         if len(sids) != 1:
@@ -464,9 +475,13 @@ async def api_polish(body: dict) -> dict:
         d = Path(SESSIONS_DIR) / sids[0]
         src, dest = d / "room1_minutes.md", d / "room1_minutes_polished.md"
         meta["sessions"] = sids
+        if include_tr:
+            from forum_agent.insights import read_transcript
+            transcript = read_transcript("room1", base_dir=str(d))
     try:
         await anyio.to_thread.run_sync(functools.partial(
-            cloud.polish_file, src, dest, provider, model, meta))
+            cloud.polish_file, src, dest, provider, model, meta,
+            transcript))
     except RuntimeError as exc:
         raise HTTPException(409, str(exc))
     except Exception as exc:  # provider/network errors, surfaced verbatim

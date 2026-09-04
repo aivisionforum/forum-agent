@@ -123,6 +123,11 @@
         background:#18222e;color:#f2f5f7;border:1px solid #2a3a4d;max-width:340px"></select>
       <button id="polishtest" style="font-size:13px;padding:8px 14px">Test</button>
       <span id="polishteststate" style="color:#7f8c99;font-size:13px"></span><br>
+      <label title="Sends the FULL verbatim transcript(s) to the cloud model along with the draft, so it can correct and complete the minutes/report from the source — much better quality, much bigger disclosure: every word spoken (including any names said aloud) leaves this machine. Run the names check first.">
+        <input type="checkbox" id="polishtranscript">
+        include full transcript 包含完整转录
+        <span style="color:#f87171;font-size:12px">(sends verbatim speech —
+          hover for details)</span></label>
       <button id="polishmin" style="font-size:14px;padding:8px 14px">Polish
         minutes of checked session</button>
       <button id="polishrep" style="font-size:14px;padding:8px 14px">Polish
@@ -448,7 +453,9 @@ function postEventOn() {
 async function cloudPolish(target, sessionId) {
   const el = document.getElementById("istatus");
   const {provider, model} = cloudSelection();
-  const body = {provider, model, target};
+  const body = {provider, model, target,
+                include_transcript:
+                  document.getElementById("polishtranscript").checked};
   let openUrl = "/polished?target=report";
   if (target === "minutes") {
     body.sessions = [sessionId];
@@ -463,8 +470,11 @@ async function cloudPolish(target, sessionId) {
 }
 function confirmPolish() {
   const {provider, model} = cloudSelection();
-  return confirm("This sends the draft's full text to " + provider + " (" + model +
-      ").\nPost-event use only. Run the names check first.\nContinue?");
+  const tr = document.getElementById("polishtranscript").checked;
+  return confirm("This sends the draft's full text" +
+      (tr ? " AND THE FULL VERBATIM TRANSCRIPT(S) — every word spoken" : "") +
+      " to " + provider + " (" + model + ").\nPost-event use only. " +
+      "Run the names check first.\nContinue?");
 }
 async function runPolish(target) {
   const el = document.getElementById("istatus");

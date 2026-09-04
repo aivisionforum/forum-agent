@@ -195,8 +195,17 @@ def _chat(provider: str, model: str, prompt: str) -> str:
     return r.json()["choices"][0]["message"]["content"]
 
 
+TRANSCRIPT_BLOCK = (
+    "You are ALSO given the full verbatim meeting transcript below. Use it "
+    "to correct errors, restore missing substance, and improve the draft — "
+    "but preserve Chatham House anonymity strictly: speakers stay "
+    "发言人A/Speaker A etc., and replace any personal name that appears in "
+    "speech with a neutral role description.\n\nTranscript:\n{transcript}"
+    "\n\n")
+
+
 def polish_file(src: Path, dest: Path, provider: str, model: str,
-                meta: dict | None = None) -> Path:
+                meta: dict | None = None, transcript: str = "") -> Path:
     """Send one local draft to the chosen cloud model. Writes `dest` (the
     'latest' the UI links to) AND an archived copy per run — different
     models produce different polishes worth comparing — plus a sidecar
@@ -206,9 +215,12 @@ def polish_file(src: Path, dest: Path, provider: str, model: str,
     if not src.exists():
         raise RuntimeError(f"no draft to polish: {src}")
     from forum_agent import activity
+    tblock = (TRANSCRIPT_BLOCK.replace("{transcript}", transcript)
+              if transcript else "")
+    prompt = (_PROMPT.replace("{transcript_block}", tblock)
+              .replace("{draft}", src.read_text()))
     with activity.task(f"polishing with {provider}:{model} (cloud)"):
-        text = _chat(provider, model,
-                     _PROMPT.replace("{draft}", src.read_text()))
+        text = _chat(provider, model, prompt)
     content = ("> POLISHED DRAFT — produced with a CLOUD model "
                f"({provider}: {model}); still pending human review. "
                "云端模型润色稿，仍需人工确认。\n\n" + text.strip() + "\n")

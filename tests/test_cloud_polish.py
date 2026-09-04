@@ -117,3 +117,18 @@ def test_polish_archives_each_run_with_meta(tmp_path, monkeypatch):
     import json as _json
     meta = _json.loads(arch[0].with_suffix(".json").read_text())
     assert meta["provider"] == "claude" and meta["target"] == "minutes"
+
+
+def test_transcript_rides_along_when_provided(tmp_path, monkeypatch):
+    src = tmp_path / "m.md"
+    src.write_text("# draft")
+    seen = {}
+    monkeypatch.setattr(cloud, "_chat",
+                        lambda p, m, t: seen.setdefault("prompt", t) or "out")
+    cloud.polish_file(src, tmp_path / "o.md", "claude", "default",
+                      transcript="[0-5] Speaker A (zh): 逐字内容")
+    assert "逐字内容" in seen["prompt"]         # transcript included
+    assert "Chatham House" in seen["prompt"]   # anonymity instruction rides
+    seen.clear()
+    cloud.polish_file(src, tmp_path / "o2.md", "claude", "default")
+    assert "Transcript:" not in seen["prompt"]  # off by default
