@@ -449,8 +449,11 @@ async def api_polish(body: dict) -> dict:
     if target == "report":
         src, dest = Path(REPORT_MD), Path(REPORT_MD).with_name(
             "report_polished.md")
-        # copy session coverage from the newest report generation, so
-        # session rows can link to polished reports too
+        # session coverage, so session rows can link to polished reports:
+        # prefer the newest generation's sidecar; otherwise parse the ids
+        # from the draft's own header — the polish must be self-sufficient,
+        # never dependent on the draft having sidecar metadata (older
+        # reports predate it)
         metas = sorted(Path(REPORT_MD).parent.glob("report_draft_*.json"),
                        reverse=True)
         if metas:
@@ -459,6 +462,9 @@ async def api_polish(body: dict) -> dict:
                     metas[0].read_text()).get("sessions", [])
             except json.JSONDecodeError:
                 pass
+        if not meta.get("sessions") and src.exists():
+            head = "\n".join(src.read_text().splitlines()[:5])
+            meta["sessions"] = re.findall(r"\d{8}-\d{6}", head)
         if include_tr:
             from forum_agent.insights import read_transcript
             parts = []
