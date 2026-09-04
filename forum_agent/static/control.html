@@ -24,6 +24,14 @@
   a { color: #6ea8fe; }
   .err { color: #f87171; font-size: 14px; margin-top: 8px; }
   #bgstatus { color: #fbbf24; font-size: 14px; margin-top: 8px; min-height: 18px; }
+  /* one shared action-status toast: buttons live all over the page, so
+     their status must not hide next to one particular button */
+  #istatus { position: fixed; right: 18px; bottom: 18px; z-index: 50;
+             max-width: 440px; background: #18222e; border: 1px solid #2a3a4d;
+             border-left: 3px solid #1d4ed8; border-radius: 8px;
+             padding: 10px 14px; font-size: 14px; color: #cbd5e1;
+             box-shadow: 0 4px 18px rgba(0,0,0,.5); }
+  #istatus:empty { display: none; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
           align-items: start; max-width: 1180px; }
   .grid .card.wide { grid-column: 1 / -1; }
@@ -97,7 +105,7 @@
   <button id="speak" title="Live session when running; otherwise the checked session below">🔊 Speak key points aloud</button>
   <button id="speakstop" style="display:none;color:#f87171">■ Stop voice</button>
   <button id="cancelwait" style="display:none;color:#f87171">✕ Cancel wait</button>
-  <span id="istatus" style="color:#7f8c99;font-size:14px"></span>
+  <span id="istatus"></span>
   <label><input type="checkbox" id="autoapprove" checked>
     auto-approve: new AI points go straight to the projector; the operator
     fixes mistakes live (edit / hide in the operator view). Uncheck for
