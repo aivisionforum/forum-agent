@@ -10,6 +10,7 @@ def test_no_credentials_means_no_providers(monkeypatch):
     monkeypatch.setattr(cloud.requests, "get",
                         lambda *a, **k: (_ for _ in ()).throw(
                             cloud.requests.RequestException()))
+    monkeypatch.setattr(cloud, "_cli_path", lambda name: None)
     assert cloud.providers() == []
 
 
@@ -68,3 +69,37 @@ def test_config_file_is_owner_only(tmp_path, monkeypatch):
     cloud.save_config({"openrouter_api_key": "sk-x"})
     mode = os.stat(tmp_path / "cloud_config.json").st_mode & 0o777
     assert mode == 0o600
+
+
+def test_cli_providers_detected_and_invoked(monkeypatch):
+    monkeypatch.setattr(cloud, "_cli_path",
+                        lambda name: f"/fake/bin/{name}")
+    ids = [p["id"] for p in cloud.providers()]
+    assert "claude" in ids and "codex" in ids
+    calls = {}
+
+    class R:
+        returncode = 0
+        stdout = "polished text"
+        stderr = ""
+
+    def fake_run(cmd, **kw):
+        calls["cmd"] = cmd
+        calls["input"] = kw.get("input")
+        return R()
+
+    monkeypatch.setattr(cloud.subprocess, "run", fake_run)
+    out = cloud._chat("claude", "sonnet", "hello prompt")
+    assert out == "polished text"
+    assert calls["cmd"][:2] == ["/fake/bin/claude", "-p"]
+    assert "--model" in calls["cmd"] and "sonnet" in calls["cmd"]
+    assert calls["input"] == "hello prompt"
+    out = cloud._chat("codex", "default", "hello prompt")
+    assert calls["cmd"][0] == "/fake/bin/codex" and calls["cmd"][1] == "exec"
+
+
+def test_cli_missing_raises(monkeypatch):
+    monkeypatch.setattr(cloud, "_cli_path", lambda name: None)
+    import pytest as _pytest
+    with _pytest.raises(RuntimeError):
+        cloud._chat_cli("claude", "default", "x")

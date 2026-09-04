@@ -45,8 +45,9 @@ for a human, like every other AI output here. It never modifies files itself.
 
 Everything above stays local. One explicit exception exists for the
 production phase after the event: the operator can send a single draft
-(one session's minutes, or the event report) to a cloud model (OpenRouter
-or an Ollama cloud model) for editorial polish. This is opt-in per run
+(one session's minutes, or the event report) to a cloud model for editorial polish — via OpenRouter, an Ollama cloud
+model, or the operator's own Claude Code / Codex CLI subscriptions
+(text then goes to Anthropic / OpenAI under that account). This is opt-in per run
 with an on-screen warning, available only when the operator has configured
 credentials in the environment (`OPENROUTER_API_KEY`, or a local Ollama
 with `-cloud` models). What is sent is exactly the draft's text — run the

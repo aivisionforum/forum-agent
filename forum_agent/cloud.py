@@ -8,10 +8,15 @@ Credentials never live in the repo. They come from either:
   - the console settings form, stored in data/cloud_config.json
     (data/ is wholesale gitignored; the file is chmod 600).
 The Ollama provider appears when the daemon has models tagged "-cloud".
+The claude / codex providers run the locally installed Claude Code and
+Codex CLIs (the operator's own subscriptions — no API key), in one-shot
+print mode with no tool access implied by the prompt.
 
 Run the names check first: what you send is what was said aloud."""
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 import requests
@@ -81,6 +86,20 @@ def _ollama_host() -> str:
             or "http://127.0.0.1:11434").rstrip("/")
 
 
+def _cli_path(name: str) -> str | None:
+    """Find a subscription CLI: PATH first, then the common install spots
+    (the launcher inherits a login shell, but be forgiving)."""
+    found = shutil.which(name)
+    if found:
+        return found
+    for cand in (Path.home() / ".local/bin" / name,
+                 Path("/opt/homebrew/bin") / name,
+                 Path("/usr/local/bin") / name):
+        if cand.exists():
+            return str(cand)
+    return None
+
+
 def providers() -> list[dict]:
     """Configured cloud providers, for the console picker. Empty when no
     credentials are set — the UI then shows nothing."""
@@ -95,7 +114,16 @@ def providers() -> list[dict]:
             out.append({"id": "ollama", "models": sorted(cloud)})
     except (requests.RequestException, ValueError):
         pass  # no local ollama daemon: provider simply not offered
+    if _cli_path("claude"):
+        out.append({"id": "claude", "models": CLAUDE_MODELS})
+    if _cli_path("codex"):
+        out.append({"id": "codex", "models": CODEX_MODELS})
     return out
+
+
+# Subscription CLIs: "default" uses whatever the CLI is configured with.
+CLAUDE_MODELS = ["default", "opus", "sonnet", "haiku"]
+CODEX_MODELS = ["default"]
 
 
 # Sensible defaults per provider for the polish use case, in preference
@@ -120,6 +148,10 @@ def list_models(provider: str) -> dict:
         tags = requests.get(f"{_ollama_host()}/api/tags", timeout=3).json()
         models = sorted(m["name"] for m in tags.get("models", [])
                         if m["name"].endswith((":cloud", "-cloud")))
+    elif provider == "claude":
+        models = CLAUDE_MODELS
+    elif provider == "codex":
+        models = CODEX_MODELS
     else:
         raise RuntimeError(f"unknown provider: {provider}")
     configured = _openrouter_model() if provider == "openrouter" else None
@@ -149,6 +181,8 @@ def _chat(provider: str, model: str, prompt: str) -> str:
                           json={"model": model,
                                 "messages": [{"role": "user",
                                               "content": prompt}]})
+    elif provider in ("claude", "codex"):
+        return _chat_cli(provider, model, prompt)
     elif provider == "ollama":
         r = requests.post(f"{_ollama_host()}/v1/chat/completions",
                           timeout=POLISH_TIMEOUT,
@@ -175,3 +209,27 @@ def polish_file(src: Path, dest: Path, provider: str, model: str) -> Path:
         f"({provider}: {model}); still pending human review. "
         "云端模型润色稿，仍需人工确认。\n\n" + text.strip() + "\n")
     return dest
+
+
+def _chat_cli(provider: str, model: str, prompt: str) -> str:
+    """One-shot generation through the operator's own subscription CLI.
+    Text goes to Anthropic/OpenAI under that account — post-event use only,
+    same warning as every cloud provider."""
+    path = _cli_path(provider)
+    if not path:
+        raise RuntimeError(f"{provider} CLI not found on this machine")
+    if provider == "claude":
+        cmd = [path, "-p"]
+        if model and model != "default":
+            cmd += ["--model", model]
+        proc = subprocess.run(cmd, input=prompt, capture_output=True,
+                              text=True, timeout=POLISH_TIMEOUT * 2)
+    else:  # codex
+        cmd = [path, "exec", prompt]
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=POLISH_TIMEOUT * 2)
+    if proc.returncode != 0 or not proc.stdout.strip():
+        raise RuntimeError(
+            f"{provider} CLI failed (exit {proc.returncode}): "
+            f"{(proc.stderr or proc.stdout)[-300:]}")
+    return proc.stdout.strip()
