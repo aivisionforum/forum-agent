@@ -154,6 +154,8 @@
 </div>
 <div class="card wide">
   <b style="font-size:16px">Past sessions</b>
+  <a href="#" id="selall" style="font-size:13px;margin-left:10px">select all 全选</a> ·
+  <a href="#" id="selnone" style="font-size:13px">deselect all 全不选</a>
   <div style="margin-top:8px;font-size:14px;color:#a8b4c0">
     <input type="file" id="uploadfile" accept="audio/*,video/*,.m4a,.mp3,.wav,.mp4">
     <button id="uploadbtn" style="font-size:14px;padding:8px 14px">⇪ Process
@@ -558,6 +560,18 @@ async function nameCheck(id) {
   el.textContent = "name check done";
   window.open("/redaction?session=" + id, "_blank");
 }
+function setAllSessions(checked) {
+  document.querySelectorAll(".sesssel").forEach(cb => {
+    cb.checked = checked;
+    sessSelState.set(cb.dataset.id, checked);  // survives the 5s re-render
+  });
+}
+document.getElementById("selall").onclick = (e) => {
+  e.preventDefault(); setAllSessions(true);
+};
+document.getElementById("selnone").onclick = (e) => {
+  e.preventDefault(); setAllSessions(false);
+};
 let latestSessionId = "";
 const sessSelState = new Map();  // id -> checked; survives the 5s re-render
 let sessFirstLoad = true;
