@@ -56,6 +56,22 @@ def prewarm() -> None:
         print("[llm] live model warmed")
     except Exception as exc:  # surfaced by /api/status llm health anyway
         print(f"[llm] prewarm failed: {exc!r}")
+        return
+    # Preload the big post-session model AFTER the live one, at startup
+    # only (loading stalls the model server for minutes — never during a
+    # session), and only where RAM comfortably fits both (the first
+    # minutes of the day otherwise cost ~7 min while 18GB loads).
+    from forum_agent import preflight
+    from forum_agent.constants import REPORT_MODEL
+    if preflight.total_ram_gb() < preflight.RECOMMENDED_RAM_GB:
+        return
+    from forum_agent import activity
+    try:
+        with activity.task("preloading large minutes/report model"):
+            chat(REPORT_MODEL, "hello", max_tokens=4, timeout=900)
+        print("[llm] report model preloaded")
+    except Exception as exc:
+        print(f"[llm] report-model preload failed: {exc!r}")
 
 
 def healthy(timeout: float = 1.0) -> bool:
