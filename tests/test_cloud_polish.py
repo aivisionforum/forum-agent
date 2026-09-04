@@ -103,3 +103,17 @@ def test_cli_missing_raises(monkeypatch):
     import pytest as _pytest
     with _pytest.raises(RuntimeError):
         cloud._chat_cli("claude", "default", "x")
+
+
+def test_polish_archives_each_run_with_meta(tmp_path, monkeypatch):
+    src = tmp_path / "m.md"
+    src.write_text("# draft")
+    monkeypatch.setattr(cloud, "_chat", lambda p, m, t: "# polished v")
+    dest = tmp_path / "room1_minutes_polished.md"
+    cloud.polish_file(src, dest, "claude", "opus", meta={"target": "minutes"})
+    assert dest.exists()                       # latest, stable link target
+    arch = list(tmp_path.glob("room1_minutes_polished_*_claude-opus.md"))
+    assert len(arch) == 1                      # per-run archive with model
+    import json as _json
+    meta = _json.loads(arch[0].with_suffix(".json").read_text())
+    assert meta["provider"] == "claude" and meta["target"] == "minutes"

@@ -307,9 +307,14 @@ async def api_reports() -> list:
         for f in sorted(root.glob("report_draft_*.json"), reverse=True):
             if re.fullmatch(r"report_draft_\d{8}-\d{6}\.json", f.name):
                 try:
-                    out.append(json.loads(f.read_text()))
+                    out.append({**json.loads(f.read_text()), "kind": "draft"})
                 except json.JSONDecodeError:
                     continue
+        for f in sorted(root.glob("report_polished_*.json"), reverse=True):
+            try:
+                out.append({**json.loads(f.read_text()), "kind": "polished"})
+            except json.JSONDecodeError:
+                continue
     return out
 
 
@@ -438,18 +443,30 @@ async def api_polish(body: dict) -> dict:
     if not provider or not model:
         raise HTTPException(400, "provider and model are required")
     target = body.get("target", "minutes")
+    meta: dict = {"target": target}
     if target == "report":
         src, dest = Path(REPORT_MD), Path(REPORT_MD).with_name(
             "report_polished.md")
+        # copy session coverage from the newest report generation, so
+        # session rows can link to polished reports too
+        metas = sorted(Path(REPORT_MD).parent.glob("report_draft_*.json"),
+                       reverse=True)
+        if metas:
+            try:
+                meta["sessions"] = json.loads(
+                    metas[0].read_text()).get("sessions", [])
+            except json.JSONDecodeError:
+                pass
     else:
         sids = _selected_sessions(body)
         if len(sids) != 1:
             raise HTTPException(400, "pick exactly one session to polish")
         d = Path(SESSIONS_DIR) / sids[0]
         src, dest = d / "room1_minutes.md", d / "room1_minutes_polished.md"
+        meta["sessions"] = sids
     try:
         await anyio.to_thread.run_sync(functools.partial(
-            cloud.polish_file, src, dest, provider, model))
+            cloud.polish_file, src, dest, provider, model, meta))
     except RuntimeError as exc:
         raise HTTPException(409, str(exc))
     except Exception as exc:  # provider/network errors, surfaced verbatim
@@ -458,17 +475,40 @@ async def api_polish(body: dict) -> dict:
 
 
 @app.get("/polished", response_class=HTMLResponse)
-async def polished_page(session: str = "", target: str = "minutes") -> str:
+async def polished_page(session: str = "", target: str = "minutes",
+                        file: str = "") -> str:
     from forum_agent import activity, pages
     from forum_agent.constants import REPORT_MD, SESSIONS_DIR
+    if file and not re.fullmatch(
+            r"(report|room1_minutes)_polished_[\d-]+_[A-Za-z0-9-]+\.md",
+            file):
+        raise HTTPException(400, "invalid polished file")
     if target == "report":
-        p = Path(REPORT_MD).with_name("report_polished.md")
+        base = Path(REPORT_MD).parent
+        p = base / (file or "report_polished.md")
     else:
         safe_session(session)
-        p = Path(SESSIONS_DIR) / session / "room1_minutes_polished.md"
-    return pages.render_markdown_page(
+        base = Path(SESSIONS_DIR) / session
+        p = base / (file or "room1_minutes_polished.md")
+    # version list: every archived polish run of this target, with model
+    versions = []
+    stem = "report_polished" if target == "report" else         "room1_minutes_polished"
+    for m in sorted(base.glob(f"{stem}_*.json"), reverse=True):
+        try:
+            j = json.loads(m.read_text())
+            q = (f"target=report&file={j['file']}" if target == "report"
+                 else f"session={session}&file={j['file']}")
+            versions.append(
+                f"<a href='/polished?{q}'>{j.get('generated', '?')} · "
+                f"{j.get('provider', '?')}:{j.get('model', '?')}</a>")
+        except (json.JSONDecodeError, KeyError):
+            continue
+    header = ("<blockquote>润色版本 polished versions: "
+              + " | ".join(versions) + "</blockquote>") if versions else ""
+    page = pages.render_markdown_page(
         "Polished (cloud)", p, "No polished version yet.",
         busy=activity.busy("cloud"))
+    return page.replace("<body>", "<body>" + header, 1)
 
 
 @app.post("/api/server/restart")

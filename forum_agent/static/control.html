@@ -575,14 +575,18 @@ document.getElementById("selnone").onclick = (e) => {
 let latestSessionId = "";
 const sessSelState = new Map();  // id -> checked; survives the 5s re-render
 let sessFirstLoad = true;
-let reportsBySession = {};  // session id -> newest archived report file
+let reportsBySession = {};          // session id -> newest report file
+let polishedBySession = {};         // session id -> newest polished report
 async function loadReports() {
   try {
     const reps = await (await fetch("/api/reports")).json();
-    reportsBySession = {};
+    reportsBySession = {}; polishedBySession = {};
     for (const r of reps)            // newest first: keep the first hit
-      for (const sid of (r.sessions || []))
-        if (!reportsBySession[sid]) reportsBySession[sid] = r.file;
+      for (const sid of (r.sessions || [])) {
+        if (r.kind === "polished") {
+          if (!polishedBySession[sid]) polishedBySession[sid] = r.file;
+        } else if (!reportsBySession[sid]) reportsBySession[sid] = r.file;
+      }
   } catch (e) {}
 }
 async function loadSessions() {
@@ -608,6 +612,7 @@ async function loadSessions() {
       <a href="/transcript?room=room1&session=${s2.id}" target="_blank">transcript</a> ·
       <a href="#" title="local LLM lists personal names for review — changes nothing" onclick="nameCheck('${s2.id}');return false">names check</a> ·
       ${reportsBySession[s2.id] ? `<a href="/report?file=${reportsBySession[s2.id]}" target="_blank" title="newest archived report covering this session">report</a> · ` : ""}
+      ${polishedBySession[s2.id] ? `<a href="/polished?target=report&file=${polishedBySession[s2.id]}" target="_blank" title="newest polished report covering this session">polished report</a> · ` : ""}
       ${s2.files.some(f => f.endsWith("_minutes_polished.md")) ? `<a href="/polished?session=${s2.id}" target="_blank">polished minutes</a> · ` : ""}
       ${s2.files.some(f => f.endsWith("_recording.wav")) ? `<a href="/api/audio?room=room1&session=${s2.id}">audio</a> · ` : ""}
       <a href="#" style="color:#f87171" onclick="deleteSession('${s2.id}');return false">delete</a></div>`

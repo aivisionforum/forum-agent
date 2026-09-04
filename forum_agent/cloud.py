@@ -195,19 +195,31 @@ def _chat(provider: str, model: str, prompt: str) -> str:
     return r.json()["choices"][0]["message"]["content"]
 
 
-def polish_file(src: Path, dest: Path, provider: str, model: str) -> Path:
-    """Send one local draft to the chosen cloud model and write the polished
-    version next to it, with a provenance banner. Never touches the draft."""
+def polish_file(src: Path, dest: Path, provider: str, model: str,
+                meta: dict | None = None) -> Path:
+    """Send one local draft to the chosen cloud model. Writes `dest` (the
+    'latest' the UI links to) AND an archived copy per run — different
+    models produce different polishes worth comparing — plus a sidecar
+    json (provider, model, time, extra meta). Never touches the draft."""
+    import re as _re
+    import time as _time
     if not src.exists():
         raise RuntimeError(f"no draft to polish: {src}")
     from forum_agent import activity
     with activity.task(f"polishing with {provider}:{model} (cloud)"):
         text = _chat(provider, model,
                      _PROMPT.replace("{draft}", src.read_text()))
-    dest.write_text(
-        "> POLISHED DRAFT — produced with a CLOUD model "
-        f"({provider}: {model}); still pending human review. "
-        "云端模型润色稿，仍需人工确认。\n\n" + text.strip() + "\n")
+    content = ("> POLISHED DRAFT — produced with a CLOUD model "
+               f"({provider}: {model}); still pending human review. "
+               "云端模型润色稿，仍需人工确认。\n\n" + text.strip() + "\n")
+    dest.write_text(content)
+    ts = _time.strftime("%Y%m%d-%H%M%S")
+    slug = _re.sub(r"[^A-Za-z0-9]+", "-", f"{provider}-{model}").strip("-")
+    arch = dest.with_name(f"{dest.stem}_{ts}_{slug}{dest.suffix}")
+    arch.write_text(content)
+    arch.with_suffix(".json").write_text(json.dumps(
+        {"file": arch.name, "provider": provider, "model": model,
+         "generated": ts, **(meta or {})}, ensure_ascii=False))
     return dest
 
 
