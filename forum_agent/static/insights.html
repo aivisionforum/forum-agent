@@ -232,7 +232,14 @@ function connect() {
     if (m.type === "insights") render(m);
     if (m.type === "session_reset") load();
   };
-  ws.onclose = () => setTimeout(connect, 1500);
+  // server gone = likely a restart with new code: reload the page (same
+  // URL/params) once it is back, so wall displays pick up UI updates
+  ws.onclose = () => {
+    const t = setInterval(async () => {
+      try { if ((await fetch("/api/status")).ok) {
+        clearInterval(t); location.reload(); } } catch (e) {}
+    }, 2000);
+  };
   window._ws = ws;
 }
 setInterval(() => { if (window._ws && window._ws.readyState === 1) window._ws.send("ping"); }, 15000);

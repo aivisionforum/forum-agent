@@ -290,9 +290,17 @@ async def api_report(body: dict) -> dict:
 
 
 @app.get("/report", response_class=HTMLResponse)
-async def report_page() -> str:
+async def report_page(file: str = "") -> str:
     from forum_agent import activity, pages
-    return pages.report_page(busy=activity.busy("report"))
+    if file and not re.fullmatch(r"report_draft_\d{8}-\d{6}\.md", file):
+        raise HTTPException(400, "invalid report file")
+    return pages.report_page(busy=activity.busy("report"), file=file)
+
+
+@app.get("/reports", response_class=HTMLResponse)
+async def reports_list() -> str:
+    from forum_agent import pages
+    return pages.reports_list_page()
 
 
 @app.get("/minutes", response_class=HTMLResponse)

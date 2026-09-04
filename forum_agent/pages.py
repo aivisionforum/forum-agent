@@ -56,13 +56,48 @@ def _session_has_material(d: Path, room: str = "room1") -> bool:
         (d / f"{room}_minutes.md").exists()
 
 
-def report_page(busy: dict | None = None) -> str:
+def reports_list_page() -> str:
+    """Every generated report, newest first (each generation is archived as
+    report_draft_YYYYmmdd-HHMMSS.md; /report shows only the latest)."""
+    import re as _re
+    import time as _time
+    root = Path(REPORT_MD).parent
+    items = []
+    if root.exists():
+        for f in sorted(root.glob("report_draft_*.md"), reverse=True):
+            if _re.fullmatch(r"report_draft_\d{8}-\d{6}\.md", f.name):
+                ts = _time.strftime("%Y-%m-%d %I:%M:%S %p", _time.localtime(
+                    f.stat().st_mtime))
+                items.append(f"<li><a href='/report?file={f.name}'>{ts}"
+                             f"</a> <small style='color:#7f8c99'>{f.name}"
+                             f"</small></li>")
+    body = ("<h1>历史报告 · Past reports</h1>"
+            "<p style='color:#7f8c99'>每次生成的报告都会存档；每份报告开头"
+            "列出其覆盖的会话。Every generation is archived; each report "
+            "lists the sessions it covers at the top.</p>"
+            + ("<ul>" + "".join(items) + "</ul>" if items
+               else "<p>还没有生成过报告。No reports generated yet.</p>")
+            + "<p><a href='/report'>最新报告 latest report</a></p>")
+    return _shell("Past reports", body)
+
+
+def report_page(busy: dict | None = None, file: str = "") -> str:
     """Whole-event synthesis. Warns when sessions were archived after the
     report was generated, so a stale draft is never mistaken for current."""
     import markdown
+    import re as _re
+    if file:  # an archived generation; name strictly validated by caller
+        rp = Path(REPORT_MD).parent / file
+        text = rp.read_text() if rp.exists() else "Archived report not found."
+        md = markdown.markdown(html.escape(text), extensions=["tables"])
+        note = ("<blockquote>历史存档报告 archived report · "
+                "<a href='/reports'>全部报告 all reports</a> · "
+                "<a href='/report'>最新 latest</a></blockquote>")
+        return _shell("Report (archived)", note + md)
     rp = Path(REPORT_MD)
     text = rp.read_text() if rp.exists() else "No report generated yet."
-    banner = ""
+    banner = ("<p style='font-size:0.9em'><a href='/reports'>"
+              "历史报告 past reports</a></p>")
     root = Path(SESSIONS_DIR)
     if rp.exists() and root.exists():
         newer = sorted(d.name for d in root.iterdir() if d.is_dir()

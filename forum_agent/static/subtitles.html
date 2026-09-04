@@ -53,8 +53,13 @@ function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws/room/${room}`);
   window._ws = ws;
   ws.onopen = () => { statusEl.textContent = "● LIVE"; statusEl.className = "live"; };
-  ws.onclose = () => { statusEl.textContent = "reconnecting…";
-                       statusEl.className = ""; setTimeout(connect, 1000); };
+  ws.onclose = () => {
+    statusEl.textContent = "reconnecting…"; statusEl.className = "";
+    const t = setInterval(async () => {  // reload on return: new UI code
+      try { if ((await fetch("/api/status")).ok) {
+        clearInterval(t); location.reload(); } } catch (e) {}
+    }, 2000);
+  };
   ws.onmessage = (ev) => {
     const m = JSON.parse(ev.data);
     if (m.type === "session_reset") {
