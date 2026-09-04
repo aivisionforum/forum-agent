@@ -317,7 +317,7 @@ class InsightEngine:
             raise RuntimeError(f"session {session_id}: no transcript")
         return self._refresh_archived(base_dir, transcript)
 
-    @_tracked("generating minutes (~1-2 min)")
+    @_tracked("generating minutes (~2 min; up to ~8 min the first time while the large model loads)")
     def minutes_for(self, session_id: str) -> str:
         """Minutes for one specific archived session, using that session's
         own approved insights (never the live room state)."""
@@ -446,7 +446,7 @@ class InsightEngine:
         with self._lock:
             self._gen += 1  # invalidate any refresh still in the LLM
 
-    @_tracked("generating minutes (~1-2 min)")
+    @_tracked("generating minutes (~2 min; up to ~8 min the first time while the large model loads)")
     def generate_minutes(self) -> str:
         """C6: end-of-session bilingual draft minutes as Markdown. If the
         session was already archived (Stop moves the live files), the minutes
