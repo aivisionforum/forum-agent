@@ -79,6 +79,12 @@ def _generate_report(selected: list[str] | None = None) -> str:
     out = Path(REPORT_MD)
     out.parent.mkdir(exist_ok=True)
     out.write_text(content)
-    out.with_name(out.name.replace(".md", time.strftime(
-        "_%Y%m%d-%H%M%S.md"))).write_text(content)  # never overwrite history
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    arch = out.with_name(out.name.replace(".md", f"_{ts}.md"))
+    arch.write_text(content)              # never overwrite history
+    # sidecar metadata: lets session rows link back to the reports that
+    # cover them, and /reports show coverage without parsing markdown
+    arch.with_suffix(".json").write_text(json.dumps(
+        {"file": arch.name, "sessions": included, "generated": ts},
+        ensure_ascii=False))
     return str(out)

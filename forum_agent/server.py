@@ -297,6 +297,22 @@ async def report_page(file: str = "") -> str:
     return pages.report_page(busy=activity.busy("report"), file=file)
 
 
+@app.get("/api/reports")
+async def api_reports() -> list:
+    """Archived report generations with the sessions each covers."""
+    from forum_agent.constants import REPORT_MD
+    out = []
+    root = Path(REPORT_MD).parent
+    if root.exists():
+        for f in sorted(root.glob("report_draft_*.json"), reverse=True):
+            if re.fullmatch(r"report_draft_\d{8}-\d{6}\.json", f.name):
+                try:
+                    out.append(json.loads(f.read_text()))
+                except json.JSONDecodeError:
+                    continue
+    return out
+
+
 @app.get("/reports", response_class=HTMLResponse)
 async def reports_list() -> str:
     from forum_agent import pages

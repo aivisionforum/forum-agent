@@ -68,9 +68,18 @@ def reports_list_page() -> str:
             if _re.fullmatch(r"report_draft_\d{8}-\d{6}\.md", f.name):
                 ts = _time.strftime("%Y-%m-%d %I:%M:%S %p", _time.localtime(
                     f.stat().st_mtime))
+                covered = ""
+                meta = f.with_suffix(".json")
+                if meta.exists():
+                    try:
+                        ids = json.loads(meta.read_text()).get("sessions", [])
+                        covered = (" · 覆盖 covers: "
+                                   + html.escape(", ".join(ids)))
+                    except json.JSONDecodeError:
+                        pass
                 items.append(f"<li><a href='/report?file={f.name}'>{ts}"
                              f"</a> <small style='color:#7f8c99'>{f.name}"
-                             f"</small></li>")
+                             f"{covered}</small></li>")
     body = ("<h1>历史报告 · Past reports</h1>"
             "<p style='color:#7f8c99'>每次生成的报告都会存档；每份报告开头"
             "列出其覆盖的会话。Every generation is archived; each report "
