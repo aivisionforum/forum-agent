@@ -87,7 +87,6 @@ async def subtitles_page() -> str:
     return (STATIC_DIR / "subtitles.html").read_text()
 
 
-@app.get("/", response_class=HTMLResponse)
 @app.middleware("http")
 async def no_html_cache(request: Request, call_next):
     """Wall displays are rarely hard-refreshed: stale cached pages kept
@@ -98,6 +97,7 @@ async def no_html_cache(request: Request, call_next):
     return resp
 
 
+@app.get("/", response_class=HTMLResponse)
 @app.get("/control", response_class=HTMLResponse)
 async def control_page() -> str:
     return (STATIC_DIR / "control.html").read_text()
