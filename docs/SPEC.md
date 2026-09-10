@@ -32,5 +32,26 @@ Not a transcription tool but an AI participant attending the Forum: it listens t
 - **人在环上 human-in-the-loop**: all AI output is DRAFT until a facilitator/organizer confirms — itself a demonstration of Human Agency
 - **开源 open source**: released as an OAIC/HAgency ecosystem artifact, reusable at future AIVF / GOSIM / AAAA events
 
+## 实现状态 / Implementation status (2026-09-10)
+
+The spec above is the committee's original requirements draft, kept verbatim.
+Current implementation against it:
+
+| Req | Status |
+|---|---|
+| C1 subtitles | done — live wall, ≤3 s measured |
+| C2 two rooms | **not built** — single room today; the largest remaining P0 item |
+| C3 recording + diarized anonymous transcript | done — recording on by default, plus a post-session names check |
+| C4 insight panel | done — quote-grounded, ~3 min refresh, operator-gated |
+| C5 cross-room feed | not built (depends on C2) |
+| C6 instant minutes | done — auto-drafted on session stop |
+| C7 synthesis report | done — cross-session report on demand (32B local model), optional post-event cloud polish |
+| C8 suggested questions | not built |
+| C9 participant query page | partial — a read-only "session so far" page exists; no QR / per-participant flow |
+| C10 closing summary | partial — spoken key-point summary exists (macOS voice; natural neural TTS is issue #16) |
+
+All four hard constraints (local, anonymized, human-in-the-loop, open
+source) are implemented and tested.
+
 ## 落地 / Delivery
 Two rehearsals in September 2026; hardware: Mac mini / local GPU host per room; audio from the mixing board (not room microphones).

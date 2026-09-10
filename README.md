@@ -1,8 +1,11 @@
 # forum-agent
 
-Built for the [AI Vision Forum Shenzhen 2026](https://shenzhen2026.visionforum.ai)
-(Oct 14–15, Zhuhai) — an open-source AI participant for bilingual (中文/English) forums. It listens to room audio, produces a
-diarized, code-switching-aware transcript with live bilingual subtitles —
+An open-source AI participant for bilingual (中文/English) forums,
+conferences, and working meetings — built for the
+[AI Vision Forum Shenzhen 2026](https://shenzhen2026.visionforum.ai)
+(Oct 14–15, Zhuhai) and designed to be reused at future AIVF / GOSIM and
+similar events. It listens to room audio and produces a diarized,
+code-switching-aware transcript with live bilingual subtitles —
 **fully locally**: no cloud APIs, no internet needed at the venue. Speakers
 are labelled only `Speaker A/B/C…` (Chatham House Rule); all AI output is a
 draft for human review.
