@@ -4,6 +4,14 @@
 # "Restart app" on the console, a crash, an update), it restarts in 2s.
 # Close this terminal window to stop everything.
 cd "$(dirname "$0")"
+if curl -s --max-time 2 http://127.0.0.1:8710/api/status > /dev/null; then
+  echo "Forum Agent is ALREADY RUNNING — opening the console."
+  echo "已在运行中，正在打开控制台。To restart it, use the console's Restart"
+  echo "button, or close the terminal window that is running it first."
+  open "http://127.0.0.1:8710/control"
+  sleep 5
+  exit 0
+fi
 echo "Forum Agent starting — console: http://127.0.0.1:8710/control"
 echo "Keep this window open. Close it to shut the Forum Agent down."
 while true; do
