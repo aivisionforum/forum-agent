@@ -6,9 +6,7 @@ room audio and produces a diarized,
 code-switching-aware transcript with live bilingual subtitles —
 **fully locally**: no cloud APIs, no internet needed at the venue. Speakers
 are labelled only `Speaker A/B/C…` (Chatham House Rule); all AI output is a
-draft for human review. First deployed at the
-[AI Vision Forum Shenzhen 2026](https://shenzhen2026.visionforum.ai)
-(Oct 14–15, Zhuhai).
+draft for human review.
 
 Status: **event-ready, single room** — the full pipeline is built and
 rehearsed on live meetings: audio (live microphone or file replay/upload) →
