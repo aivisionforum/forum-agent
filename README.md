@@ -62,6 +62,23 @@ Subtitles show partials within ~2 s; translations attach when ready, so the
 display degrades to ASR-only if the LLM lags. LLM prompts live in
 [prompts/](prompts/) for non-developer tuning.
 
+## Machine requirements
+
+Apple-silicon Mac only (the pipeline is built on MLX). RAM drives
+everything — the app checks it at startup and warns or refuses accordingly:
+
+| RAM | What you get |
+|---|---|
+| 64 GB or more (recommended) | Full pipeline: live subtitles + insights, and the 32 GB-class report/minutes model preloaded at startup. Benchmarked reference machine: MacBook Pro M3 Max, 128 GB. |
+| 16–63 GB | Live subtitles, translation, and insights work; the 32B minutes/report model may crash the model server (the watchdog restarts it, dropping translation ~30 s each time). Usable for rehearsal, not recommended for a real event. |
+| Below 16 GB | Refused at startup (`FORUM_AGENT_FORCE=1` overrides; expect instability). |
+
+Also needed: ~25 GB free disk for model weights (downloaded on first use),
+plus room for session audio (~1 GB per recorded hour); a decent microphone
+or a feed from the room's mixing board; external display(s) for the
+subtitle/insight walls. CPU core count matters far less than RAM — any
+M-series Pro/Max with enough memory is fine.
+
 ## Model choices (benchmarked on M3 Max, 128 GB)
 
 | Role | Choice | Why |
