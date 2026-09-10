@@ -13,13 +13,18 @@ rehearsed on live meetings: audio (live microphone or file replay/upload) →
 diarized bilingual transcript → live subtitle wall + live insight wall
 (quote-grounded key points, refreshed ~3 min, human-gated) → per-session
 minutes on stop → cross-session event report — plus a names check for
-Chatham House review and optional post-event cloud polish. Operators run it
-without a terminal ([docs/OPERATOR_GUIDE.md](docs/OPERATOR_GUIDE.md)). See
+Chatham House review and optional post-event cloud polish. Operators never
+touch a command line: double-click to start, then everything happens in web
+pages ([docs/OPERATOR_GUIDE.md](docs/OPERATOR_GUIDE.md)). See
 [docs/SPEC.md](docs/SPEC.md) for the requirement spec (C1–C10) and
 [PROMPT.md](PROMPT.md) for the build plan (remaining: two-room mode,
 natural neural TTS).
 
-## Operating at the venue (no terminal needed)
+## Operating at the venue (no command line needed)
+
+Room setup: one Apple-silicon Mac per room (the operator's screen shows the
+web console) plus one or two large displays/projectors — browser windows
+showing the subtitle wall and the insight wall are dragged onto them.
 
 Double-click **`Forum Agent.command`** to start — it opens a terminal window
 that supervises the app: if the app exits (the console's "Restart app"
