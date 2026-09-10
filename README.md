@@ -7,12 +7,16 @@ diarized, code-switching-aware transcript with live bilingual subtitles —
 are labelled only `Speaker A/B/C…` (Chatham House Rule); all AI output is a
 draft for human review.
 
-Status: **M1 (proof of concept), extended** — single-room pipeline: audio
-(file replay **or live microphone**) → diarized bilingual transcript (JSONL)
-→ live subtitle web page, with a web control console for choosing the audio
-source and input device. See [docs/SPEC.md](docs/SPEC.md) for the full
-requirement spec (C1–C10) and [PROMPT.md](PROMPT.md) for the build plan
-(next: insight engine, operator console, minutes, two-room mode).
+Status: **event-ready, single room** — the full pipeline is built and
+rehearsed on live meetings: audio (live microphone or file replay/upload) →
+diarized bilingual transcript → live subtitle wall + live insight wall
+(quote-grounded key points, refreshed ~3 min, human-gated) → per-session
+minutes on stop → cross-session event report — plus a names check for
+Chatham House review and optional post-event cloud polish. Operators run it
+without a terminal ([docs/OPERATOR_GUIDE.md](docs/OPERATOR_GUIDE.md)). See
+[docs/SPEC.md](docs/SPEC.md) for the requirement spec (C1–C10) and
+[PROMPT.md](PROMPT.md) for the build plan (remaining: two-room mode,
+natural neural TTS).
 
 ## Operating at the venue (no terminal needed)
 
@@ -33,7 +37,7 @@ Live bilingual subtitles (from the acceptance run):
 
 ![Live subtitles](docs/img/subtitles.png)
 
-## Architecture (M1)
+## Architecture (live path)
 
 ```
 WAV replay (wall-clock pinned) OR live mic (auto-gain + Silero neural VAD)
@@ -43,6 +47,9 @@ WAV replay (wall-clock pinned) OR live mic (auto-gain + Silero neural VAD)
   → append-only JSONL {t_start, t_end, speaker_id, lang, text}
   → WebSocket → dark full-screen subtitle page (forum_agent/static/)
   → async translation via managed mlx-lm server (forum_agent/llm.py)
+  → insight engine: quote-grounded key points/tensions/consensus every ~3 min
+    (forum_agent/insights.py) → insight wall + operator gate on the console
+  → on stop: per-session minutes; on demand: cross-session report (32B model)
 ```
 
 Subtitles show partials within ~2 s; translations attach when ready, so the
