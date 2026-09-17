@@ -3,6 +3,7 @@
 //! A standalone desktop application for live speech translation.
 
 mod app;
+mod analysis;
 mod apple_speech;
 mod dataflow;
 mod identity;

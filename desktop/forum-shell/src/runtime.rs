@@ -1,6 +1,7 @@
 use crate::meeting::{project_transcript, MeetingHost, MeetingOptions, MeetingRepository};
 use crossbeam_channel::{bounded, Receiver, Sender, TrySendError};
 use forum_contracts::Uuid;
+use forum_runtime::resource_budget::{LivePermit, ResourceBudget};
 use moxin_dora_bridge::{
     controller::DataflowController, dispatcher::DynamicNodeDispatcher, DoraStatus, SharedDoraState,
     TranslationDirection,
@@ -9,7 +10,10 @@ use parking_lot::Mutex;
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{atomic::Ordering, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -53,7 +57,31 @@ fn publish_event(
         }
     }
 }
+type LifecycleHandler = Arc<dyn Fn(RuntimeEvent) + Send + Sync>;
+type LifecycleSlot = Arc<Mutex<Option<LifecycleHandler>>>;
+
+/// Lifecycle side effects must not use the lossy UI status mailbox. Clone the
+/// callback under its lock, then invoke it without holding that lock.
+fn emit_runtime_event(
+    tx: &Sender<RuntimeEvent>,
+    pending_rx: &Receiver<RuntimeEvent>,
+    lifecycle: &LifecycleSlot,
+    event: RuntimeEvent,
+) {
+    if matches!(
+        &event,
+        RuntimeEvent::Started(_) | RuntimeEvent::Stopped { .. }
+    ) {
+        let handler = lifecycle.lock().clone();
+        if let Some(handler) = handler {
+            handler(event.clone());
+        }
+    }
+    publish_event(tx, pending_rx, event);
+}
+
 struct ActiveMeeting {
+    _resource_permit: LivePermit,
     dispatcher: DynamicNodeDispatcher,
     host: MeetingHost,
     started_at: Instant,
@@ -94,6 +122,9 @@ impl ActiveMeeting {
     }
 }
 pub struct TranslationRuntime {
+    lifecycle_handler: LifecycleSlot,
+    contained: Arc<AtomicBool>,
+    resource_budget: ResourceBudget,
     shared_state: Arc<SharedDoraState>,
     current_session: Arc<Mutex<Option<Uuid>>>,
     repository: Result<MeetingRepository, String>,
@@ -105,6 +136,13 @@ pub struct TranslationRuntime {
 }
 impl TranslationRuntime {
     pub fn new(data_root: PathBuf) -> Self {
+        let lifecycle_handler: LifecycleSlot = Arc::new(Mutex::new(None));
+        let worker_lifecycle = lifecycle_handler.clone();
+        // A finished or panicked thread is not evidence of owned resource exit.
+        let contained = Arc::new(AtomicBool::new(false));
+        let worker_contained = contained.clone();
+        let resource_budget = ResourceBudget::default();
+        let worker_budget = resource_budget.clone();
         let repository = MeetingRepository::open(data_root);
         let worker_repository = repository.clone();
         let current_session = Arc::new(Mutex::new(None));
@@ -118,14 +156,16 @@ impl TranslationRuntime {
         let pending_events = event_rx.clone();
         let (stop_tx, stop_rx) = bounded(1);
         let worker = thread::spawn(move || {
-            let emit = |event| publish_event(&event_tx, &pending_events, event);
+            let emit =
+                |event| emit_runtime_event(&event_tx, &pending_events, &worker_lifecycle, event);
             let mut active: Option<ActiveMeeting> = None;
             let mut exiting = false;
             let mut exit_started = None;
+            let mut exit_deadline_reported = false;
             loop {
                 if stop_rx.try_recv().is_ok() {
                     exiting = true;
-                    exit_started = Some(Instant::now());
+                    exit_started.get_or_insert_with(Instant::now);
                     if let Some(current) = active.as_mut() {
                         let _ = current.request_stop();
                     }
@@ -166,6 +206,22 @@ impl TranslationRuntime {
                                     continue;
                                 }
                             };
+                            let resource_permit =
+                                match worker_budget.enter_live(Duration::from_secs(5)) {
+                                    Ok(permit) => permit,
+                                    Err(error) => {
+                                        emit(RuntimeEvent::Error(error));
+                                        continue;
+                                    }
+                                };
+                            if worker_state.capture_stop_requested.load(Ordering::Acquire) {
+                                emit(RuntimeEvent::Stopped {
+                                    session_id: String::new(),
+                                    incomplete: false,
+                                    translation_pending: 0,
+                                });
+                                continue;
+                            }
                             let mut host = match MeetingHost::create(repository, options, recovery)
                             {
                                 Ok(h) => h,
@@ -229,6 +285,7 @@ impl TranslationRuntime {
                             );
                             let started = dispatcher.start();
                             let mut next = ActiveMeeting {
+                                _resource_permit: resource_permit,
                                 dispatcher,
                                 host,
                                 started_at: Instant::now(),
@@ -342,6 +399,9 @@ impl TranslationRuntime {
                             && !current.announced
                         {
                             current.announced = true;
+                            if !current.host.replay_only {
+                                worker_budget.live_ready();
+                            }
                             if current.host.replay_only {
                                 emit(RuntimeEvent::Draining(
                                     "正在从本机录音恢复原文和译文；未打开音频设备".into(),
@@ -392,6 +452,38 @@ impl TranslationRuntime {
                             }
                             Err(_) => current.force_cleanup = true,
                         }
+                        let pressure = if current.stopping_at.is_some() || current.host.replay_only
+                        {
+                            Some("实时字幕正在收尾或恢复".to_string())
+                        } else if current.degraded || current.force_cleanup {
+                            Some("实时识别或翻译异常，优先保留原文".to_string())
+                        } else if progress.outbox_pending > 0 {
+                            Some("原文持久化正在等待确认".to_string())
+                        } else {
+                            let id = current.host.id();
+                            let terminal = current
+                                .host
+                                .repository
+                                .core
+                                .call(move |s| Ok(s.terminal_segment_ids(id)?.len()));
+                            if terminal.is_err()
+                                || progress
+                                    .segments_closed
+                                    .saturating_sub(terminal.unwrap_or(0))
+                                    > 1
+                            {
+                                Some("语音识别存在积压，优先处理原文".to_string())
+                            } else {
+                                match current.host.translation_pending() {
+                                    Ok(pending) if pending > 4 => {
+                                        Some(format!("有 {pending} 项字幕等待处理，暂缓会议分析"))
+                                    }
+                                    Err(_) => Some("会议存储暂不可用".into()),
+                                    _ => None,
+                                }
+                            }
+                        };
+                        worker_budget.set_pressure(pressure);
                     }
                     if current.force_cleanup && current.stopping_at.is_none() {
                         let _ = current
@@ -460,21 +552,35 @@ impl TranslationRuntime {
                     active = None;
                 }
                 if exiting && active.is_none() {
+                    worker_contained.store(true, Ordering::Release);
                     break;
                 }
-                if exiting && exit_started.is_some_and(|t| t.elapsed() > Duration::from_secs(40)) {
+                if exiting
+                    && !exit_deadline_reported
+                    && exit_started.is_some_and(|t| t.elapsed() > Duration::from_secs(40))
+                {
+                    exit_deadline_reported = true;
                     if let Some(current) = active.as_mut() {
                         let _ = current
                             .host
                             .interrupt("application exit exceeded drain deadline");
-                        let _ = current.dispatcher.stop();
+                        current.force_cleanup = true;
+                        current.last_cleanup = None;
                     }
-                    break;
+                    emit(RuntimeEvent::ShutdownFailed(
+                        "退出收尾超过期限，资源退出尚未确认；保留所有权并继续重试回收".into(),
+                    ));
+                    // Keep ActiveMeeting and its LivePermit. The ordinary
+                    // bounded cleanup path retries every five seconds; only
+                    // successful cleanup may remove the active owner.
                 }
                 thread::sleep(Duration::from_millis(20));
             }
         });
         Self {
+            lifecycle_handler,
+            contained,
+            resource_budget,
             shared_state,
             current_session,
             repository,
@@ -487,6 +593,27 @@ impl TranslationRuntime {
     }
     pub fn current_session_id(&self) -> Option<Uuid> {
         *self.current_session.lock()
+    }
+    pub fn resource_budget(&self) -> ResourceBudget {
+        self.resource_budget.clone()
+    }
+    pub fn set_lifecycle_handler(&self, handler: LifecycleHandler) {
+        *self.lifecycle_handler.lock() = Some(handler);
+    }
+    pub fn begin_shutdown(&self) {
+        self.shared_state
+            .capture_stop_requested
+            .store(true, Ordering::Release);
+        if let Some(tx) = &self.stop_tx {
+            let _ = tx.try_send(());
+        }
+    }
+    pub fn shutdown_complete(&self) -> bool {
+        self.contained.load(Ordering::Acquire)
+            && self
+                .worker
+                .as_ref()
+                .is_none_or(|worker| worker.is_finished())
     }
     pub fn repository(&self) -> Result<&MeetingRepository, String> {
         self.repository.as_ref().map_err(Clone::clone)
@@ -598,5 +725,98 @@ mod tests {
         };
         publish_event(&send, &recv, final_event.clone());
         assert_eq!(recv.try_recv().unwrap(), final_event);
+    }
+    #[test]
+    fn lifecycle_survives_overwritten_ui_mailbox_without_duplicate_callbacks() {
+        let (send, recv) = bounded(1);
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let output = observed.clone();
+        let lifecycle: LifecycleSlot = Arc::new(Mutex::new(Some(Arc::new(move |event| {
+            output.lock().push(event);
+        }))));
+        let started = RuntimeEvent::Started("session-a".into());
+        let stopped = RuntimeEvent::Stopped {
+            session_id: "session-a".into(),
+            incomplete: false,
+            translation_pending: 0,
+        };
+        emit_runtime_event(&send, &recv, &lifecycle, started.clone());
+        for _ in 0..4 {
+            emit_runtime_event(
+                &send,
+                &recv,
+                &lifecycle,
+                RuntimeEvent::Degraded("UI replaced".into()),
+            );
+        }
+        emit_runtime_event(&send, &recv, &lifecycle, stopped.clone());
+        emit_runtime_event(
+            &send,
+            &recv,
+            &lifecycle,
+            RuntimeEvent::Error("latest UI state".into()),
+        );
+        assert_eq!(*observed.lock(), vec![started, stopped]);
+        assert_eq!(
+            recv.try_recv().unwrap(),
+            RuntimeEvent::Error("latest UI state".into())
+        );
+        assert!(recv.try_recv().is_err());
+    }
+
+    #[test]
+    fn lifecycle_callback_can_replace_handler_without_locking_itself() {
+        let (send, recv) = bounded(1);
+        let lifecycle: LifecycleSlot = Arc::new(Mutex::new(None));
+        let callback_slot = lifecycle.clone();
+        *lifecycle.lock() = Some(Arc::new(move |_| {
+            let mut unlocked = callback_slot
+                .try_lock()
+                .expect("callback ran under lifecycle lock");
+            *unlocked = None;
+        }));
+        emit_runtime_event(&send, &recv, &lifecycle, RuntimeEvent::Started("a".into()));
+        assert!(lifecycle.lock().is_none());
+    }
+
+    #[test]
+    fn idle_shutdown_confirms_containment_before_reporting_complete() {
+        let root = PathBuf::from("/tmp").join(format!("forum-idle-exit-{}", Uuid::new_v4()));
+        let runtime = TranslationRuntime::new(root.clone());
+        assert!(!runtime.shutdown_complete());
+        runtime.begin_shutdown();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !runtime.shutdown_complete() {
+            assert!(Instant::now() < deadline, "idle exit was not confirmed");
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(runtime.contained.load(Ordering::Acquire));
+        drop(runtime);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn finished_or_panicked_worker_without_containment_is_not_shutdown_complete() {
+        let root = PathBuf::from("/tmp").join(format!("forum-unconfirmed-exit-{}", Uuid::new_v4()));
+        let mut runtime = TranslationRuntime::new(root.clone());
+        runtime.begin_shutdown();
+        runtime.worker.take().unwrap().join().unwrap();
+        for panic_worker in [false, true] {
+            // Model-free fault injection at the exact proof boundary: a joined
+            // thread is insufficient if its owned cleanup was never confirmed.
+            runtime.contained.store(false, Ordering::Release);
+            runtime.worker = Some(thread::spawn(move || {
+                assert!(!panic_worker, "injected worker panic before exit proof");
+            }));
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !runtime.worker.as_ref().unwrap().is_finished() {
+                assert!(Instant::now() < deadline);
+                thread::sleep(Duration::from_millis(5));
+            }
+            assert!(!runtime.shutdown_complete());
+            let _ = runtime.worker.take().unwrap().join();
+        }
+        drop(runtime);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

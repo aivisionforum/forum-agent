@@ -26,6 +26,7 @@ use tauri::{
 };
 
 const OVERLAY_MIN_INNER_WIDTH: f64 = 560.0;
+include!("analysis_commands.rs");
 const OVERLAY_MIN_INNER_HEIGHT: f64 = 96.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -267,8 +268,12 @@ impl SpokenTranslationCursor {
 }
 
 struct AppState {
+    exiting: std::sync::atomic::AtomicBool,
+    exit_ready: std::sync::atomic::AtomicBool,
     preferences: Mutex<AppPreferences>,
     runtime: TranslationRuntime,
+    analysis: Result<crate::analysis::AnalysisManager, String>,
+    display: Result<forum_gateway::DisplayGateway, String>,
     runtime_state: Mutex<RuntimeState>,
     resource_dir: Option<PathBuf>,
     voice_preview_process: Mutex<Option<Child>>,
@@ -285,10 +290,28 @@ impl AppState {
         let preferences = preferences::load();
         let settings = TranslationSettings::from(&preferences);
         let runtime = TranslationRuntime::new(preferences::preferences_dir());
+        let analysis = runtime.repository().map(|repo| crate::analysis::AnalysisManager::new(
+            repo.core.clone(), preferences::preferences_dir(), resource_dir.clone(), runtime.resource_budget()));
+        if let Ok(manager) = &analysis {
+            let client=manager.client();
+            runtime.set_lifecycle_handler(Arc::new(move |event| match event {
+                RuntimeEvent::Started(id)=>{if let Ok(id)=forum_contracts::Uuid::parse_str(&id){client.session_started(id);}},
+                RuntimeEvent::Stopped{session_id,..}=>{if let Ok(id)=forum_contracts::Uuid::parse_str(&session_id){client.session_stopped(id);}},
+                _=>{}
+            }));
+        }
+        let display = runtime.repository().and_then(|repo| {
+            let core=repo.core.clone();
+            forum_gateway::DisplayGateway::start(Arc::new(move |session| core.call(move |s| Ok(serde_json::to_value(s.public_snapshot(session)?)?)).map_err(|e|e.to_string())), display_assets()).map_err(|e|e.to_string())
+        });
         let usage = UsageTracker::load(preferences::preferences_dir().join("usage.json"));
         let state = Self {
+            exiting: std::sync::atomic::AtomicBool::new(false),
+            exit_ready: std::sync::atomic::AtomicBool::new(false),
             preferences: Mutex::new(preferences),
             runtime,
+            analysis,
+            display,
             runtime_state: Mutex::new(RuntimeState::default()),
             resource_dir,
             voice_preview_process: Mutex::new(None),
@@ -1041,6 +1064,7 @@ fn begin_translation(
     settings: TranslationSettings,
     recovery: Option<forum_contracts::Uuid>,
 ) -> Result<RuntimeState, String> {
+    if state.exiting.load(std::sync::atomic::Ordering::Acquire) {return Err("应用正在退出".into());}
     if state.runtime_state.lock().running {
         return Err("请先完成上一场的停止或恢复".into());
     }
@@ -1575,6 +1599,22 @@ pub fn run(args: Args) {
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
+            list_meeting_sessions_page,
+            import_legacy_transcript,
+            get_analysis_state,
+            create_analysis_job,
+            cancel_analysis_job,
+            retry_analysis_job,
+            revise_artifact,
+            review_artifact,
+            publish_artifact,
+            hide_artifact,
+            get_analysis_evidence,
+            get_analysis_artifact,
+            export_artifact,
+            get_display_info,
+            revoke_display,
+            get_public_snapshot,
             get_model_status,
             start_model_download,
             update_settings,
@@ -1615,14 +1655,40 @@ pub fn run(args: Args) {
                     log::error!("Could not apply native application identity: {error}");
                 }
             }
-            if let tauri::RunEvent::ExitRequested { .. } = event {
+            if let tauri::RunEvent::ExitRequested { api, .. } = event {
                 let state = app.state::<AppState>();
+                use std::sync::atomic::Ordering;
+                if state.exit_ready.load(Ordering::Acquire) { return; }
+                api.prevent_exit();
+                if state.exiting.swap(true, Ordering::AcqRel) { return; }
+                if let Ok(analysis) = &state.analysis { analysis.shutdown(); }
+                state.runtime.begin_shutdown();
+                state.apple_speech.stop();
                 state.wake_lock.stop();
                 if state.usage.snapshot().running {
                     if let Err(error) = state.usage.stop() {
                         log::error!("Could not save usage before exit: {error}");
                     }
                 }
+                let handle=app.clone();
+                thread::spawn(move || {
+                    let deadline=std::time::Instant::now()+Duration::from_secs(45);
+                    loop {
+                        let state=handle.state::<AppState>();
+                        let analysis_done=state.analysis.as_ref().map_or(true,|a|a.shutdown_complete());
+                        if state.runtime.shutdown_complete() && analysis_done {
+                            state.exit_ready.store(true, Ordering::Release);
+                            handle.exit(0);break;
+                        }
+                        if std::time::Instant::now()>=deadline {
+                            let mut runtime=state.runtime_state.lock();
+                            runtime.status="error".into();runtime.message="退出收尾尚未完成，资源退出未确认；请检查会议状态后重试退出".into();
+                            state.exiting.store(false,Ordering::Release);
+                            let _=show_or_create_main_window(&handle);break;
+                        }
+                        drop(state);thread::sleep(Duration::from_millis(100));
+                    }
+                });
             }
         });
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import MeetingTranscript from './MeetingTranscript.svelte';
+  import ForumWorkspace from './ForumWorkspace.svelte';
   import logoUrl from '../../icons/logo-mark.png';
   import { productName, developmentVersion } from './lib/product';
   import {
@@ -92,6 +92,7 @@
   let runtimeMessage = 'Local AI is ready';
   let directionSwitchPending = false;
   let advancedOpen = false;
+  let workspaceVisible = new URLSearchParams(window.location.search).get('view') === 'forum';
   let appSettingsOpen = false;
   let subtitlePreviewVisible = true;
   let subtitlePreviewBusy = false;
@@ -583,6 +584,8 @@
       </div>
     </header>
 
+    <nav class="forum-navigation" aria-label="应用导航"><button class:active={!workspaceVisible} on:click={() => workspaceVisible = false}>{tr('实时控制', 'LIVE CONTROLS')}</button><button class:active={workspaceVisible} on:click={() => workspaceVisible = true}>{tr('会议工作台', 'FORUM WORKSPACE')}</button><span class="nav-note">LOCAL FIRST · HUMAN REVIEWED</span></nav>
+    <div class="control-view" hidden={workspaceVisible}>
     {#if settings.sourceLanguage === 'auto' && !modelStatus?.automaticAsrReady && !browserPreview}
       <p role="status" class="error-message">{modelStatus?.automaticAsrDetail ?? tr('自动识别模型准备状态待检查', 'Checking automatic ASR readiness')}</p>
     {/if}
@@ -731,7 +734,9 @@
         {browserPreview ? tr('界面预览 · 请在桌面应用中启动', 'UI PREVIEW · START IN DESKTOP APP') : busy ? tr('请稍候…', 'PLEASE WAIT…') : running ? tr('停止实时翻译', 'STOP LIVE TRANSLATION') : tr('启动实时翻译', 'START LIVE TRANSLATION')}
       </button>
     </footer>
-    <MeetingTranscript {running} english={isEnglish()} on:runtime={(event) => applyRuntime(event.detail)} />
+    </div>
+    <div class="workspace-view" hidden={!workspaceVisible}><ForumWorkspace {running} active={workspaceVisible} on:runtime={(event) => applyRuntime(event.detail)} /></div>
+    {#if workspaceVisible}<div class="compact-live-strip"><span>{runtimeDisplayMessage()}</span>{#if running}<button class="stop" disabled={busy} on:click={toggleTranslation}>{tr('停止实时翻译', 'STOP LIVE TRANSLATION')}</button>{:else}<button on:click={() => workspaceVisible = false}>{tr('返回实时控制', 'LIVE CONTROLS')}</button>{/if}</div>{/if}
   </main>
 
   {#if advancedOpen}

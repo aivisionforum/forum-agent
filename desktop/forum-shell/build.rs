@@ -38,5 +38,27 @@ fn main() {
         // without requiring the user to set DYLD_LIBRARY_PATH.
         println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
     }
+    let dist = manifest.join("ui/dist");
+    println!("cargo:rerun-if-changed={}", dist.display());
+    let mut assets = Vec::new();
+    fn walk(root: &std::path::Path, path: &std::path::Path, assets: &mut Vec<(String, PathBuf)>) {
+        let Ok(entries) = fs::read_dir(path) else { return; };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() { walk(root, &path, assets); }
+            else if path.is_file() && path.extension().is_some_and(|e| e != "map") {
+                assets.push((format!("/{}", path.strip_prefix(root).unwrap().display()), path));
+            }
+        }
+    }
+    walk(&dist, &dist, &mut assets);
+    assets.sort();
+    let mut generated = String::from("pub fn display_assets() -> Vec<forum_gateway::Asset> { vec![\n");
+    for (name, path) in assets {
+        println!("cargo:rerun-if-changed={}", path.display());
+        generated.push_str(&format!("({name:?}, include_bytes!({:?}) as &'static [u8]),\n", path));
+    }
+    generated.push_str("] }\n");
+    fs::write(PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("display_assets.rs"), generated).unwrap();
     tauri_build::build()
 }

@@ -203,6 +203,10 @@ impl MeetingRepository {
             .call(|store| Ok(serde_json::to_value(store.list_sessions(100)?)?))
             .map_err(|e| e.to_string())
     }
+    pub fn import_legacy(&self, title:String, content:String) -> Result<forum_core::SessionSummary,String> {
+        let spec=SessionSpec { session_id:Uuid::new_v4(), event_id:self.identity[1], room_id:self.identity[2], owner_device_id:self.identity[0], title };
+        self.core.call(move|store|store.import_legacy_transcript(spec,content)).map_err(|e|e.to_string())
+    }
 
     pub fn page(
         &self,

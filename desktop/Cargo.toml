@@ -4,6 +4,7 @@ members = [
     "crates/forum-contracts",
     "crates/forum-core",
     "crates/forum-runtime",
+    "crates/forum-gateway",
     "forum-shell",
     "moxin-dora-bridge",
     "hen-local-init",

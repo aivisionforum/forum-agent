@@ -214,5 +214,5 @@ rm -rf "$SIDECAR_DIR"
 
 echo "App bundle created with the official Tauri shell:"
 echo "  $APP_DIR"
-echo "Standalone Python/MLX included; clean-Mac acceptance and production analysis jobs are pending."
+echo "Standalone Python/MLX and six analysis tasks included; clean-Mac and formal meeting-quality/performance acceptance remain pending."
 echo "Models are not bundled. Prepare them before offline use."

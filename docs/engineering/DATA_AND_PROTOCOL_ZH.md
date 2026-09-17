@@ -1,6 +1,18 @@
 # Forum 数据模型与进程协议 v1
 
-配套：[主工程方案](VISION_FORUM_ENGINEERING_PLAN_ZH.md)、[实施任务](IMPLEMENTATION_TASKS_ZH.md)。本文定义目标 v1 契约；示例仅使用合成内容。当前只实现了[实施进度](PROGRESS_ZH.md)列出的 ingestion/存储子集及 Python 握手，其余接口尚待实现。
+配套：[主工程方案](VISION_FORUM_ENGINEERING_PLAN_ZH.md)、[实施任务](IMPLEMENTATION_TASKS_ZH.md)。本文定义目标 v1 契约；示例仅使用合成内容。F02–F08 已实现单机原译文、分析任务、审核发布和 loopback 大屏；跨机同步、远程查询及双轨说话人仍是后续目标。准确字段以 `forum-contracts` 生成的 TS/schema 为准，实际入口和验证边界见 [F05–F08 本机记录](F05_F08_LOCAL_VALIDATION_ZH.md)。
+
+### 2026-09-16 单机实现约定
+
+- SQLite 迁移版本为 5，传输 `schema_version`/worker `protocol_version` 仍为 1，两者不混用。`analysis.rs` 集中实现任务、快照、checkpoint、artifact、review 和 publication；文中拆文件名称是职责划分。
+- 分析种类使用单数 `insight`，其余为 `minutes/event_report/suggested_questions/redaction_review/closing_brief`。六类计算可用不等于完整活动及公开产品验收通过。
+- 默认 `meeting-8b-v1`，宿主可显式指定 `meeting-32b-v1` 的本机路径。initialize 的 `model_grants` 决定允许的路径、实际模型文件指纹和 context/output 限制；没有 grant 不运行模型。前端不提供这些路径。
+- `jobs.run` 必须附完整 `AnalysisConfig` 和宿主确认的 `confirmed_checkpoints` 文件描述；完整报文见 [worker README](../../services/meeting-worker/README.md)。generation 固定包含 `temperature/max_output_tokens/safety_tokens/max_retries/context_limit`。model manifest 使用 `sha256:` 前缀，其余 SHA 是 64 位小写十六进制。
+- 配置/语义快照采用递归键排序、紧凑 UTF-8 JSON 后计算 hash，不能依赖 serde_json map 的编译特性。传输快照和结果另外验证实际文件字节 hash。宿主单文件上限 16 MiB，worker 独立入口上限 32 MiB；桌面有效限制为前者。
+- core 确认 checkpoint 后才 ACK。跨 job/snapshot 缓存限定同活动、同明确场次集合、同 kind/config；每个块还校验来源 ID/revision/字节范围和全文 hash。追加原文后可复用满前块，变化的尾块重新计算。
+- Runtime 的 Started/Stopped 直接通知分析模块，不依赖可覆盖的 UI 状态消息。Stopped 同步登记持久纪要 intent，重启后再构造有预算的 job；新一次停止更新 marker，旧 ACK 不能删除它。退出只有在实时资源、分析进程和 intent 保存均确认后完成。
+- 当前大屏每 2 秒读取完整公开快照并整体替换；断线清空旧画面。仅 loopback GET，使用带有效期的场次 token；没有实现文中目标的远程控制、SSE 和跨机接口。
+- 旧 JSONL 的 `t_start/t_end` 以秒解释，`legacy_import` 为来源类型；保留文件 hash/行号/旧 speaker 标签。没有原录音封存证明，导入保持不完整，只产生部分私有草稿。
 
 ## 1. 数据流与基本不变量
 
@@ -251,7 +263,7 @@ worker 返回实际支持的协议版本、任务类型、build version 和模�
   "params": {
     "job_id": "a0000000-0000-4000-8000-000000000001",
     "attempt": 1,
-    "kind": "insights",
+    "kind": "insight",
     "session_ids": ["40000000-0000-4000-8000-000000000001"],
     "snapshot": {
       "id": "b0000000-0000-4000-8000-000000000001",
@@ -259,14 +271,14 @@ worker 返回实际支持的协议版本、任务类型、build version 和模�
       "sha256": "SHA256_OF_EXACT_INPUT_BYTES",
       "input_cursor": 1842
     },
-    "model_profile": "live-insights-v1",
-    "prompt_version": "insights-v1",
+    "model_profile": "meeting-8b-v1",
+    "prompt_version": "insight-v1",
     "remaining_budget_ms": 90000
   }
 }
 ```
 
-示例 hash/路径为占位值；实际实现要求合法 SHA-256 和已创建的绝对 job 根目录。`relative_path` 相对该 job/attempt 目录，不允许绝对路径、`..` 或越界 symlink。大报告的 snapshot 包含多个 session/已发布 artifact 的准确版本集合，不能只靠一个全局 input_cursor 表示全部输入。
+示例 hash/路径为占位值；上述仅展示字段分组，省略了必填的 `config` 与 `confirmed_checkpoints`，不能直接作为请求执行。完整报文参见 worker README。实际实现要求合法 SHA-256 和已创建的绝对 job 根目录。`relative_path` 相对该 job/attempt 目录，不允许绝对路径、`..` 或越界 symlink。大报告的 snapshot 包含多个 session/已发布 artifact 的准确版本集合，不能只靠一个全局 input_cursor 表示全部输入。
 
 `remaining_budget_ms` 是整个 attempt 剩余预算，worker 用 monotonic clock 扣减；每次模型请求和重试只能使用剩余预算，不能每次重置。core 自己也保留总截止时间，防 worker 卡死。后台暂停超过原预算后继续，创建新 attempt 和可见的新预算，不能悄悄突破原任务时限。
 
