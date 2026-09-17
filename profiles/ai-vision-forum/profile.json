@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "profile_id": "ai-vision-forum",
+  "profile_version": "v1",
+  "configuration_kind": "runtime_policy",
+  "baseline_status": "development_defaults_frozen_not_field_validated",
+  "acceptance_profile": "docs/engineering/acceptance-profile.json",
+  "display": {
+    "title": "AI Vision Forum",
+    "ui_language": "zh",
+    "subtitle_layout": "bilingual",
+    "speaker_label_style": "anonymous_session_scoped",
+    "agenda": [],
+    "glossary": [],
+    "agenda_and_glossary_status": "organizer_content_pending"
+  },
+  "deployment": {
+    "room_count": 2,
+    "machines_per_room": 1,
+    "max_active_capture_sessions_per_machine": 1,
+    "room_owner_policy": "one_device_per_room",
+    "shared_database": false,
+    "room_labels": ["Room A", "Room B"],
+    "room_ids_assigned_at_pairing": true
+  },
+  "audio": {
+    "primary_input": "mixer_usb",
+    "development_input": "microphone_or_fixture_replay",
+    "recording_default": true,
+    "recording_required_for_formal_C3": true,
+    "allow_recording_disabled_degraded_use": true,
+    "recording_chunk_seconds": 30,
+    "persist_stable_transcript_when_recording_disabled": true,
+    "speaker_diarization_required_for_formal_C3": true,
+    "dual_track_target": ["local", "remote"],
+    "source_label_is_speaker_identity": false,
+    "resume_recording_in_same_session": false
+  },
+  "language": {
+    "configured_source_language": "auto",
+    "supported_detection_states": ["zh", "en", "mixed", "unknown"],
+    "target_languages": ["zh", "en"],
+    "routing": {
+      "zh": ["en"],
+      "en": ["zh"],
+      "mixed": ["zh", "en"],
+      "unknown": "require_operator_direction_or_mark_unresolved"
+    },
+    "auto_mode_status": "candidate_pending_F01_quality_evaluation",
+    "fixed_direction_fallback_is_formal_C1_pass": false,
+    "preserve_original_code_switching": true
+  },
+  "publication": {
+    "public_summaries": "manual_review_required",
+    "public_captions": "strict_manual_review",
+    "operator_captions": "private_fast_unreviewed",
+    "unreviewed_partials_on_public_displays": false,
+    "automatic_name_masking_is_approval": false,
+    "review_revisions_independently": true,
+    "require_current_sources": true,
+    "require_complete_coverage": true,
+    "public_evidence": "reviewed_redacted_projection_only",
+    "source_revision_change": "mark_stale_and_retract_dependents",
+    "facilitator_questions": "private_only",
+    "raw_audio_and_transcript_on_participant_gateway": false,
+    "anonymous_content_guarantee_status": "requires_formal_event_acceptance",
+    "fast_caption_and_review_publication_latency_reported_separately": true
+  },
+  "analysis": {
+    "insight_check_interval_seconds": 180,
+    "insight_expected_cadence_seconds": [180, 300],
+    "insight_window_seconds": 900,
+    "insight_kinds": ["summary_points", "emerging_consensus", "tensions", "open_questions", "next_steps"],
+    "minutes_on_session_end": "enqueue_complete_draft_job",
+    "minutes_coverage": "entire_session",
+    "report_inputs": "explicit_selected_published_artifact_revisions",
+    "empty_approved_set_fallback_to_drafts": false,
+    "closing_readout": "approved_version_after_capture_stopped",
+    "neural_tts_required": false
+  },
+  "model_roles": {
+    "selection_status": "candidates_pending_F01_manifest_and_benchmarks",
+    "asr": "mlx-community/Qwen3-ASR-1.7B-8bit",
+    "asr_comparison": "mlx-community/whisper-large-v3-turbo",
+    "translation": "mlx-community/Qwen3.5-2B-MLX-4bit",
+    "live_insights": "mlx-community/Qwen3-8B-4bit",
+    "minutes_and_report_standard": "mlx-community/Qwen3-8B-4bit",
+    "optional_post_session_batch": "mlx-community/Qwen2.5-32B-Instruct-4bit",
+    "speaker": "speechbrain/spkrec-ecapa-voxceleb",
+    "model_role_names_are_pinned_manifests": false,
+    "download_optional_batch_by_default": false,
+    "load_optional_batch_during_capture": false,
+    "download_models_during_capture": false,
+    "background_jobs_per_machine": 1,
+    "realtime_and_persistence_have_priority": true
+  },
+  "network": {
+    "venue_internet_required_after_preparation": false,
+    "cloud_inference_enabled": false,
+    "cloud_polish_enabled": false,
+    "default_display_binding": "loopback",
+    "lan_enablement_stage": "F10",
+    "peer_transport": "paired_tls_pinned_identity",
+    "peer_payload": "published_redacted_artifacts_evidence_and_retractions",
+    "participant_access": "scoped_expiring_read_only",
+    "participant_query_mode": "published_full_text_search",
+    "phone_https_trust_status": "pending_F01_and_F10_real_devices"
+  },
+  "runtime_development_defaults": {
+    "capture_stopped_feedback_target_ms": 1000,
+    "background_cancel_grace_ms": 2000,
+    "total_shutdown_deadline_ms": 15000,
+    "timing_status": "candidate_pending_measured_release_values"
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "acceptance_id": "ai-vision-forum-v1",
+  "profile_id": "ai-vision-forum",
+  "profile_version": "v1",
+  "purpose": "execution_baseline_not_test_results",
+  "baseline_status": "development_defaults_frozen",
+  "product_acceptance_status": "not_evaluated",
+  "formal_pass_requires": ["all_C1_C10_evidence", "all_open_decisions_resolved", "release_hardware_matrix", "two_rehearsals", "no_unresolved_critical_failures"],
+  "sources": ["docs/SPEC.md", "docs/engineering/VISION_FORUM_ENGINEERING_PLAN_ZH.md", "docs/engineering/DATA_AND_PROTOCOL_ZH.md", "docs/engineering/IMPLEMENTATION_TASKS_ZH.md"],
+  "recorded_at": "2026-09-16",
+  "source_baselines": {
+    "forum_original": "8c3168c34c88f4b80300b08c567a5ed7a7a93dc7",
+    "forum_implementation_start": "16d1a9ffe5c79a044271d601fee01edb75c07477",
+    "hen_import_source": "49042697f11bc86dfa8e6bd10ef0dc07cffbaf84",
+    "hen_source_version": "1.2.0-beta.4",
+    "forum_preexisting_modified_files": ["forum_agent/constants.py", "forum_agent/llm.py", "forum_agent/server.py", "forum_agent/session.py", "forum_agent/static/control.html"],
+    "forum_preexisting_untracked_documents": ["docs/HEN_LOCAL_INTEGRATION_PLAN_ZH.md", "docs/LOCAL_ASSESSMENT.md"],
+    "hen_worktree_clean_at_capture": true,
+    "existing_legacy_test_claims_are_new_product_evidence": false
+  },
+  "hardware_profiles": {
+    "development_48g": {
+      "role": "observed_development_machine_not_release_minimum",
+      "os": "macos",
+      "os_version": "27.0",
+      "os_build": "26A428",
+      "architecture": "aarch64",
+      "chip": "Apple M4 Pro",
+      "memory_gib": 48,
+      "device_count": 1,
+      "model_performance_verified": false
+    },
+    "target_dual_station": {
+      "role": "formal_event_target_pending_machine_inventory",
+      "os": "macos",
+      "minimum_os_version": "14.0",
+      "architecture": "aarch64",
+      "apple_silicon_only": true,
+      "device_count": 2,
+      "machines_per_room": 1,
+      "minimum_memory_gib": null,
+      "memory_status": "pending_F01_measured_release_matrix",
+      "input": "independent_mixer_feed_per_room",
+      "continuous_minutes_per_device": 90
+    },
+    "display_and_phone": {
+      "role": "formal_gateway_clients",
+      "devices": ["external_projector_or_display", "iOS_phone", "Android_phone"],
+      "network": "actual_venue_LAN_without_internet",
+      "https_trust": "must_work_without_certificate_warning_bypass"
+    },
+    "clean_install_mac": {
+      "role": "formal_distribution_target",
+      "os": "macos",
+      "minimum_os_version": "14.0",
+      "architecture": "aarch64",
+      "development_tools_installed": false,
+      "required_tools_from_user": []
+    }
+  },
+  "observed_toolchain": {
+    "rustc": "1.92.0 (ded5c06cf 2025-12-08)",
+    "cargo": "1.92.0 (344c4567c 2025-10-21)",
+    "node": "20.20.0",
+    "npm": "11.7.0",
+    "system_python": "3.14.3",
+    "planned_worker_python": "3.12",
+    "system_python_is_verified_worker_runtime": false,
+    "build_verified_by_F00": false
+  },
+  "measurement_protocol": {
+    "clock": "monotonic_per_session_for_latency",
+    "report_statistics": ["count", "p50", "p95", "p99", "max", "missing", "failed"],
+    "missing_or_failed_outputs_excluded_silently": false,
+    "warm_and_cold_runs_reported_separately": true,
+    "background_comparison": ["insights_disabled", "insights_enabled", "batch_preempted_by_new_session"],
+    "caption_audiences": ["private_operator_fast", "public_reviewed"],
+    "evidence_records": ["audio_manifest_sha256", "machine_profile", "app_commit", "model_manifest_revision", "runtime_versions", "profile_hash", "settings", "failure_intervals", "reviewer_protocol"],
+    "audio_cases": ["zh", "en", "within_sentence_code_switching", "alternating_speakers_languages", "numbers_and_negation", "forum_terms", "long_speech", "overlapping_speech", "silence", "mixer_noise", "far_field_noise", "short_uncommitted_tail"],
+    "formal_corpus": {"controlled_replay_minutes": 90, "controlled_real_meeting_minutes": 90, "rooms_in_parallel": 2, "corpus_manifest": null, "status": "pending_organizer_approved_audio_and_acoustic_conditions"},
+    "committed_evidence": "synthetic_or_redistributable_fixtures_and_content_free_metrics_only",
+    "real_recordings_and_transcripts": "local_referenced_evidence_not_committed_or_uploaded"
+  },
+  "metrics": {
+    "c1_original_spec_latency": {"classification": "formal_spec_unchanged", "operator": "lt", "value": 3, "unit": "seconds", "statistic": "unspecified_in_original_spec", "audience_and_endpoint": "organizer_definition_required", "decision": "D01", "status": "not_evaluated"},
+    "first_visible_caption": {"classification": "measurement_only", "start": "speech_onset", "end": "first_private_caption_visible", "unit": "milliseconds"},
+    "stable_source_latency": {"classification": "measurement_only", "start": "source_audio_end", "end": "durable_final_source_visible", "unit": "milliseconds"},
+    "final_translation_latency": {"classification": "development_candidate_not_formal_spec", "start": "source_audio_end", "end": "final_private_translation_visible", "operator": "lte", "value": 3000, "unit": "milliseconds", "statistic": "p95"},
+    "review_wait_latency": {"classification": "measurement_only", "start": "caption_ready_for_review", "end": "operator_approval_committed", "unit": "milliseconds"},
+    "public_caption_latency": {"classification": "measurement_only", "start": "source_audio_end", "end": "approved_caption_visible_on_public_display", "includes_human_review_wait": true, "unit": "milliseconds"},
+    "capture_stop_feedback": {"classification": "development_candidate", "start": "stop_request_accepted", "end": "capture_stopped_feedback", "operator": "lte", "value": 1000, "unit": "milliseconds", "actual_device_release_measured_separately": true},
+    "insight_cadence": {"classification": "formal_functional_target", "value": [180, 300], "unit": "seconds", "resource_wait_must_be_reported": true},
+    "minutes_complete_draft": {"classification": "development_candidate_pending_F01_calibration", "start": "stop_request_accepted", "end": "complete_draft_validated_persisted_and_visible", "operator": "lte", "value": 180, "unit": "seconds", "session_minutes": 90, "includes_queue_wait": true, "includes_drain_validation_and_storage": true, "partial_or_queued_counts_as_success": false, "decision": "D03"},
+    "event_report_draft": {"classification": "formal_spec_target", "start": "event_closing", "end": "complete_reviewable_draft_available", "operator": "lte", "value": 24, "unit": "hours"},
+    "published_evidence_coverage": {"classification": "deterministic_integrity_gate", "operator": "eq", "value": 100, "unit": "percent", "semantic_correctness_implied": false},
+    "anonymous_content": {"classification": "formal_spec_unresolved_scope", "original_requirement": "no names or affiliations in any display or output", "automated_detection_guarantees_compliance": false, "decision": "D02"},
+    "persistent_event_integrity": {"classification": "deterministic_integrity_gate", "lost_acknowledged_final_events": 0, "duplicate_logical_events": 0, "unexplained_audio_gaps": 0},
+    "asr_translation_quality": {"classification": "measurement_pending_rubric", "measures": ["WER", "CER", "bilingual_blind_review", "numbers_negation_terms_attribution_errors"], "numeric_pass_threshold": null, "decision": "D04"},
+    "speaker_quality": {"classification": "measurement_pending_rubric", "measures": ["speaker_attribution_error", "unknown_rate", "overlap_handling", "per_session_cluster_confusion"], "numeric_pass_threshold": null, "decision": "D04"},
+    "publication_recovery": {"classification": "deterministic_integrity_gate", "replayed_duplicates": 0, "resurrected_withdrawn_versions": 0, "latencies": ["connected_retraction", "offline_reconnect_retraction"], "offline_staleness_must_be_visible": true}
+  },
+  "requirements": [
+    {"id": "C1", "name": "实时中英双语字幕及混说", "spec_priority": "P0", "required_for_forum_release": true, "phases": ["F01", "F04", "F06", "F07", "F12"], "hardware": ["development_48g", "target_dual_station", "display_and_phone"], "metrics": ["c1_original_spec_latency", "first_visible_caption", "stable_source_latency", "final_translation_latency", "review_wait_latency", "public_caption_latency", "asr_translation_quality"], "test_methods": ["固定同音频/分段/模型版本，对中文、英文、句内混说及交替发言回放并人工核对", "分别测冷/热运行及洞察开关下的各阶段延迟；记录全部失败与缺失输出", "检查私有快字幕和公开审核字幕，审核等待单独记录且包含在公开端到端延迟"], "failure_conditions": ["固定单向模式冒充自动双语或混说通过", "只用p95候选或历史产品数据声称原SPEC<3s通过", "存在未解释缺字、串句、串场或公开未审字幕", "D01或质量门槛未决时声称正式通过"], "evidence": ["latency_distribution_by_stage_and_audience", "paired_audio_model_manifest", "blind_review_errors"], "acceptance_status": "not_evaluated"},
+    {"id": "C2", "name": "两会场各一机独立采集", "spec_priority": "P0", "required_for_forum_release": true, "phases": ["F01", "F10", "F12"], "hardware": ["target_dual_station"], "metrics": ["persistent_event_integrity", "publication_recovery"], "test_methods": ["两台目标Mac各接独立调音台输入，并行90分钟", "断开局域网后继续采录，再配对重连并核对会场/session归属", "启动停止Forum时确认其他Translator实例与另一会场继续工作"], "failure_conditions": ["同一台Mac模拟两房替代双机正式测试", "断网停止本地采录或两机写同一SQLite", "跨会场串写或误停不属于本应用的进程"], "evidence": ["two_station_inventory_and_timeline", "disconnect_reconnect_metrics", "process_ownership_results"], "acceptance_status": "not_evaluated"},
+    {"id": "C3", "name": "完整录音、时间戳和匿名多人逐字稿", "spec_priority": "P0", "required_for_forum_release": true, "phases": ["F03", "F04", "F09", "F12"], "hardware": ["target_dual_station"], "metrics": ["persistent_event_integrity", "capture_stop_feedback", "speaker_quality", "anonymous_content"], "test_methods": ["正式样本全程开启录音和匿名声纹，对齐采样范围、录音manifest和逐字稿", "在ASR出队前后、final提交/ack之间及未commit短尾句注入退出，重启对账", "多人、抢话、噪音、双轨与设备异常测试；分别记录unknown/overlap", "审核公开显示与导出身份线索，保留原始内部文本的范围冲突交D02验收"], "failure_conditions": ["未全程录音或仅用mic/system声源标签替代说话人分离", "丢失已ack原文、未登记音频缺口或尾句不可恢复但标记完整", "无法停止采样或自动重启麦克风", "将匿名标签/自动遮名当作绝对匿名已达成"], "evidence": ["recording_alignment_manifest", "recovery_coverage", "speaker_review_metrics", "anonymity_review_record"], "acceptance_status": "not_evaluated"},
+    {"id": "C4", "name": "3至5分钟实时洞察与人工审核", "spec_priority": "P1", "required_for_forum_release": true, "phases": ["F05", "F06", "F07", "F08", "F12"], "hardware": ["development_48g", "target_dual_station"], "metrics": ["insight_cadence", "published_evidence_coverage", "final_translation_latency", "c1_original_spec_latency"], "test_methods": ["核对要点、共识、分歧、开放问题与行动项及直接来源", "批准后编辑/修订来源，确认新revision需重审、旧发布撤回", "摘要并发和模型故障下核对实时指标，记录调度等待原因"], "failure_conditions": ["引用存在被当成语义正确或人工同意", "draft/hidden/stale输出进入公开墙或生成覆盖人工批准版本", "资源等待被隐藏或洞察使实时指标超门槛"], "evidence": ["grounding_and_semantic_review", "review_revision_retraction_trace", "concurrency_metrics"], "acceptance_status": "not_evaluated"},
+    {"id": "C5", "name": "跨会场已发布进展", "spec_priority": "P1", "required_for_forum_release": true, "phases": ["F08", "F10", "F12"], "hardware": ["target_dual_station", "display_and_phone"], "metrics": ["publication_recovery", "published_evidence_coverage"], "test_methods": ["双向发送已发布脱敏摘要和公开证据，注入重复、乱序及游标过期", "隐藏/修订来源后检查本机与对端撤回，离线显示最后更新时间", "重连后用发布快照和cursor恢复，核对检索摘要/引用同样过滤"], "failure_conditions": ["原文、录音、草稿、私有引用或控制凭证被同步", "撤回内容复活或离线内容冒充实时", "按Speaker A标签推测跨场同一身份"], "evidence": ["peer_payload_audit", "retraction_reconnect_trace"], "acceptance_status": "not_evaluated"},
+    {"id": "C6", "name": "环节结束后完整纪要草稿", "spec_priority": "P1", "required_for_forum_release": true, "phases": ["F05", "F06", "F08", "F12"], "hardware": ["development_48g", "target_dual_station"], "metrics": ["minutes_complete_draft", "published_evidence_coverage"], "test_methods": ["90分钟双语会议含尾部关键决策，从停止请求计时到完整草稿校验、落盘、可见", "计入队列/收尾/生成/验证时间，并测试立即开始下一场及资源取消恢复", "检查全部源区间coverage、缺失负责人/日期留空、草稿与已确认结论分开"], "failure_conditions": ["仅已入队或部分草稿被当作完成", "超过180秒候选却报告候选通过或从耗时中减去排队", "尾部/失败分块被静默忽略或旧任务写进新会议"], "evidence": ["stop_to_complete_draft_timeline", "complete_session_coverage", "queued_preempted_job_trace"], "acceptance_status": "not_evaluated"},
+    {"id": "C7", "name": "闭幕后24小时内综合报告初稿", "spec_priority": "P1", "required_for_forum_release": true, "phases": ["F08", "F10", "F12"], "hardware": ["target_dual_station"], "metrics": ["event_report_draft", "published_evidence_coverage"], "test_methods": ["选择跨会场多场已发布材料，构建超过上下文长度输入并核对分层覆盖", "记录闭幕到完整可审阅报告的真实时长及所选来源revision", "缺失输入、来源撤回和中途重启后检查partial/失效处理"], "failure_conditions": ["超过24小时、静默截断或漏选中场次而声称完整", "空审核集合回退draft或混入未选场次", "引用来源失效后仍可发布"], "evidence": ["event_report_deadline_trace", "selected_revision_coverage", "export_manifest"], "acceptance_status": "not_evaluated"},
+    {"id": "C8", "name": "主持人私有追问建议", "spec_priority": "P2", "required_for_forum_release": true, "phases": ["F05", "F08", "F10", "F12"], "hardware": ["target_dual_station"], "metrics": ["published_evidence_coverage"], "test_methods": ["用本场已确认原文和议题生成私有追问并人工核对相关性", "检查公共snapshot、检索、peer同步和朗读均不含主持人私有建议"], "failure_conditions": ["追问自动上墙/朗读或进入公共查询与peer消息", "建议引用别场原文或编造已确认事实"], "evidence": ["facilitator_review", "private_view_isolation_results"], "acceptance_status": "not_evaluated"},
+    {"id": "C9", "name": "手机二维码浏览检索已发布内容", "spec_priority": "P2", "required_for_forum_release": true, "phases": ["F01", "F07", "F10", "F12"], "hardware": ["target_dual_station", "display_and_phone"], "metrics": ["publication_recovery", "anonymous_content"], "test_methods": ["iOS/Android在真实会场LAN无互联网扫码、浏览、检索并查看公开引用", "测试凭证过期/撤销、权限越界、恶意Origin/Host及脚本内容渲染", "核对发布snapshot/cursor及search snippet不带内部证据"], "failure_conditions": ["依赖跳过证书警告或互联网才能访问", "只读凭证可控录音/读取音频、原文、草稿或任意路径", "凭证或会议内容进入普通日志"], "evidence": ["phone_network_trust_matrix", "gateway_scope_security_tests", "published_search_results"], "acceptance_status": "not_evaluated"},
+    {"id": "C10", "name": "闭幕跨场综述展示和可选朗读", "spec_priority": "P2", "required_for_forum_release": true, "phases": ["F08", "F10", "F12"], "hardware": ["target_dual_station", "display_and_phone"], "metrics": ["published_evidence_coverage", "anonymous_content"], "test_methods": ["从明确选择的发布版本生成闭幕综述，经审核后展示", "启用可选macOS朗读时，仅播放批准版本，验证停止有效", "默认采集停止后朗读；如启用隔离音路，验证不回灌ASR且不丢真人发言"], "failure_conditions": ["未审核/已撤回版本被展示或朗读", "无法停止朗读、输出重新进入转写或错误合并跨场身份", "用单场摘要冒充完整所选活动综述"], "evidence": ["closing_input_coverage_and_review", "readout_stop_and_loopback_results"], "acceptance_status": "not_evaluated"}
+  ],
+  "cross_cutting_gates": [
+    {"id": "LOCAL_ONLY", "phases": ["F01", "F10", "F11", "F12"], "hardware": ["target_dual_station", "clean_install_mac"], "test_method": "会前准备后断开互联网，完成本地/局域网C1-C10；检查无云端推理或隐式下载", "failure_condition": "会议依赖互联网、上传音频/逐字稿或运行时偷偷下载模型", "status": "not_evaluated"},
+    {"id": "HUMAN_REVIEW", "phases": ["F07", "F08", "F10", "F12"], "hardware": ["target_dual_station", "display_and_phone"], "test_method": "独立测试validation/review/publication、原文修订和发布事务竞态", "failure_condition": "未批准、不完整或过期版本进入公开投影", "status": "not_evaluated"},
+    {"id": "DISTRIBUTION", "phases": ["F01", "F11", "F12"], "hardware": ["clean_install_mac"], "test_method": "验证无需开发工具的arm64 .app/DMG、权限、签名、公证、模型完整性、独立更新及Translator共存", "failure_condition": "仅有脚本或未签名开发包被标记正式发行；错误产品更新被安装", "status": "not_evaluated"},
+    {"id": "OPEN_SOURCE_PROVENANCE", "phases": ["F01", "F11"], "hardware": [], "test_method": "导入清单与固定commit比对，核对源码/依赖/模型/资源许可并保留归属", "failure_condition": "来源不可追溯、必要许可缺失或提交权重、凭据、私有会议材料", "status": "not_evaluated"}
+  ],
+  "open_decisions": [
+    {"id": "D01", "subject": "原SPEC<3s的统计口径、起止端点及公开审核延迟", "owner": "forum_organizer_and_engineering", "resolve_by": "F12", "development_default": "报告私有句末最终译文p95/p99/max及公开审核延迟；p95≤3秒仅候选，不代替逐句<3秒", "required_evidence": "明确是否逐句max<3s、异常样本规则、公开字幕端点及审核等待边界", "blocks_formal": ["C1"], "status": "open"},
+    {"id": "D02", "subject": "任何显示/输出绝对匿名与操作员私有原文的范围冲突", "owner": "forum_organizer", "resolve_by": "F12", "development_default": "公开字幕严格人工审核；公开摘要与证据先审核脱敏；操作员私有原文保留用于核对", "required_evidence": "组织方明确内部原文/导出范围、全流程人工匿名检查方案并记录任何偏离；自动遮名不作保证", "blocks_formal": ["C1", "C3", "C5", "C9", "C10"], "status": "open"},
+    {"id": "D03", "subject": "90分钟会议180秒完整纪要候选与现场硬件", "owner": "engineering_and_forum_organizer", "resolve_by": "F01", "development_default": "从停止请求到完整草稿≤180秒，包含排队及收尾；立即下一场亦测", "required_evidence": "目标机器实测、资源策略、连续开会时延及必要变更理由；不降低门槛来掩盖失败", "blocks_formal": ["C6"], "status": "open"},
+    {"id": "D04", "subject": "真实双语/声纹质量样本、评分及正式两机配置", "owner": "engineering_and_forum_organizer", "resolve_by": "F01", "development_default": "M4 Pro 48GiB只作开发档；两房各一机独立mixer；90分钟受控回放与真实排练", "required_evidence": "目标机器清单、音频hash/声学条件、授权、盲评rubric和质量门槛、峰值内存", "blocks_formal": ["C1", "C2", "C3", "C4", "C6"], "status": "open"},
+    {"id": "D05", "subject": "Python/MLX可分发性及Dora实例隔离", "owner": "engineering", "resolve_by": "F01", "development_default": "Rust core管理自有进程，Python3.12 worker无数据库写权限；不触发原server/session入口", "required_evidence": "干净Mac最小安装、实际MLX请求、取消释放和Translator共存实验", "blocks_formal": ["C1", "C2", "C4", "C6", "C7"], "status": "open"},
+    {"id": "D06", "subject": "LAN配对及手机HTTPS信任部署", "owner": "engineering_and_venue_operator", "resolve_by": "F10", "development_default": "先loopback；F01验证方案，F10才开受控LAN与只读QR", "required_evidence": "两设备TLS指纹配对与iOS/Android真实网络测试，不依赖证书警告绕过", "blocks_formal": ["C2", "C5", "C9", "C10"], "status": "open"},
+    {"id": "D07", "subject": "正式签名、公证和独立更新源", "owner": "release_owner", "resolve_by": "F11", "development_default": "开发包明确标识；updater disabled/null，不继承Hen feed或密钥", "required_evidence": "发布方凭据及签名、公证、Gatekeeper与更新端到端结果", "blocks_formal": ["DISTRIBUTION"], "status": "open"}
+  ]
+}

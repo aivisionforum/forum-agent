@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "product_id": "ai-vision-forum",
+  "configuration_kind": "build_identity",
+  "development_version": "0.1.0-dev.1",
+  "runtime_profile": "profiles/ai-vision-forum/profile.json",
+  "build_identity": {
+    "bundle_id": "org.aivisionforum.agent",
+    "product_name": "AI Vision Forum",
+    "binary_name": "forum-shell",
+    "url_scheme": "aivisionforum",
+    "data_directory_name": "AI Vision Forum",
+    "keychain_service": "org.aivisionforum.agent",
+    "icon_namespace": "ai-vision-forum"
+  },
+  "platform": {
+    "os": "macos",
+    "minimum_os_version": "14.0",
+    "architecture": "aarch64",
+    "target_triple": "aarch64-apple-darwin",
+    "apple_silicon_only": true,
+    "minimum_memory_gib": null,
+    "memory_requirement_status": "pending_measured_release_matrix"
+  },
+  "distribution": {
+    "channel": "development",
+    "artifact_prefix": "AI-Vision-Forum",
+    "targets": ["app", "dmg"],
+    "developer_id_signed": false,
+    "notarized": false,
+    "release_acceptance_status": "not_evaluated",
+    "updater": {
+      "enabled": false,
+      "endpoint": null,
+      "public_key": null,
+      "status": "independent_feed_and_signing_configuration_required"
+    }
+  },
+  "access": {
+    "mode": "local_event",
+    "commercial_login": false,
+    "license_required": false,
+    "billing_enabled": false,
+    "account_provider": null
+  },
+  "lifecycle": {
+    "start_capture_on_launch": false,
+    "restart_capture_after_crash": false,
+    "main_window_close": "hide_with_recording_indicator",
+    "application_exit": "stop_capture_drain_and_release_owned_processes",
+    "update_install_requires": ["no_active_capture", "no_unsealed_session"],
+    "process_cleanup": "verified_instance_ownership_only"
+  },
+  "future_product_boundary": {
+    "minutes_repository_creation": "after_F12_stable_forum_release",
+    "runtime_profile_may_change_build_identity": false,
+    "translator_whole_repository_bidirectional_sync": false
+  }
+}
