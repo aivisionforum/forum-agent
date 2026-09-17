@@ -1,0 +1,5 @@
+import type { LanState,PublicSessionView } from './network';
+const event='00000000-0000-4000-8000-000000000010';
+const peer={owner_device_id:'00000000-0000-4000-8000-000000000110',event_id:event,session_id:'00000000-0000-4000-8000-000000000111',title:'公开分会场 · 合成预览',room_name:'B 会场'};
+export const previewLanState:LanState={enabled:false,endpoint:null,certificate:null,grants:[],peers:[{session:peer,cursor:3,last_sync_at_ms:Date.now()-120000,stale:true}],notice:null};
+export function previewPublicRooms(session:{owner_device_id:string;event_id:string;session_id:string}):PublicSessionView[]{return [{...session,title:'公开主会场 · 合成预览',room_name:'A 会场',local:true,stale:false,last_sync_at_ms:null,cursor:5,artifacts:[{public_id:'ca08c550-0eed-4e21-9bed-0c60e6d2918c',revision:1,kind:'insight',title:'让共识与分歧都有出处',text:'此条为合成预览：公开视图展示经过人工核对的结论。未审核问题保留在操作台。',evidence:[],publication_seq:5}]},{...peer,local:false,stale:true,last_sync_at_ms:Date.now()-120000,cursor:3,artifacts:[{public_id:'ca08c550-0eed-4e21-9bed-0c60e6d2918d',revision:1,kind:'minutes',title:'保留分歧，再确认下一步',text:'此条为离线状态的合成预览。来源重新连接后更新公开版本；当前不能用于生成新的综述。',evidence:[],publication_seq:3}]}];}

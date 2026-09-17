@@ -27,6 +27,8 @@ use tauri::{
 
 const OVERLAY_MIN_INNER_WIDTH: f64 = 560.0;
 include!("analysis_commands.rs");
+include!("forum_commands.rs");
+include!("part4_commands.rs");
 const OVERLAY_MIN_INNER_HEIGHT: f64 = 96.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,11 +270,16 @@ impl SpokenTranslationCursor {
 }
 
 struct AppState {
+    activity_gate:Mutex<()>,
+    closing_readout:Mutex<Option<(forum_contracts::Uuid,forum_contracts::Revision)>>,
+    closing_speech:AppleSpeech,
     exiting: std::sync::atomic::AtomicBool,
     exit_ready: std::sync::atomic::AtomicBool,
     preferences: Mutex<AppPreferences>,
     runtime: TranslationRuntime,
     analysis: Result<crate::analysis::AnalysisManager, String>,
+    forum_lan: Result<crate::lan_manager::LanManager,String>,
+    speakers:Result<crate::speaker_manager::SpeakerManager,String>,
     display: Result<forum_gateway::DisplayGateway, String>,
     runtime_state: Mutex<RuntimeState>,
     resource_dir: Option<PathBuf>,
@@ -304,13 +311,20 @@ impl AppState {
             let core=repo.core.clone();
             forum_gateway::DisplayGateway::start(Arc::new(move |session| core.call(move |s| Ok(serde_json::to_value(s.public_snapshot(session)?)?)).map_err(|e|e.to_string())), display_assets()).map_err(|e|e.to_string())
         });
+        let forum_lan=runtime.repository().and_then(|repo|crate::lan_manager::LanManager::new(repo.core.clone(),preferences::preferences_dir(),repo.identity(),display_assets()));
+        let speakers=runtime.repository().map(|repo|crate::speaker_manager::SpeakerManager::new(repo.core.clone(),preferences::preferences_dir(),resource_dir.clone(),runtime.resource_budget()));
         let usage = UsageTracker::load(preferences::preferences_dir().join("usage.json"));
         let state = Self {
+            activity_gate:Mutex::new(()),
+            closing_readout:Mutex::new(None),
+            closing_speech:AppleSpeech::new(),
             exiting: std::sync::atomic::AtomicBool::new(false),
             exit_ready: std::sync::atomic::AtomicBool::new(false),
             preferences: Mutex::new(preferences),
             runtime,
             analysis,
+            forum_lan,
+            speakers,
             display,
             runtime_state: Mutex::new(RuntimeState::default()),
             resource_dir,
@@ -367,7 +381,7 @@ impl AppState {
             shared.translation_input_device.set(None);
         } else {
             shared.translation_audio_source.set(AudioSource::Microphone);
-            let device = (preferences.translation_input_device != "__default_microphone__")
+            let device = (!matches!(preferences.translation_input_device.as_str(), "__default_microphone__" | "__dual_audio__"))
                 .then(|| preferences.translation_input_device.clone());
             shared.translation_input_device.set(device);
         }
@@ -524,6 +538,7 @@ impl AppState {
     }
 
     fn poll_runtime_events(&self) -> RuntimeState {
+        self.check_closing_publication();
         // Serialize draining and applying events across IPC and the event bridge.
         let mut state = self.runtime_state.lock();
         let events = self.runtime.poll_events();
@@ -1008,6 +1023,7 @@ fn swap_translation_direction(
     let shared = state.runtime.shared_state();
     let requested = shared.translation_direction_request.read();
     let active = shared.translation_direction_active.read();
+    if state.preferences.lock().translation_input_device=="__dual_audio__" {return Err("双轨会议请停止采集后再更改语向".into());}
     if requested.epoch != active.epoch {
         return Err("正在等待上一项语向切换到达音频段边界，请稍候".into());
     }
@@ -1064,10 +1080,13 @@ fn begin_translation(
     settings: TranslationSettings,
     recovery: Option<forum_contracts::Uuid>,
 ) -> Result<RuntimeState, String> {
+    let _activity=state.activity_gate.lock();
     if state.exiting.load(std::sync::atomic::Ordering::Acquire) {return Err("应用正在退出".into());}
     if state.runtime_state.lock().running {
         return Err("请先完成上一场的停止或恢复".into());
     }
+    state.stop_closing_readout()?;
+    if let Ok(speakers)=&state.speakers{speakers.client().disable();}
     stop_preview_process(&state);
     if settings.spoken_translation_enabled {
         apple_speech::ensure_voice_available(
@@ -1101,6 +1120,7 @@ fn begin_translation(
             asr_model_path: &models.asr,
             translator_model_path: &models.translator,
             system_audio: settings.input_device == "__system_audio__",
+
             max_segment_ms: preferences::sanitize_final_interval_seconds(
                 settings.final_interval_seconds,
             ) * 1000,
@@ -1162,6 +1182,7 @@ fn begin_translation(
             target_language: settings.target_language.clone(),
             recording_enabled: settings.recording_enabled,
             system_audio: settings.input_device == "__system_audio__",
+            dual_audio: settings.input_device == "__dual_audio__",
         },
         recovery,
     ) {
@@ -1228,7 +1249,9 @@ fn recover_meeting(
     settings.spoken_translation_enabled = false;
     // replay_only is carried separately; the capture bridge returns before
     // initializing CPAL/ScreenCaptureKit, regardless of this saved source kind.
-    settings.input_device = if setup.options.system_audio {
+    settings.input_device = if setup.options.dual_audio {
+        "__dual_audio__".into()
+    } else if setup.options.system_audio {
         "__system_audio__".into()
     } else {
         "__default_microphone__".into()
@@ -1340,7 +1363,7 @@ fn preview_apple_voice(
 }
 
 fn input_devices() -> Vec<String> {
-    let mut devices = vec!["__system_audio__".into(), "__default_microphone__".into()];
+    let mut devices = vec!["__system_audio__".into(), "__default_microphone__".into(), "__dual_audio__".into()];
     if let Ok(discovered) = cpal::default_host().input_devices() {
         devices.extend(discovered.filter_map(|device| device.name().ok()));
     }
@@ -1348,7 +1371,8 @@ fn input_devices() -> Vec<String> {
         let rank = |value: &str| match value {
             "__system_audio__" => 0,
             "__default_microphone__" => 1,
-            _ => 2,
+            "__dual_audio__" => 2,
+            _ => 3,
         };
         rank(left).cmp(&rank(right)).then_with(|| left.cmp(right))
     });
@@ -1588,6 +1612,7 @@ pub fn run(args: Args) {
                             target_language: initial_settings.target_language.clone(),
                             recording_enabled: initial_settings.recording_enabled,
                             system_audio: initial_settings.input_device == "__system_audio__",
+                            dual_audio: initial_settings.input_device == "__dual_audio__",
                         },
                         None,
                     )
@@ -1615,6 +1640,9 @@ pub fn run(args: Args) {
             get_display_info,
             revoke_display,
             get_public_snapshot,
+            get_lan_state,create_lan_identity,start_lan,stop_lan,create_participant_access,create_peer_invite,pair_forum_peer,revoke_lan_access,disconnect_forum_peer,get_public_sessions,search_public_content,
+            join_forum_event,start_closing_readout,stop_closing_readout,
+            get_speaker_status,get_speaker_assignments,enable_session_speakers,disable_session_speakers,correct_speaker_assignment,
             get_model_status,
             start_model_download,
             update_settings,
@@ -1662,6 +1690,9 @@ pub fn run(args: Args) {
                 api.prevent_exit();
                 if state.exiting.swap(true, Ordering::AcqRel) { return; }
                 if let Ok(analysis) = &state.analysis { analysis.shutdown(); }
+                if let Ok(lan)=&state.forum_lan{lan.shutdown();}
+                if let Ok(speakers)=&state.speakers{speakers.shutdown();}
+                state.closing_speech.stop();
                 state.runtime.begin_shutdown();
                 state.apple_speech.stop();
                 state.wake_lock.stop();
@@ -1676,7 +1707,7 @@ pub fn run(args: Args) {
                     loop {
                         let state=handle.state::<AppState>();
                         let analysis_done=state.analysis.as_ref().map_or(true,|a|a.shutdown_complete());
-                        if state.runtime.shutdown_complete() && analysis_done {
+                        if state.runtime.shutdown_complete() && analysis_done && state.forum_lan.as_ref().map_or(true,|lan|lan.shutdown_complete()) && state.speakers.as_ref().map_or(true,|s|s.shutdown_complete()) && state.stop_closing_readout().is_ok() {
                             state.exit_ready.store(true, Ordering::Release);
                             handle.exit(0);break;
                         }

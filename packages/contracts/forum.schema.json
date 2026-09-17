@@ -1917,6 +1917,238 @@
       ],
       "type": "object"
     },
+    "PeerAnalysisProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_alias_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "owner_device_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "public_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "snapshot_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "source_cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "snapshot_id",
+        "owner_device_id",
+        "event_id",
+        "session_id",
+        "source_cursor",
+        "public_id",
+        "revision",
+        "artifact_alias_id"
+      ],
+      "type": "object"
+    },
+    "PeerPublicationBatch": {
+      "additionalProperties": false,
+      "properties": {
+        "after_cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "changes": {
+          "items": {
+            "$ref": "#/$defs/PublicationChange"
+          },
+          "type": "array"
+        },
+        "cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "owner_device_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_device_id",
+        "event_id",
+        "session_id",
+        "after_cursor",
+        "cursor",
+        "changes"
+      ],
+      "type": "object"
+    },
+    "PeerPublicationSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "items": {
+            "$ref": "#/$defs/PublicArtifact"
+          },
+          "type": "array"
+        },
+        "cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "owner_device_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_device_id",
+        "event_id",
+        "session_id",
+        "cursor",
+        "artifacts"
+      ],
+      "type": "object"
+    },
+    "PeerSession": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "owner_device_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "room_name": {
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_device_id",
+        "event_id",
+        "session_id",
+        "title",
+        "room_name"
+      ],
+      "type": "object"
+    },
+    "PeerSessionState": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_sync_at_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "session": {
+          "$ref": "#/$defs/PeerSession"
+        },
+        "stale": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "session",
+        "cursor",
+        "stale"
+      ],
+      "type": "object"
+    },
     "Producer": {
       "additionalProperties": false,
       "properties": {
@@ -2226,6 +2458,179 @@
       "required": [
         "evidence",
         "reviewed_text"
+      ],
+      "type": "object"
+    },
+    "PublicSearchHit": {
+      "additionalProperties": false,
+      "properties": {
+        "last_sync_at_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "match_end_utf8": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "match_start_utf8": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "owner_device_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "public_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "text": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_device_id",
+        "session_id",
+        "public_id",
+        "revision",
+        "title",
+        "text",
+        "match_start_utf8",
+        "match_end_utf8",
+        "stale"
+      ],
+      "type": "object"
+    },
+    "PublicSelection": {
+      "additionalProperties": false,
+      "properties": {
+        "owner_device_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "public_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_device_id",
+        "session_id",
+        "public_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "PublicSessionView": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "items": {
+            "$ref": "#/$defs/PublicArtifact"
+          },
+          "type": "array"
+        },
+        "cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "last_sync_at_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "local": {
+          "type": "boolean"
+        },
+        "owner_device_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "room_name": {
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "owner_device_id",
+        "event_id",
+        "session_id",
+        "title",
+        "room_name",
+        "local",
+        "stale",
+        "cursor",
+        "artifacts"
       ],
       "type": "object"
     },
@@ -2868,6 +3273,273 @@
         "quote"
       ],
       "type": "object"
+    },
+    "SpeakerAssignment": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "current": {
+          "type": "boolean"
+        },
+        "label": {
+          "$ref": "#/$defs/SpeakerLabel"
+        },
+        "origin": {
+          "$ref": "#/$defs/SpeakerAssignmentOrigin"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "segment_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "source_revision": {
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "required": [
+        "session_id",
+        "segment_id",
+        "source_revision",
+        "revision",
+        "label",
+        "origin",
+        "created_at_ms",
+        "current"
+      ],
+      "type": "object"
+    },
+    "SpeakerAssignmentCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_revision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Revision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "$ref": "#/$defs/SpeakerLabel"
+        },
+        "origin": {
+          "$ref": "#/$defs/SpeakerAssignmentOrigin"
+        },
+        "request_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "segment_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "source_revision": {
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "required": [
+        "request_id",
+        "session_id",
+        "segment_id",
+        "source_revision",
+        "label",
+        "origin"
+      ],
+      "type": "object"
+    },
+    "SpeakerAssignmentOrigin": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "automatic",
+              "type": "string"
+            },
+            "model_manifest_id": {
+              "type": "string"
+            },
+            "model_version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "model_manifest_id",
+            "model_version"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "human",
+              "type": "string"
+            },
+            "operator_id": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "operator_id",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SpeakerEmbeddingCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "embedding": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "expected_revision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Revision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model_manifest_id": {
+          "type": "string"
+        },
+        "model_version": {
+          "type": "string"
+        },
+        "pcm_sha256": {
+          "type": "string"
+        },
+        "request_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "segment_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "source_revision": {
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "required": [
+        "request_id",
+        "session_id",
+        "segment_id",
+        "source_revision",
+        "model_manifest_id",
+        "model_version",
+        "pcm_sha256",
+        "embedding"
+      ],
+      "type": "object"
+    },
+    "SpeakerLabel": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "unknown",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "overlap",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "anonymous",
+              "type": "string"
+            },
+            "speaker_id": {
+              "format": "uuid",
+              "not": {
+                "const": "00000000-0000-0000-0000-000000000000"
+              },
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "speaker_id"
+          ],
+          "type": "object"
+        }
+      ]
     },
     "TrackKind": {
       "oneOf": [

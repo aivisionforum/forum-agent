@@ -1,0 +1,164 @@
+{
+  "schema_version": 1,
+  "scope": "F09-F12 engineering and local validation; formal product acceptance not evaluated",
+  "branch": "codex/vision-forum-integration",
+  "baseline_commit": "10bb9defd7b66a31c013a316686b7c92617c58a9",
+  "uncommitted_working_tree_at_validation": true,
+  "regression": {
+    "report": "artifacts/local/f09-f12-regression-20260916-5/report.json",
+    "report_sha256": "9f8aa234c3ba35ed52b3a58fae484c2fab88cf9ef6bd10d0de49a60810625809",
+    "started_at": "2026-09-17T06:29:56.579008+00:00",
+    "passed": true,
+    "source_changed_during_run": false,
+    "passed_tests": 357,
+    "ignored_tests": 2,
+    "checks": [
+      {
+        "name": "core-runtime-gateway",
+        "exit_code": 0,
+        "elapsed_seconds": 19.045,
+        "log_sha256": "7444a1df5eda2c90588b8d3bac0fd27df6e988d820be128b88209155033bc0c3"
+      },
+      {
+        "name": "generated-contracts",
+        "exit_code": 0,
+        "elapsed_seconds": 0.346,
+        "log_sha256": "3ac04e812ef085c2627deff60d97b3d50a23f25ca743a81d67d220a70ee5a574"
+      },
+      {
+        "name": "meeting-worker",
+        "exit_code": 0,
+        "elapsed_seconds": 2.652,
+        "log_sha256": "7f249b786408541255dbf37f0ab59d9a6b335bbdf2ba91dabb760fbc04859cfc"
+      },
+      {
+        "name": "speaker-worker",
+        "exit_code": 0,
+        "elapsed_seconds": 0.506,
+        "log_sha256": "4984314cd7b10a668a3784886203ce94218669969f8d7ec8b78c89959ec056bd"
+      },
+      {
+        "name": "profile",
+        "exit_code": 0,
+        "elapsed_seconds": 0.041,
+        "log_sha256": "a506d207b2138a92737307eceb1111409cda7ecb3992c356b979642aaf8e5225"
+      },
+      {
+        "name": "release-tools",
+        "exit_code": 0,
+        "elapsed_seconds": 0.181,
+        "log_sha256": "2b9c6eece22ac93b1ca53c8503ecea41eb2f2f38e4fc9e251397f5e0871d5445"
+      },
+      {
+        "name": "audio-bridge",
+        "exit_code": 0,
+        "elapsed_seconds": 4.894,
+        "log_sha256": "f9be255d61722ceb7a45975bd0ff52171ff7ba7617e285c384752529148e8e36"
+      },
+      {
+        "name": "desktop-host",
+        "exit_code": 0,
+        "elapsed_seconds": 6.869,
+        "log_sha256": "efdfc5013805287a177a7a0c8385ff970c53fd68039d3a5527f54dd6fdb87cc5"
+      },
+      {
+        "name": "ui-check",
+        "exit_code": 0,
+        "elapsed_seconds": 2.666,
+        "log_sha256": "d3da50011d28b5e98d715b082d20728fcf66ca8db0f920cfa643321bd2814720"
+      },
+      {
+        "name": "ui-tests",
+        "exit_code": 0,
+        "elapsed_seconds": 0.563,
+        "log_sha256": "cba1b90214e6932a227684514257c0496b7f481c2a6514b3c95bb26f14803bab"
+      },
+      {
+        "name": "ui-build",
+        "exit_code": 0,
+        "elapsed_seconds": 1.107,
+        "log_sha256": "45f7341d593f1fc80051c08bcca959ed22b9a82a184ac35522149fae5d7b4387"
+      }
+    ]
+  },
+  "real_8b_peer_pipeline": {
+    "report": "artifacts/local/f10-event-peer-host-probe/run-2.json",
+    "report_sha256": "3a86d29ff9033b017a5eb20909ddb5335b2108425895af6754afdc21160bac67",
+    "elapsed_ms": 107488,
+    "two_independent_stores": true,
+    "only_exact_public_inputs": true,
+    "withdrawal_invalidated_both": true,
+    "withdrawn_selection_rejected": true,
+    "shutdown_complete": true,
+    "formal_quality_acceptance": false,
+    "event_report": {
+      "validation": "valid",
+      "unsupported_claims": 0
+    },
+    "closing_brief": {
+      "validation": "needs_review",
+      "unsupported_claims": 2,
+      "unvalidated_approval_and_publication_rejected": true
+    }
+  },
+  "package": {
+    "schema_version": 1,
+    "candidate": "part4-final-dev",
+    "app": "desktop/dist/AI Vision Forum.app",
+    "dmg": {
+      "schema_version": 1,
+      "owner": "ai-vision-forum-dmg-v1",
+      "profile": "dev",
+      "version": "0.1.0-dev.1",
+      "filename": "AI-Vision-Forum-v0.1.0-dev.1-part4-final-dev.dmg",
+      "size_bytes": 917471386,
+      "sha256": "b46fd0b7d318fc8807160e6045ca7b3efc82226db9a74c687e4a2ba2678ea371",
+      "signature": "unsigned_container",
+      "notarization": "not_submitted",
+      "app_signature": "ad_hoc_development",
+      "model_weights_included": false,
+      "formal_clean_mac_acceptance": false
+    },
+    "host_executable_sha256": "80773a5c7b459e14d298c670a12bdde4759fa2b9e3f7d2a1fae78feeec4a921d",
+    "release_manifest_sha256": "6d488ede45b789ec7bee2f324525eae3c324c0ce030e8a03cebc8c0b2a0a68b1",
+    "source_matches_regression": {
+      "reference_report": "artifacts/local/f09-f12-regression-20260916-5/report.json",
+      "regression_passed": true,
+      "files_compared": 276,
+      "changed_files": [],
+      "matches_passed_regression": true
+    },
+    "app_validation": "passed",
+    "mounted_dmg_validation": "passed",
+    "dmg_readonly_mounted_then_detached": true,
+    "model_preparation_cli": "passed",
+    "speaker_probe": {
+      "success": true,
+      "installed_module": true,
+      "fixture": "synthetic_tones_not_speaker_accuracy",
+      "elapsed_seconds": 3.6142144999976153,
+      "ping_latency_seconds": 0.00032741700124461204,
+      "embedding_dimension": 192,
+      "embedding_l2_norm": 1.0000000555553035,
+      "model_manifest_id": "sha256:0575cb64845e6b9a10db9bcb74d5ac32b326b8dc90352671d345e2ee3d0126a2",
+      "model_cache_unchanged": true,
+      "exit_code": 0
+    },
+    "app_ui_started": false,
+    "microphone_opened": false,
+    "real_user_meeting_database_opened": false,
+    "model_weights_downloaded": false,
+    "formal_clean_mac_acceptance": false,
+    "formal_C3_acceptance": false
+  },
+  "formal_product_acceptance": "not_evaluated",
+  "unresolved_decisions": [
+    "D01",
+    "D02",
+    "D03",
+    "D04",
+    "D05",
+    "D06",
+    "D07"
+  ]
+}

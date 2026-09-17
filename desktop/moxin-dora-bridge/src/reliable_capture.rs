@@ -18,6 +18,9 @@ pub struct CaptureContext {
     pub max_segment_ms: u64,
     pub runtime: RuntimeConfig,
     pub track: TrackSpec,
+    /// A second independent source, sharing this meeting's processing clock.
+    #[serde(default)]
+    pub secondary_track: Option<TrackSpec>,
     pub recording_dir: PathBuf,
     pub recording_enabled: bool,
     pub replay_only: bool,
@@ -59,11 +62,13 @@ impl CaptureSession {
             (1000..=30000).contains(&context.max_segment_ms),
             "segment duration must be 1..30 seconds"
         );
-        let producer = DurableProducer::open(context.runtime.for_producer("capture")?)?;
+        let producer_name=if context.secondary_track.is_some(){format!("capture-{}",context.track.track_id)}else{"capture".into()};
+        let producer = DurableProducer::open(context.runtime.for_producer(&producer_name)?)?;
+        let recording_dir=if context.secondary_track.is_some(){context.recording_dir.join("tracks").join(context.track.track_id.to_string())}else{context.recording_dir.clone()};
         let mut journal = if context.replay_only {
-            RecordingJournal::reopen(context.recording_dir.clone())?
+            RecordingJournal::reopen(recording_dir)?
         } else {
-            RecordingJournal::create(context.recording_dir.clone(), context.track.clone())?
+            RecordingJournal::create(recording_dir, context.track.clone())?
         };
         ensure!(
             journal.manifest().track == context.track,
@@ -341,12 +346,17 @@ impl CaptureSession {
     }
     /// Caller must have stopped and dropped every capture device before calling.
     pub fn seal_after_devices_released(&mut self) -> Result<()> {
+        ensure!(self.context.secondary_track.is_none(),"dual capture requires a joint seal");
+        let track=self.seal_recording()?;
+        self.publish_capture_seal(vec![track])
+    }
+    pub fn seal_recording(&mut self)->Result<TrackSeal>{
         self.flush_pcm()?;
         for (_, result) in self.producer.flush_pending() {
             result?;
         }
         self.journal.seal()?;
-        let tracks = vec![TrackSeal {
+        Ok(TrackSeal {
             track_id: self.context.track.track_id,
             final_sample: self.cursor(),
             segment_ids: self
@@ -356,7 +366,9 @@ impl CaptureSession {
                 .iter()
                 .map(|s| s.segment_id)
                 .collect(),
-        }];
+        })
+    }
+    pub fn publish_capture_seal(&mut self,tracks:Vec<TrackSeal>)->Result<()> {
         let stopped = CaptureStopped {
             manifest_sha256: capture_manifest_sha256(&tracks)?,
             tracks,
@@ -429,8 +441,13 @@ impl CaptureSession {
     /// Missing PCM is an explicit error; recovery never silently reopens a device.
     pub fn replay_pending(
         &mut self,
-        mut dispatch: impl FnMut(&SegmentMeta, &[f32]) -> Result<()>,
+        dispatch: impl FnMut(&SegmentMeta, &[f32]) -> Result<()>,
     ) -> Result<()> {
+        let dispatched_revisions=self.replay_segments(dispatch)?;
+        self.seal_after_devices_released()?;
+        self.acknowledge_replay(dispatched_revisions)
+    }
+    pub fn replay_segments(&mut self,mut dispatch:impl FnMut(&SegmentMeta,&[f32])->Result<()>)->Result<Vec<serde_json::Value>> {
         ensure!(
             self.context.replay_only,
             "replay requires explicit recovery mode"
@@ -515,7 +532,9 @@ impl CaptureSession {
                     .push(json!({"segment_id":metadata.segment_id,"revision":metadata.revision}));
             }
         }
-        self.seal_after_devices_released()?;
+        Ok(dispatched_revisions)
+    }
+    pub fn acknowledge_replay(&self,dispatched_revisions:Vec<serde_json::Value>)->Result<()> {
         self.producer.client().call(
             "capture_dispatch_complete",
             json!({"session_id":self.context.track.session_id,"segments":dispatched_revisions}),
@@ -572,6 +591,7 @@ pub fn wait_for_final(
 pub struct DeliveryQueue {
     queued: std::collections::VecDeque<(SegmentMeta, Vec<f32>)>,
     in_flight: Option<(SegmentMeta, std::time::Instant)>,
+    last_track: Option<Uuid>,
 }
 impl DeliveryQueue {
     pub fn enqueue(&mut self, metadata: SegmentMeta, pcm: Vec<f32>) -> Result<()> {
@@ -588,10 +608,14 @@ impl DeliveryQueue {
     pub fn pump(
         &mut self,
         capture: &mut CaptureSession,
-        mut dispatch: impl FnMut(&SegmentMeta, &[f32]) -> Result<()>,
+        dispatch: impl FnMut(&SegmentMeta, &[f32]) -> Result<()>,
     ) -> Result<()> {
+        self.pump_tracks(std::slice::from_mut(capture),dispatch)
+    }
+    pub fn pump_tracks(&mut self,captures:&mut [CaptureSession],mut dispatch:impl FnMut(&SegmentMeta,&[f32])->Result<()>)->Result<()> {
+        ensure!(!captures.is_empty(),"capture tracks missing");
         if let Some((metadata, started)) = &self.in_flight {
-            if final_is_durable(capture.producer.client(), metadata)? {
+            if final_is_durable(captures[0].producer.client(), metadata)? {
                 self.in_flight = None;
             } else {
                 ensure!(
@@ -601,9 +625,13 @@ impl DeliveryQueue {
                 return Ok(());
             }
         }
-        if let Some((metadata, pcm)) = self.queued.pop_front() {
+        // A busy system source cannot starve the microphone on the shared ASR.
+        let next=self.queued.iter().position(|(meta,_)|Some(meta.track_id)!=self.last_track).unwrap_or(0);
+        if let Some((metadata, pcm)) = self.queued.remove(next) {
+            let capture=captures.iter_mut().find(|c|c.context.track.track_id==metadata.track_id).context("queued segment belongs to another track")?;
             dispatch(&metadata, &pcm)?;
             capture.mark_dispatched(metadata.segment_id)?;
+            self.last_track=Some(metadata.track_id);
             self.in_flight = Some((metadata, std::time::Instant::now()));
         }
         Ok(())
@@ -724,6 +752,9 @@ mod tests {
     }
     impl Fixture {
         fn new(recording_enabled: bool) -> Self {
+            Self::with_dual(recording_enabled,false)
+        }
+        fn with_dual(recording_enabled:bool,dual:bool)->Self {
             let root = PathBuf::from("/tmp").join(format!("f03-{}", Uuid::new_v4()));
             fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
             let session = SessionSpec {
@@ -736,15 +767,19 @@ mod tests {
             let track = TrackSpec {
                 track_id: Uuid::new_v4(),
                 session_id: session.session_id,
-                kind: TrackKind::Replay,
+                kind: if dual{TrackKind::Mic}else{TrackKind::Replay},
                 sample_rate: 16000,
             };
             let core = CoreHandle::open(root.join("core.sqlite"), 16).unwrap();
             let session_copy = session.clone();
             let track_copy = track.clone();
+            let secondary=dual.then(||TrackSpec{track_id:Uuid::new_v4(),session_id:session.session_id,kind:TrackKind::System,sample_rate:16000});
+            let secondary_copy=secondary.clone();
             core.call(move |store| {
                 store.create_session(&session_copy)?;
-                store.create_track(&track_copy)
+                store.create_track(&track_copy)?;
+                if let Some(other)=secondary_copy{store.create_track(&other)?;}
+                Ok(())
             })
             .unwrap();
             let endpoint = Endpoint::new(root.join("core.sock"));
@@ -755,6 +790,7 @@ mod tests {
             let writer = core.clone();
             let sid = session.session_id;
             let tid = track.track_id;
+            let other_id=secondary.as_ref().map(|t|t.track_id);
             let server=UdsServer::bind(endpoint.clone(),move|request|{
                 match request.method.as_str(){
                     "ingest"=>{
@@ -763,7 +799,9 @@ mod tests {
                     },
                     "status"=>{ let is_ready=readiness.load(Ordering::Acquire); writer.call(move|store|{
                         let status=store.session_status(sid)?;
-                        Ok(json!({"ready_roles":if is_ready{vec!["asr"]}else{vec![]},"capture_stopped":status.capture_stopped,"capture_manifest_sha256":store.capture_seal(sid)?.map(|s|s.manifest_sha256),"terminal_segment_ids":store.terminal_segment_ids(sid)?,"registered_segment_ids":store.registered_segment_ids(sid,tid)?,"recovery_segments":store.recovery_segments(sid,100)?}))
+                        let mut registered=store.registered_segment_ids(sid,tid)?;
+                        if let Some(other)=other_id{registered.extend(store.registered_segment_ids(sid,other)?);}
+                        Ok(json!({"ready_roles":if is_ready{vec!["asr"]}else{vec![]},"capture_stopped":status.capture_stopped,"capture_manifest_sha256":store.capture_seal(sid)?.map(|s|s.manifest_sha256),"terminal_segment_ids":store.terminal_segment_ids(sid)?,"registered_segment_ids":registered,"recovery_segments":store.recovery_segments(sid,100)?}))
                     }).map_err(|e|RpcError::new(e.code(),e.retryable(),e))},
                     "recovery_revisions"=>{
                         let ids:Vec<Uuid>=serde_json::from_value(request.params["segment_ids"].clone()).map_err(|e|RpcError::new("INVALID_PARAMS",false,e))?;
@@ -774,6 +812,7 @@ mod tests {
                 }
             }).unwrap();
             let config = CaptureContext {
+                secondary_track: secondary,
                 max_segment_ms: 10000,
                 runtime: RuntimeConfig {
                     endpoint,
@@ -864,6 +903,54 @@ mod tests {
                 .len(),
             1
         );
+    }
+    #[test]
+    fn dual_tracks_seal_together_and_replay_exact_processed_tail_with_independent_ids(){
+        let mut fixture=Fixture::with_dual(true,true);fixture.ready.store(true,Ordering::Release);
+        let mut dual=crate::dual_capture::DualCapture::open(fixture.config.clone()).unwrap();
+        dual.process(0,&vec![0.4;481],&vec![0.2;481],0).unwrap();
+        dual.process(1,&vec![0.3;481],&vec![0.3;481],0).unwrap();
+        assert!(dual.captures[0].seal_after_devices_released().is_err());
+        fixture.transition(SessionState::Recording,SessionState::Stopping);
+        dual.seal_at(481).unwrap();
+        let sid=fixture.config.track.session_id;
+        let before=fixture.core.call(move|s|s.capture_seal(sid)).unwrap().unwrap();
+        assert_eq!(before.tracks.len(),2);
+        assert!(before.tracks.iter().all(|t|t.final_sample==481 && t.segment_ids.len()==1));
+        assert_ne!(before.tracks[0].segment_ids,before.tracks[1].segment_ids);
+        drop(dual);
+        let mut config=fixture.config.clone();config.replay_only=true;
+        let mut replay=crate::dual_capture::DualCapture::open(config).unwrap();let mut delivered=vec![];
+        replay.replay(|meta,pcm|{delivered.push((meta.clone(),pcm.to_vec()));Ok(())}).unwrap();
+        assert_eq!(delivered.len(),2);
+        assert!(delivered.iter().all(|(meta,_)|meta.audio.start_sample==0 && meta.audio.end_sample==481));
+        assert_eq!(delivered.iter().find(|(m,_)|m.track_id==fixture.config.track.track_id).unwrap().1,vec![0.2;481]);
+        let after=fixture.core.call(move|s|s.capture_seal(sid)).unwrap().unwrap();assert_eq!(before.manifest_sha256,after.manifest_sha256);
+    }
+    #[test]
+    fn missing_dual_callback_tail_is_a_gap_not_verified_silence(){
+        let mut fixture=Fixture::with_dual(true,true);fixture.ready.store(true,Ordering::Release);
+        let mut dual=crate::dual_capture::DualCapture::open(fixture.config.clone()).unwrap();
+        dual.process(0,&vec![0.2;480],&vec![0.2;480],0).unwrap();
+        fixture.transition(SessionState::Recording,SessionState::Stopping);
+        dual.seal_at(800).unwrap();let sid=fixture.config.track.session_id;
+        let gaps=fixture.core.call(move|s|s.audio_gaps(sid)).unwrap();assert_eq!(gaps.len(),2);
+        assert!(gaps.iter().all(|g|!g.recoverable && g.audio.end_sample==800));
+        assert!(gaps.iter().any(|g|g.audio.start_sample==480));assert!(gaps.iter().any(|g|g.audio.start_sample==0));
+    }
+    #[test]
+    fn dual_shared_asr_is_fair_after_each_durable_ack(){
+        let mut fixture=Fixture::with_dual(true,true);fixture.config.max_segment_ms=1000;fixture.ready.store(true,Ordering::Release);
+        let mut dual=crate::dual_capture::DualCapture::open(fixture.config.clone()).unwrap();
+        dual.process(1,&vec![0.3;48000],&vec![0.3;48000],0).unwrap();
+        dual.process(0,&vec![0.2;16000],&vec![0.2;16000],0).unwrap();
+        let mut asr=DurableProducer::open(fixture.config.runtime.for_producer("test-asr").unwrap()).unwrap();let mut tracks=vec![];
+        while !dual.empty(){dual.pump(|meta,_|{
+            tracks.push(meta.track_id);
+            let result=forum_contracts::TranscriptFinal{track_id:meta.track_id,segment_id:meta.segment_id,revision:meta.revision,audio:meta.audio.clone(),text:"synthetic".into(),configured_source_language:meta.configured_source_language.clone(),detected_language:None,target_languages:meta.target_languages.clone(),direction_epoch:meta.direction_epoch,speaker_id:None,status:forum_contracts::TranscriptStatus::Success,reason:None,backend:"synthetic".into(),model_manifest_id:"no-model".into()};
+            let pending=asr.append(EventType::TranscriptFinal,&result)?;asr.flush_one(pending.message_id)?;Ok(())
+        }).unwrap();}
+        assert_eq!(tracks.len(),4);assert_eq!(tracks[0],fixture.config.secondary_track.as_ref().unwrap().track_id);assert_eq!(tracks[1],fixture.config.track.track_id);
     }
     #[test]
     fn short_stop_tail_has_stable_identity_and_final_sample_range() {

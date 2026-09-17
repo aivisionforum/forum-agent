@@ -324,6 +324,7 @@ struct CpalMicCapture {
     sample_rate: u32,
     vad_threshold: f32, // Energy threshold for simple VAD
     device_name: Option<String>,
+    timed_audio:Arc<parking_lot::Mutex<std::collections::VecDeque<crate::audio_clock::TimedPcm>>>,
 }
 
 fn downmix_interleaved_to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
@@ -338,6 +339,7 @@ fn downmix_interleaved_to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
         .collect()
 }
 
+#[cfg(test)]
 fn resample_linear_mono(samples: &[f32], input_rate: u32, output_rate: u32) -> Vec<f32> {
     if samples.is_empty() || input_rate == output_rate {
         return samples.to_vec();
@@ -370,13 +372,22 @@ fn push_converted_input<F>(
     output_rate: u32,
     buffer: &Arc<parking_lot::Mutex<Vec<i16>>>,
     dropped_samples: &Arc<AtomicU64>,
+    resampler:&mut crate::audio_clock::StreamingResampler,
+    timed:&Arc<parking_lot::Mutex<std::collections::VecDeque<crate::audio_clock::TimedPcm>>>,
+    at:Instant,
     to_f32: impl Fn(F) -> f32,
 ) where
     F: Copy,
 {
     let normalized: Vec<f32> = data.iter().copied().map(to_f32).collect();
     let mono = downmix_interleaved_to_mono(&normalized, channels);
-    let resampled = resample_linear_mono(&mono, input_rate, output_rate);
+    let _=(input_rate,output_rate);
+    let resampled = resampler.push(&mono);
+    {
+        let mut timed=timed.lock();
+        if !resampled.is_empty(){timed.push_back(crate::audio_clock::TimedPcm{at,samples:resampled.clone()});}
+        while timed.iter().map(|p|p.samples.len()).sum::<usize>()>64000 {timed.pop_front();}
+    }
     let converted: Vec<i16> = resampled
         .into_iter()
         .map(|s| (s * 32767.0).clamp(-32768.0, 32767.0) as i16)
@@ -403,6 +414,7 @@ impl CpalMicCapture {
             sample_rate: 16000,
             vad_threshold: 0.01,
             device_name,
+            timed_audio:Arc::new(parking_lot::Mutex::new(std::collections::VecDeque::new())),
         })
     }
 
@@ -419,7 +431,6 @@ impl CpalMicCapture {
             host.input_devices()
                 .ok()
                 .and_then(|mut devs| devs.find(|d| d.name().map(|n| n == *name).unwrap_or(false)))
-                .or_else(|| host.default_input_device())
                 .ok_or_else(|| format!("Input device '{}' not found", name))?
         } else {
             host.default_input_device()
@@ -440,6 +451,8 @@ impl CpalMicCapture {
         let buffer = Arc::clone(&self.audio_buffer);
         let dropped_samples = self.dropped_samples.clone();
         let capture_error = self.capture_error.clone();
+        let timed_audio=self.timed_audio.clone();
+        let mut resampler=crate::audio_clock::StreamingResampler::new(input_rate,16000);
         let err_fn = move |err| {
             error!("CPAL stream error: {}", err);
             *capture_error.lock() = Some(format!("{err}"));
@@ -453,7 +466,7 @@ impl CpalMicCapture {
         let stream = match sample_format {
             cpal::SampleFormat::F32 => device.build_input_stream(
                 &config,
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                move |data: &[f32], info: &cpal::InputCallbackInfo| {
                     push_converted_input(
                         data,
                         channels,
@@ -461,6 +474,7 @@ impl CpalMicCapture {
                         16_000,
                         &buffer,
                         &dropped_samples,
+                        &mut resampler,&timed_audio,cpal_capture_time(info),
                         |s| s,
                     );
                 },
@@ -469,7 +483,7 @@ impl CpalMicCapture {
             ),
             cpal::SampleFormat::I16 => device.build_input_stream(
                 &config,
-                move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                move |data: &[i16], info: &cpal::InputCallbackInfo| {
                     push_converted_input(
                         data,
                         channels,
@@ -477,6 +491,7 @@ impl CpalMicCapture {
                         16_000,
                         &buffer,
                         &dropped_samples,
+                        &mut resampler,&timed_audio,cpal_capture_time(info),
                         |s| s as f32 / 32768.0,
                     );
                 },
@@ -485,7 +500,7 @@ impl CpalMicCapture {
             ),
             cpal::SampleFormat::U16 => device.build_input_stream(
                 &config,
-                move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                move |data: &[u16], info: &cpal::InputCallbackInfo| {
                     push_converted_input(
                         data,
                         channels,
@@ -493,6 +508,7 @@ impl CpalMicCapture {
                         16_000,
                         &buffer,
                         &dropped_samples,
+                        &mut resampler,&timed_audio,cpal_capture_time(info),
                         |s| (s as f32 / 65535.0) * 2.0 - 1.0,
                     );
                 },
@@ -538,6 +554,7 @@ impl CpalMicCapture {
         }
 
         let mut buffer = self.audio_buffer.lock();
+        self.timed_audio.lock().clear();
         if buffer.is_empty() {
             return None;
         }
@@ -557,6 +574,15 @@ impl CpalMicCapture {
 
         Some((samples, vad_active))
     }
+    fn get_timed_audio(&self)->Vec<crate::audio_clock::TimedPcm>{
+        self.audio_buffer.lock().clear();self.dropped_samples.store(0,Ordering::Release);
+        self.timed_audio.lock().drain(..).collect()
+    }
+}
+
+fn cpal_capture_time(info:&cpal::InputCallbackInfo)->Instant{
+    let timestamp=info.timestamp();
+    Instant::now().checked_sub(timestamp.callback.duration_since(&timestamp.capture).unwrap_or_default()).unwrap_or_else(Instant::now)
 }
 
 impl Drop for CpalMicCapture {
@@ -1626,6 +1652,9 @@ impl AecInputBridge {
         is_recording: Arc<AtomicBool>,
         context: crate::CaptureContext,
     ) {
+        if context.secondary_track.is_some(){
+            return Self::run_reliable_dual(node_id,state,shared_state,stop_receiver,is_recording,context);
+        }
         let Some(shared) = shared_state else {
             *state.write() = BridgeState::Error;
             return;
@@ -2135,6 +2164,8 @@ impl AecInputBridge {
             .map_err(|e| BridgeError::SendFailed(e.to_string()))
     }
 }
+
+include!("dual_input.rs");
 
 impl DoraBridge for AecInputBridge {
     fn node_id(&self) -> &str {

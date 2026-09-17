@@ -22,3 +22,5 @@ FORUM_CONTRACTS_JS=/tmp/forum-contracts-js-f02/utf8.js node --test packages/cont
 
 
 F05–F08 的 job state、validation、review、publication 是四套独立状态。UI不能把Succeeded当Approved或Published。`AnalysisEvidence` 使用精确原文/产物版本和UTF-8范围，公开端只接受`PublicArtifact`的人工审阅正文与opaque引用ID。`AnalysisConfig.model_manifest_id`是`sha256:<64hex>`，其余profile/prompt/policy/effective摘要为64位小写hex。Rust `canonical_json`显式排序嵌套对象，schema/TS生成器也使用固定顺序，不受桌面serde_json preserve_order特性影响。
+
+F09–F10增加 `SpeakerAssignment`（独立于TranscriptFinal）、`PeerSessionState`、`PeerPublicationSnapshot/Batch`、`PublicSessionView`、`PublicSearchHit`、`PublicSelection` 和 `PeerAnalysisProvenance`。不要将本机私有标题直接填进公开PeerSession；邀请的公开元数据须操作者显式确认。搜索高亮offset是UTF-8字节、相对于返回的snippet。stale副本可显示其最后同步时间，但不能用于新的跨场生成。公开页永远不能用内部ArtifactRecord代替PublicArtifact。

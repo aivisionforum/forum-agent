@@ -391,6 +391,49 @@ export type PageKey = {
   "track_id": string;
 };
 
+export type PeerAnalysisProvenance = {
+  "artifact_alias_id": string;
+  "event_id": string;
+  "owner_device_id": string;
+  "public_id": string;
+  "revision": Revision;
+  "session_id": string;
+  "snapshot_id": string;
+  "source_cursor": number;
+};
+
+export type PeerPublicationBatch = {
+  "after_cursor": number;
+  "changes": Array<PublicationChange>;
+  "cursor": number;
+  "event_id": string;
+  "owner_device_id": string;
+  "session_id": string;
+};
+
+export type PeerPublicationSnapshot = {
+  "artifacts": Array<PublicArtifact>;
+  "cursor": number;
+  "event_id": string;
+  "owner_device_id": string;
+  "session_id": string;
+};
+
+export type PeerSession = {
+  "event_id": string;
+  "owner_device_id": string;
+  "room_name": string;
+  "session_id": string;
+  "title": string;
+};
+
+export type PeerSessionState = {
+  "cursor": number;
+  "last_sync_at_ms"?: number | null;
+  "session": PeerSession;
+  "stale": boolean;
+};
+
 export type Producer = {
   "name": string;
   "run_id": string;
@@ -457,6 +500,39 @@ export type PublicEvidence = {
 export type PublicEvidenceInput = {
   "evidence": AnalysisEvidence;
   "reviewed_text": string;
+};
+
+export type PublicSearchHit = {
+  "last_sync_at_ms"?: number | null;
+  "match_end_utf8": number;
+  "match_start_utf8": number;
+  "owner_device_id": string;
+  "public_id": string;
+  "revision": Revision;
+  "session_id": string;
+  "stale": boolean;
+  "text": string;
+  "title": string;
+};
+
+export type PublicSelection = {
+  "owner_device_id": string;
+  "public_id": string;
+  "revision": Revision;
+  "session_id": string;
+};
+
+export type PublicSessionView = {
+  "artifacts": Array<PublicArtifact>;
+  "cursor": number;
+  "event_id": string;
+  "last_sync_at_ms"?: number | null;
+  "local": boolean;
+  "owner_device_id": string;
+  "room_name": string;
+  "session_id": string;
+  "stale": boolean;
+  "title": string;
 };
 
 export type PublicSnapshot = {
@@ -592,6 +668,58 @@ export type SourceSpan = {
   "segment_id": string;
   "segment_revision": Revision;
   "start_utf8": number;
+};
+
+export type SpeakerAssignment = {
+  "created_at_ms": number;
+  "current": boolean;
+  "label": SpeakerLabel;
+  "origin": SpeakerAssignmentOrigin;
+  "revision": Revision;
+  "segment_id": string;
+  "session_id": string;
+  "source_revision": Revision;
+};
+
+export type SpeakerAssignmentCommand = {
+  "expected_revision"?: Revision | null;
+  "label": SpeakerLabel;
+  "origin": SpeakerAssignmentOrigin;
+  "request_id": string;
+  "segment_id": string;
+  "session_id": string;
+  "source_revision": Revision;
+};
+
+export type SpeakerAssignmentOrigin = {
+  "kind": "automatic";
+  "model_manifest_id": string;
+  "model_version": string;
+} | {
+  "kind": "human";
+  "operator_id": string;
+  "reason": string;
+};
+
+export type SpeakerEmbeddingCommand = {
+  "embedding": Array<number>;
+  "expected_revision"?: Revision | null;
+  "model_manifest_id": string;
+  "model_version": string;
+  "pcm_sha256": string;
+  "request_id": string;
+  "segment_id": string;
+  "session_id": string;
+  "source_revision": Revision;
+};
+
+export type SpeakerLabel = {
+  "kind": "unknown";
+} | {
+  "kind": "overlap";
+} | {
+  "kind": "anonymous";
+  "speaker_id": string;
 };
 
 export type TrackKind = "mic" | "system" | "room_mix" | "replay" | "legacy_import";

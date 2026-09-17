@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount, createEventDispatcher } from 'svelte';
   import JobList from './components/JobList.svelte';
+  import ForumNetwork from './components/ForumNetwork.svelte';
+  import SpeakerPanel from './components/SpeakerPanel.svelte';
+  import {currentSpeaker,speakerText,type SpeakerAssignment} from './lib/forum/speakers';
   import ArtifactDetail from './components/ArtifactDetail.svelte';
   import { forumClient as client } from './lib/forum/factory';
   import { readLegacyFile } from './lib/forum/import';
@@ -48,6 +51,7 @@
   let importBusy = false;
   let importError = '';
   let importGeneration = 0;
+  let speakerAssignments:SpeakerAssignment[]=[];
   let artifactView: ArtifactDetail | undefined;
   const fence = new SessionFence();
   const writable = client.mode === 'desktop';
@@ -80,7 +84,7 @@
     finally { if (!destroyed) listBusy = false; }
   }
   function selectSession(id: string) {
-    selected = id; fence.select(id); transcript = null; analysis = null; error = ''; notice = '';
+    selected = id; speakerAssignments=[]; fence.select(id); transcript = null; analysis = null; error = ''; notice = '';
     transcriptBusy = false; analysisBusy = false; actionBusy = false; transcriptPaged = false;
     analysisGeneration++; afterJobs = null; afterArtifacts = null; selectedArtifactId = ''; heldArtifact = null; artifactGeneration++; displayUrl = ''; displayExpires = ''; savedExportPath = '';
     closeEvidence(); reportSessions = [id];
@@ -191,6 +195,8 @@
     finally { if (!destroyed) importBusy = false; }
   }
   function openDisplay() { void mutate(() => client.displayInfo(selected), info => { displayUrl = info.url; displayExpires = info.expiresAt; }); }
+  function startClosing(language: 'zh' | 'en') { if (!selectedArtifact || running) return;const a=selectedArtifact;void mutate(() => client.transport.call('start_closing_readout',{artifactId:a.artifact_id,expectedRevision:a.revision,language}),()=>{notice='正在朗读已审核公开版。';}); }
+  function stopClosing() { void mutate(() => client.transport.call('stop_closing_readout'),()=>{notice='闭幕朗读已停止。';}); }
   function recover() { void mutate(() => recoverMeeting(selected), result => dispatch('runtime',result)); }
   function translationsFor(id:string) { return transcript?.translations.filter(t => t.request.source_spans[0]?.segment_id === id) ?? []; }
   function combinedElsewhere(id:string) { return transcript?.translations.some(t => t.request.source_spans[0]?.segment_id !== id && t.request.source_spans.some(s => s.segment_id === id)) ?? false; }
@@ -209,6 +215,7 @@
 
 <section class="forum-workspace" aria-label="会议工作台">
   <header class="workspace-heading"><div><p class="eyebrow">FORUM WORKSPACE</p><h2>会议工作台</h2><p>从实时记录，到有出处、可审核的会议成果。</p></div><span class="private-tag">{writable ? '本机私有操作台' : '界面预览 · 合成数据 · 操作禁用'}</span></header>
+  {#if summary}{#key selected}<ForumNetwork sessionId={selected} eventId={summary.session.event_id} {running} {active} on:created={() => {tab='jobs';afterJobs=null;void loadAnalysis();}}/>{/key}{/if}
   <div class="workspace-grid">
     <aside class="session-library">
       <div class="library-heading"><h3>会议库</h3><button aria-label="刷新会议库" disabled={listBusy} on:click={() => loadSessions()}>↻</button></div>
@@ -223,7 +230,7 @@
         <div class="selected-heading"><div><h3>{summary?.session.title ?? '所选会议'}</h3><span>{summary ? sessionStatus[summary.status.state] ?? summary.status.state : ''}</span></div><button disabled={!writable || actionBusy} on:click={openDisplay}>打开只读大屏 ↗</button></div>
         {#if displayUrl}<div class="display-link"><a href={displayUrl} target="_blank" rel="noopener noreferrer">点击打开本场大屏 ↗</a><span>只显示人工发布内容 · 有效至 {new Date(displayExpires).toLocaleTimeString()}</span></div>{/if}
         <nav class="workspace-tabs" aria-label="会议内容"><button class:active={tab === 'transcript'} on:click={() => { tab = 'transcript'; void loadTranscript(); }}>原文与译文</button><button class:active={tab === 'jobs'} on:click={() => { tab = 'jobs'; void loadAnalysis(); }}>分析任务</button><button class:active={tab === 'insights'} on:click={() => { tab = 'insights'; void loadAnalysis(); }}>洞察与审核</button><button class:active={tab === 'documents'} on:click={() => { tab = 'documents'; void loadAnalysis(); }}>纪要与报告</button></nav>
-        <div class="create-bar"><label><span>生成会议成果</span><select bind:value={createKind}>{#each Object.entries(kindLabels) as [kind,label]}<option value={kind}>{label}</option>{/each}</select></label><button class="primary" disabled={!writable || actionBusy || (createKind === 'event_report' && reportSessions.length === 0)} on:click={createJob}>＋ 创建任务</button><p>每 3 分钟自动生成洞察，停止后自动排队生成纪要；实时翻译优先。</p></div>
+        <div class="create-bar"><label><span>生成会议成果</span><select bind:value={createKind}>{#each Object.entries(kindLabels).filter(([kind])=>kind!=='closing_brief') as [kind,label]}<option value={kind}>{label}</option>{/each}</select></label><button class="primary" disabled={!writable || actionBusy || (createKind === 'event_report' && reportSessions.length === 0)} on:click={createJob}>＋ 创建任务</button><p>每 3 分钟自动生成洞察，停止后自动排队生成纪要；实时翻译优先。</p></div>
         {#if createKind === 'event_report'}<fieldset class="report-picker"><legend>明确选择报告来源（仅使用已发布资料）</legend>{#each sessions.filter(s => s.session.event_id === summary?.session.event_id) as item}<label><input type="checkbox" bind:group={reportSessions} value={item.session.session_id} />{item.session.title}</label>{/each}<small>没有已发布纪要或洞察时，不会自动回退为草稿。</small></fieldset>{/if}
         {#if analysis?.notice}<p class="message error" role="status">{analysis.notice}</p>{/if}
         {#if error}<div class="message error" role="alert">{error}<button on:click={() => error = ''} aria-label="关闭错误提示">×</button></div>{/if}
@@ -231,8 +238,9 @@
         {#if savedExportPath}<p class="saved-export">已保存：<code>{savedExportPath}</code></p>{/if}
         {#if tab === 'transcript'}
           <div class="content-toolbar"><p>原文持续保存；恢复只读取已有录音，不打开音频设备。</p><button disabled={!writable || running || actionBusy || (summary?.status.transcript_sealed && !summary?.status.incomplete && summary?.translation_pending === 0)} on:click={recover}>恢复未完成内容</button></div>
+          {#key selected}<SpeakerPanel sessionId={selected} {transcript} {active} on:assignments={e=>speakerAssignments=e.detail}/>{/key}
           <div class="transcript-list" aria-busy={transcriptBusy}>
-            {#each transcript?.items ?? [] as item (item.segment_id)}<article><span class="timestamp">{time(item.audio.start_ms)}</span><div><p class="source">{item.transcript?.payload.status === 'success' ? item.transcript.payload.text : item.transcript?.payload.status === 'failed' ? '识别失败，可从录音恢复。' : item.transcript?.payload.status === 'empty' ? '此段未识别到文字。' : '音频已登记，等待原文保存。'}</p>
+            {#each transcript?.items ?? [] as item (item.segment_id)}{@const assigned=currentSpeaker(speakerAssignments,selected,item.segment_id,item.transcript?.payload.revision??null)}<article><span class="timestamp">{time(item.audio.start_ms)}</span><div>{#if assigned}<span class="speaker-label">{speakerText(assigned.label)}</span>{/if}<p class="source">{item.transcript?.payload.status === 'success' ? item.transcript.payload.text : item.transcript?.payload.status === 'failed' ? '识别失败，可从录音恢复。' : item.transcript?.payload.status === 'empty' ? '此段未识别到文字。' : '音频已登记，等待原文保存。'}</p>
               {#each translationsFor(item.segment_id) as translation}<p class:stale={translation.state === 'stale'} class="translation"><span>{translation.request.target_language.toUpperCase()}</span>{translation.result?.text ?? (translation.state === 'failed' ? '翻译失败，可恢复重试' : '等待翻译')}{translation.state === 'stale' ? ' · 来源版本已变更' : ''}</p>{:else}{#if combinedElsewhere(item.segment_id)}<p class="translation">此段与相邻原文合并翻译。</p>{:else if item.transcript?.payload.target_languages.length}<p class="translation">等待翻译</p>{/if}{/each}
             </div></article>{:else}<div class="empty-state"><h3>{transcriptBusy ? '读取原文…' : '本场尚无原文'}</h3><p>真实原文和译文保存后显示在这里。</p></div>{/each}
           </div><div class="pagination"><span>每页最多 100 段 · {transcriptPaged ? '历史分页，自动刷新暂停' : '首屏自动刷新'}</span><button disabled={transcriptBusy} on:click={() => loadTranscript()}>返回首屏</button><button disabled={transcriptBusy || !transcript?.next_after} on:click={() => loadTranscript(true)}>下一页 →</button></div>
@@ -241,7 +249,7 @@
           <div class="pagination"><span>{analysisBusy ? '正在更新任务…' : afterJobs ? '历史任务页' : '任务状态自动更新'}</span><button disabled={analysisBusy} on:click={() => {afterJobs=null;void loadAnalysis();}}>最新任务</button><button disabled={analysisBusy || !analysis?.next_jobs} on:click={() => loadAnalysis('jobs')}>下一页 →</button></div>
         {:else}
           {#if artifacts.length}<div class="artifact-picker"><label>选择版本成果<select bind:value={selectedArtifactId} on:change={() => artifactGeneration++}>{#if heldArtifact && !artifacts.some(a => a.artifact_id === heldArtifact?.artifact_id)}<option value={heldArtifact.artifact_id}>{heldArtifact.content.title} · v{heldArtifact.revision} · 当前查看</option>{/if}{#each artifacts as artifact}<option value={artifact.artifact_id}>{artifact.content.title} · v{artifact.revision} · {reviewLabels[artifact.review]} · {publicationLabels[artifact.publication]}</option>{/each}</select></label></div>{/if}
-          {#if selectedArtifact}{#key selectedArtifact.artifact_id}<ArtifactDetail bind:this={artifactView} artifact={selectedArtifact} busy={actionBusy || !writable} on:edit={e => edit(e.detail)} on:review={e => review(e.detail)} on:publish={e => publish(e.detail)} on:hide={e => hide(e.detail)} on:evidence={e => showEvidence(e.detail)} on:export={e => download(e.detail)} />{/key}
+          {#if selectedArtifact}{#key selectedArtifact.artifact_id}<ArtifactDetail bind:this={artifactView} artifact={selectedArtifact} {running} busy={actionBusy || !writable} on:startClosing={e => startClosing(e.detail)} on:stopClosing={stopClosing} on:edit={e => edit(e.detail)} on:review={e => review(e.detail)} on:publish={e => publish(e.detail)} on:hide={e => hide(e.detail)} on:evidence={e => showEvidence(e.detail)} on:export={e => download(e.detail)} />{/key}
           {:else}<div class="empty-state"><h3>{tab === 'insights' ? '让讨论形成可核查的洞察' : '把整场讨论整理成完整纪要'}</h3><p>从上方创建任务。模型完成后先生成私有草稿，审核后才能公开。</p></div>{/if}
           <div class="pagination"><span>{analysisBusy ? '正在更新…' : afterArtifacts ? '历史成果页' : '显示当前成果'}</span><button disabled={analysisBusy} on:click={() => {afterArtifacts=null;void loadAnalysis();}}>最新成果</button><button disabled={analysisBusy || !analysis?.next_artifacts} on:click={() => loadAnalysis('artifacts')}>下一页 →</button></div>
         {/if}

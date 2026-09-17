@@ -112,3 +112,26 @@ CARGO_TARGET_DIR=/tmp/aivf-core-f02-target cargo +stable run --offline --locked 
 
 
 自动会后纪要另有无模型依赖的持久停止记录：可信runtime仅在实际Stopped回调中调用`record_analysis_stop_intent(session_id)`。`pending_analysis_stop_intents(limit)`按marker升序返回`Vec<(Uuid,u64)>`，限制1–1000条；manager先创建或去重持久job，再调用`ack_analysis_stop_intent(session_id,marker)`。同场恢复后再次Stop采用事务DELETE+INSERT取得严格递增marker；旧ACK或重复ACK不会删除新Stop。退出或缺少模型配置时不需要构造job，记录仍可重启消费。三项新增测试验证无模型/无job重启保留、旧ACK与跨session隔离、真实SQLite插入失败回滚后仍保留旧记录。
+
+## F09–F10 匿名标签与双会场公开数据
+
+SQLite v6 从 v5 升级前保留数据库备份。`speaker_assignments` 与历史/幂等请求表独立于 `segment_revisions`；标签更新从不改写原文。`apply_speaker_assignment` 绑定 session、segment、source_revision、expected_revision、request_id，支持 unknown/overlap/anonymous。人工修改必须填写操作者和原因；自动结果不能覆盖人工标签，也不能跨 session 复用匿名 ID。源文修订后旧标签标记为非 current。当前标签变化使依赖分析失效，新的分析快照读取独立标签。
+
+`apply_speaker_embedding` 只接收宿主验证过的 ECAPA 192 维归一化向量及模型/PCM 摘要，按 session + model manifest 隔离簇。暂定余弦相似度 >=0.78、与第二名差 >=0.08 时匹配；所有相似度 <0.60 时新建匿名簇，否则 unknown。每场最多100簇，不更新既有原型，不跨场推断身份。这些是开发阈值，**不是已通过真人声学评测的准确率承诺**。embedding/簇属于内部数据库，不出现在公开 DTO 或 LAN。低质量/短音频/已知重叠由宿主和 speaker worker 拦截；core 不把输入来源当成声纹身份，也不从 embedding 推断重叠。
+
+| API | 规则 |
+|---|---|
+| `speaker_assignment`, `list_speaker_assignments`, `speaker_assignment_history` | 独立读取当前标签和修订历史，不改 TranscriptFinal |
+| `register_peer_session` | 认证配对之后显式注册公开标题/会场名；owner/event/session 固定，拒绝本机 session 冲突 |
+| `apply_peer_snapshot` | 严格 PublicArtifact DTO；权威全量替换，最多1000项/16MiB；旧游标、同游标不同正文、同revision改文、发布序号倒退拒绝 |
+| `apply_peer_changes` | after_cursor 必须衔接；精确重复幂等；乱序/缺口请求完整快照，不能猜补；withdrawn 不许携带正文 |
+| `mark_peer_disconnected`, `disconnect_all_peers` | 保留最后同步时间与公开副本，标 stale 并递归撤下依赖报告；宿主启动时调用后者，不能把落盘数据当作仍有网络授权 |
+| `peer_sessions`, `all_peer_sessions`, `peer_public_snapshot` | 公开来源/最后游标状态与已发布副本；重新同步不自动批准已经失效的产物 |
+| `public_sessions`, `search_public` | 只读已审阅标题、正文与公开证据；搜索返回UTF-8片段偏移及stale/同步时间；本机私有会议标题不出现在公开视图 |
+| `create_selected_analysis_job(req,selections)` | EventReport/ClosingBrief 明确选择当前公开 owner/session/public_id/revision；同活动范围、每个选中场次有输入，旧版本/漏场拒绝 |
+| `analysis_peer_provenance(job)` | 冻结host snapshot与源owner/event/session/public ID/revision/cursor；worker只收到由owner/session/public ID派生的安全alias与公开正文 |
+| `public_artifact_for_revision` | 闭幕朗读仅取当前Valid+Approved+Published+完整ClosingBrief的独立公开正文；宿主轮询时隐藏/撤回/依赖过期立即失败 |
+
+远端副本从来不写入本机原文或本机 session owner 表。相同文本或说话人不会跨场自动合并；不同活动必须由操作者明确加入同一活动后创建新的场次，不能静默改写旧session。远端撤回会在下一次收到同步后生效；离线时本机页面标stale，并禁止以这些副本启动新的报告/闭幕生成。只读凭证与TLS验证由gateway实现，core API调用本身不代替网络认证。
+
+新增16项测试覆盖匿名标签版本/人工锁、同声纹跨session隔离、模糊向量unknown、事务故障回滚、严格公开DTO、owner/event冲突、全快照/重复/乱序/缺口/未知tombstone、撤回水位、断线递归失效、跨场精确选版、冻结provenance、迟到结果拒绝、公开搜索UTF-8与私有数据隔离、闭幕公开正文门槛及v5→v6备份迁移。另补3项真实FD/fork锁释放测试，退出确认不会被继承描述符延长；当前 `forum-core` 82项、`forum-contracts` 4项通过，包括 `serde_json/preserve_order` 配置；不代替两台真机、90分钟录音/漂移和真人说话人盲评。

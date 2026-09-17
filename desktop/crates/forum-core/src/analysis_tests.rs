@@ -1046,3 +1046,6 @@ fn successful_finish_closes_progress_but_partial_keeps_reported_counters() {
         }
     }
 }
+
+#[path = "forum_tests.rs"]
+mod forum_tests;

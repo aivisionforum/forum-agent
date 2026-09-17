@@ -1,0 +1,28 @@
+name: Forum model-free regression
+on:
+  pull_request:
+    paths: ['desktop/**', 'services/**', 'packages/**', 'profiles/**', 'scripts/**', '.github/workflows/forum-regression.yml']
+  push:
+    branches: [main, 'codex/vision-forum-integration']
+    paths: ['desktop/**', 'services/**', 'packages/**', 'profiles/**', 'scripts/**', '.github/workflows/forum-regression.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contracts-and-workers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Run portable regression without models or audio devices
+        run: python3.12 scripts/run_forum_regression.py --portable --online --output "$RUNNER_TEMP/forum-regression"
+      - name: Save content-free results and synthetic test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: forum-model-free-regression
+          path: ${{ runner.temp }}/forum-regression
+          if-no-files-found: error
+          retention-days: 14

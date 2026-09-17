@@ -6,5 +6,7 @@
   <string>AI Vision Forum needs microphone access for live translation.</string>
   <key>NSScreenCaptureUsageDescription</key>
   <string>AI Vision Forum needs Screen Recording access to translate system audio.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>仅在操作员启用后共享已审核公开资料并连接已配对会场。</string>
 </dict>
 </plist>

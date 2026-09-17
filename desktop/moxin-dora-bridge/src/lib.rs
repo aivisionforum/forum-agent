@@ -15,6 +15,8 @@ pub mod owned_process;
 pub mod owned_runtime;
 pub mod shared_state;
 pub mod reliable_capture;
+pub mod audio_clock;
+pub mod dual_capture;
 pub use reliable_capture::{CaptureContext,CaptureProgress,CaptureSession};
 
 // Widget-specific bridges

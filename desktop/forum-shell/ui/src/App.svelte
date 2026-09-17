@@ -136,6 +136,7 @@
   }
 
   function deviceName(value: string): string {
+    if (value === '__dual_audio__') return tr('麦克风 + 系统音频', 'Microphone + System Audio');
     if (value === '__system_audio__') return tr('系统音频', 'System Audio');
     if (value === '__default_microphone__') return tr('默认麦克风', 'Default Microphone');
     return value;
@@ -291,7 +292,7 @@
   }
 
   async function swapLanguages(): Promise<void> {
-    if (!settings || directionSwitchPending || settings.targetLanguage === 'none') return;
+    if (!settings || directionSwitchPending || settings.targetLanguage === 'none' || (running && settings.inputDevice === '__dual_audio__')) return;
     const previous = { ...settings };
     await stopVoicePreview();
     const source = settings.sourceLanguage;
@@ -615,7 +616,7 @@
             </select>
           </label>
 
-          <button disabled={directionSwitchPending || settings.targetLanguage === 'none' || settings.sourceLanguage === 'auto' || settings.targetLanguage === 'bilingual'} class="swap-button" aria-label={tr('交换语言', 'Swap languages')} on:click={swapLanguages}>⇄</button>
+          <button title={running && settings.inputDevice === '__dual_audio__' ? tr('双轨录音中请先停止，再更改语言方向', 'Stop dual-track recording before changing language direction') : ''} disabled={(running && settings.inputDevice === '__dual_audio__') || directionSwitchPending || settings.targetLanguage === 'none' || settings.sourceLanguage === 'auto' || settings.targetLanguage === 'bilingual'} class="swap-button" aria-label={tr('交换语言', 'Swap languages')} on:click={swapLanguages}>⇄</button>
 
           <label class="route-field">
             <span class="route-heading"><strong>{tr('目标语言', 'TARGET LANGUAGE')}</strong></span>
@@ -631,7 +632,7 @@
           <label class="route-field audio-route-field">
             <span class="route-heading"><strong>{tr('输入音频', 'AUDIO INPUT')}</strong></span>
             <select disabled={running} bind:value={settings.inputDevice} on:change={persist}>
-              {#each payload.inputDevices as device}
+              {#each [...new Set(['__dual_audio__',...payload.inputDevices])] as device}
                 <option value={device}>{deviceName(device)}</option>
               {/each}
             </select>

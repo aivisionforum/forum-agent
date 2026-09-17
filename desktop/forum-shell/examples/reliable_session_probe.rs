@@ -44,6 +44,7 @@ fn main() -> Result<()> {
         target_language: "bilingual".into(),
         recording_enabled: true,
         system_audio: false,
+                dual_audio: false,
     };
     let paths = models::ModelPaths::resolve_current().map_err(|e| anyhow!(e))?;
     let automatic = models::AutomaticAsrPaths::resolve(None).map_err(|e| anyhow!(e))?;

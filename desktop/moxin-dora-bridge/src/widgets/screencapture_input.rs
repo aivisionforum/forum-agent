@@ -14,6 +14,22 @@ use screencapturekit::stream::output_type::SCStreamOutputType;
 use std::sync::atomic::{AtomicI8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
+use std::{collections::VecDeque,time::{Duration,Instant}};
+use crate::audio_clock::TimedPcm;
+
+#[link(name="CoreMedia",kind="framework")]
+extern "C" {
+    fn CMClockGetHostTimeClock()->*const std::ffi::c_void;
+    fn CMClockGetTime(clock:*const std::ffi::c_void)->screencapturekit::cm::CMTime;
+}
+fn capture_time(sample:&CMSampleBuffer)->Option<Instant>{
+    let now=Instant::now();
+    let host=unsafe{CMClockGetTime(CMClockGetHostTimeClock())}.as_seconds()?;
+    let captured=sample.presentation_timestamp().as_seconds()?;
+    let age=host-captured;
+    if !age.is_finite() || !(0.0..=5.0).contains(&age){return None;}
+    now.checked_sub(Duration::from_secs_f64(age))
+}
 
 /// -1 = not yet probed, 0 = denied/unavailable, 1 = granted
 static PERMISSION_STATUS: AtomicI8 = AtomicI8::new(-1);
@@ -52,6 +68,8 @@ pub struct ScreenCaptureInput {
     audio_buffer: Arc<Mutex<Vec<f32>>>,
     dropped_samples: Arc<AtomicU64>,
     is_recording: bool,
+    timed_audio:Arc<Mutex<VecDeque<TimedPcm>>>,
+    clock_error:Arc<Mutex<Option<String>>>,
 }
 
 impl ScreenCaptureInput {
@@ -68,6 +86,8 @@ impl ScreenCaptureInput {
             audio_buffer: Arc::new(Mutex::new(Vec::new())),
             dropped_samples: Arc::new(AtomicU64::new(0)),
             is_recording: false,
+            timed_audio:Arc::new(Mutex::new(VecDeque::new())),
+            clock_error:Arc::new(Mutex::new(None)),
         })
     }
 
@@ -110,11 +130,14 @@ impl ScreenCaptureInput {
         // Register audio callback: copy f32 PCM samples into the shared buffer.
         let audio_buffer = Arc::clone(&self.audio_buffer);
         let dropped_samples=self.dropped_samples.clone();
+        let timed_audio=self.timed_audio.clone();let clock_error=self.clock_error.clone();
         stream.add_output_handler(
             move |sample: CMSampleBuffer, output_type: SCStreamOutputType| {
                 if output_type != SCStreamOutputType::Audio {
                     return;
                 }
+                let timestamp=capture_time(&sample);
+                if timestamp.is_none(){if let Ok(mut error)=clock_error.lock(){*error=Some("系统音频时钟不可用，无法对齐双轨".into());}}
                 if let Some(buf_list) = sample.audio_buffer_list() {
                     // ScreenCaptureKit delivers non-interleaved float32 PCM.
                     // For mono (1 channel) there is exactly one buffer.
@@ -128,6 +151,9 @@ impl ScreenCaptureInput {
                             .chunks_exact(4)
                             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                             .collect();
+                        if let Some(at)=timestamp {
+                            if let Ok(mut queue)=timed_audio.lock(){queue.push_back(TimedPcm{at,samples:samples.clone()});while queue.iter().map(|p|p.samples.len()).sum::<usize>()>64000{queue.pop_front();}}
+                        }
                         if let Ok(mut buf) = audio_buffer.lock() {
                             buf.extend_from_slice(&samples);
                             if buf.len()>64_000 {let count=buf.len()-64_000;buf.drain(..count);dropped_samples.fetch_add(count as u64,Ordering::AcqRel);}
@@ -149,6 +175,11 @@ impl ScreenCaptureInput {
     }
 
     pub fn take_dropped_samples(&self)->u64{self.dropped_samples.swap(0,Ordering::AcqRel)}
+    pub fn take_clock_error(&self)->Option<String>{self.clock_error.lock().ok()?.take()}
+    pub fn get_timed_audio(&self)->Vec<TimedPcm>{
+        if let Ok(mut buffer)=self.audio_buffer.lock(){buffer.clear();}self.dropped_samples.store(0,Ordering::Release);
+        self.timed_audio.lock().map(|mut queue|queue.drain(..).collect()).unwrap_or_default()
+    }
 
     /// Release the stream and retain the final callback PCM for durable closing.
     pub fn stop_and_drain(&mut self)->Result<Vec<f32>,String> {
@@ -183,6 +214,7 @@ impl ScreenCaptureInput {
             return None;
         }
         let mut buf = self.audio_buffer.lock().ok()?;
+        if let Ok(mut queue)=self.timed_audio.lock(){queue.clear();}
         if buf.is_empty() {
             return None;
         }

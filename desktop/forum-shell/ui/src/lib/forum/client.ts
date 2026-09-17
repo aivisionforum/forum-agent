@@ -16,7 +16,7 @@ export type AnalysisState = {
   session_id: string; cursor: number; notice?: string | null; jobs: AnalysisJob[]; artifacts: ArtifactRecord[];
   next_jobs: string | null; next_artifacts: string | null;
 };
-export type JobRequest = { request_id: string; session_ids: string[]; kind: AnalysisKind; automatic: boolean };
+export type JobRequest = { request_id: string; session_ids: string[]; kind: AnalysisKind; automatic: boolean; public_selections?: import('./network').PublishedSelection[] };
 export type JobAction = { job_id: string; expected_attempt: number };
 export type EvidenceDetail = { session_id?: string | null; text: string; segment_id?: string; segment_revision?: number; start_ms?: number; quote?: string; current: boolean };
 export type DisplayInfo = { url: string; expiresAt: string };
@@ -68,5 +68,5 @@ export const reviewLabels: Record<string, string> = { draft: '待审核', approv
 export const publicationLabels: Record<string, string> = { private: '仅操作台', published: '已公开', hidden: '已隐藏', withdrawn: '已撤回' };
 export function canPublish(artifact: ArtifactRecord): boolean {
   return artifact.validation === 'valid' && artifact.review === 'approved' && artifact.coverage_complete
-    && artifact.kind !== 'suggested_questions';
+    && !['suggested_questions','redaction_review'].includes(artifact.kind);
 }

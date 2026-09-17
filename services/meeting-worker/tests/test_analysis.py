@@ -60,6 +60,18 @@ class Fixture:
         (self.directory / 'input.json').write_bytes(data)
         self.params['snapshot']['sha256'] = digest(data)
 
+    def published(self, sessions=None):
+        sessions = sessions or [self.session]
+        self.params['session_ids'] = list(sessions)
+        self.snapshot['session_ids'] = list(sessions)
+        self.snapshot['segments'] = []
+        self.snapshot['published_artifacts'] = [
+            {'artifact_id': str(uuid4()), 'revision': index + 2,
+             'session_ids': [session], 'kind': 'minutes', 'title': f'Reviewed room {index}',
+             'text': f'会场 {index}：公开预算为 {12 + index} 万元，尚未确认负责人。'}
+            for index, session in enumerate(sessions)]
+        self.save()
+
     def run(self):
         self.messages = []
         return execute(self.params, self.configuration, lambda: None,
@@ -180,15 +192,94 @@ class AnalysisTests(unittest.TestCase):
         for kind in KINDS:
             directory = Path(self.tmp.name) / kind; directory.mkdir(mode=0o700)
             f = Fixture(directory, kind=kind)
-            if kind == 'event_report':
-                f.snapshot['segments'] = []
-                f.snapshot['published_artifacts'] = [{'artifact_id': str(uuid4()), 'revision': 2,
-                    'session_ids': [f.session], 'kind': 'minutes', 'title': 'Approved input', 'text': 'Publication was not approved.'}]
-                f.save()
+            if kind in ('event_report', 'closing_brief'):
+                f.published()
             self.assertEqual(f.run()['status'], 'succeeded')
-            if kind == 'event_report':
+            if kind in ('event_report', 'closing_brief'):
                 artifact = json.loads((f.directory / 'result.json').read_text())
                 self.assertEqual(artifact['content']['sections'][0]['claims'][0]['evidence'][0]['kind'], 'artifact')
+
+    def test_two_room_report_and_closing_preserve_frozen_public_evidence(self):
+        for kind in ('event_report', 'closing_brief'):
+            with self.subTest(kind=kind):
+                root = Path(self.tmp.name) / kind
+                root.mkdir(mode=0o700)
+                f = Fixture(root, kind=kind)
+                f.published([str(uuid4()), f.session])
+                before = (f.directory / 'input.json').read_bytes()
+                self.assertEqual(f.run()['status'], 'succeeded')
+                self.assertEqual(before, (f.directory / 'input.json').read_bytes())
+                result = json.loads((f.directory / 'result.json').read_text())
+                expected = {(a['artifact_id'], a['revision']) for a in f.snapshot['published_artifacts']}
+                self.assertEqual({(u['target']['artifact_id'], u['target']['revision'])
+                                  for u in result['coverage']['units']}, expected)
+                evidence = [e for section in result['content']['sections']
+                            for claim in section['claims'] for e in claim['evidence']]
+                self.assertEqual({(e['artifact_id'], e['revision']) for e in evidence}, expected)
+                for e in evidence:
+                    self.assertEqual(e['kind'], 'artifact')
+                    source = next(a for a in f.snapshot['published_artifacts'] if a['artifact_id'] == e['artifact_id'])
+                    self.assertEqual(source['text'].encode()[e['start_utf8']:e['end_utf8']].decode(), e['quote'])
+
+    def test_public_scope_coverage_private_fields_and_mixed_inputs_rejected(self):
+        for kind in ('event_report', 'closing_brief'):
+            f = Fixture(self.tmp.name, kind=kind)
+            source = f.snapshot['segments'][0]
+            f.published([f.session, str(uuid4())])
+            valid = json.loads(json.dumps(f.snapshot))
+            for mutation in ('missing_room', 'unselected_room', 'empty_scope', 'duplicate_scope',
+                             'private_fields', 'raw_source', 'same_kind'):
+                with self.subTest(kind=kind, mutation=mutation):
+                    f.snapshot = json.loads(json.dumps(valid))
+                    item = f.snapshot['published_artifacts'][0]
+                    if mutation == 'missing_room':
+                        f.snapshot['published_artifacts'].pop()
+                    elif mutation == 'unselected_room':
+                        item['session_ids'] = [str(uuid4())]
+                    elif mutation == 'empty_scope':
+                        item['session_ids'] = []
+                    elif mutation == 'duplicate_scope':
+                        item['session_ids'] *= 2
+                    elif mutation == 'private_fields':
+                        item['private_transcript'] = 'must never enter model'
+                    elif mutation == 'raw_source':
+                        f.snapshot['segments'] = [source]
+                    elif mutation == 'same_kind':
+                        item['kind'] = kind
+                    f.save()
+                    with self.assertRaises(JobError):
+                        f.run()
+                    self.assertFalse((f.directory / 'result.json').exists())
+
+    def test_session_bounds_and_single_session_source_task_boundary(self):
+        from forum_meeting_worker.job_io import KINDS
+        for kind in KINDS:
+            f = Fixture(self.tmp.name, kind=kind)
+            if kind in ('event_report', 'closing_brief'):
+                f.published([f.session, str(uuid4())])
+                validate_run(f.params, f.configuration)
+                f.params['session_ids'] = [str(uuid4()) for _ in range(100)]
+                validate_run(f.params, f.configuration)
+            else:
+                f.params['session_ids'].append(str(uuid4()))
+                with self.assertRaisesRegex(JobError, 'Source tasks'):
+                    validate_run(f.params, f.configuration)
+            for sessions in ([], [f.session, f.session], ['not-a-uuid'], [str(uuid4()) for _ in range(101)]):
+                f.params['session_ids'] = sessions
+                with self.assertRaises(JobError):
+                    validate_run(f.params, f.configuration)
+
+    def test_source_tasks_reject_public_input_and_snapshot_identity_change(self):
+        f = Fixture(self.tmp.name)
+        f.published()
+        with self.assertRaisesRegex(JobError, 'source segments only'):
+            f.run()
+        f = Fixture(self.tmp.name, kind='closing_brief')
+        f.published([f.session, str(uuid4())])
+        f.snapshot['session_ids'].reverse()
+        f.save()
+        with self.assertRaisesRegex(JobError, 'identity mismatch'):
+            f.run()
 
     def test_quote_mutation_and_invented_attribution_rejected(self):
         f = Fixture(self.tmp.name, texts=['没有确定负责人，也没有承诺日期。'])
@@ -275,7 +366,12 @@ class AnalysisTests(unittest.TestCase):
 class PipeTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
-        self.f = Fixture(self.tmp.name, behavior={'delay_seconds': 0 if self._testMethodName == 'test_successful_compute_exits_cleanly' else 10})
+        public_kind = {'test_two_room_report_through_compute_process': 'event_report',
+                       'test_two_room_closing_through_compute_process': 'closing_brief'}.get(self._testMethodName)
+        immediate = public_kind or self._testMethodName == 'test_successful_compute_exits_cleanly'
+        self.f = Fixture(self.tmp.name, behavior={'delay_seconds': 0 if immediate else 10}, kind=public_kind or 'minutes')
+        if public_kind:
+            self.f.published([str(uuid4()), self.f.session])
         if self._testMethodName == 'test_uncooperative_compute_is_reaped_before_cancel_result':
             (self.f.model / 'config.json').write_bytes(canonical({'uninterruptible_delay_seconds': 10}))
             fingerprint = model_fingerprint(self.f.model)
@@ -357,6 +453,15 @@ class PipeTests(unittest.TestCase):
         self.send('shutdown', 'end', {})
         self.assertEqual(self.read()['id'], 'end')
         self.assertEqual(self.process.wait(timeout=3), 0)
+
+    def test_two_room_report_through_compute_process(self):
+        self.test_successful_compute_exits_cleanly()
+        result = json.loads((self.f.directory / 'result.json').read_text())
+        self.assertEqual(len(result['coverage']['units']), 2)
+        self.assertTrue(all(u['target']['kind'] == 'artifact' for u in result['coverage']['units']))
+
+    def test_two_room_closing_through_compute_process(self):
+        self.test_two_room_report_through_compute_process()
 
     def test_uncooperative_compute_is_reaped_before_cancel_result(self):
         self.send('jobs.run', 'run', self.f.params)

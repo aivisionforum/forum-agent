@@ -1,4 +1,4 @@
-# forum-contracts：F02/F04 协议 v1
+# forum-contracts：F02–F10 协议 v1
 
 不依赖 Tauri、Dora 或 MLX 的 Rust 数据契约。持久事件包括 capture、audio gap、ASR final/人工修订、会议状态/停采/producer 对账、原文封存、语向边界、翻译 requested/final/failed。类型及 core 返回值共同生成 `packages/contracts/forum.generated.ts` 和 `forum.schema.json`，生成命令见 forum-core README。
 
@@ -16,4 +16,6 @@ assert_eq!(span.validate_against("中📝文")?,"📝");
 
 `TranslationRequested` 保存来源跨度、输入、可重建拼接版本、target language、revision/attempt/epoch 及 backend/model。`DirectionChanged.boundary=Some(...)` 是采样边界后的现场切换；None 仅用于显式全场重译。`ProducerReconciled` 只描述宿主证据，不允许普通 worker 经 ingest 写入或冒充旧 producer seal。
 
-目前覆盖 F02/F04 的持久数据，不包含 F05 job 调度、模型报告、审核版本或发布网关。Python 同版本 schema 校验模块独立存在，不 import 旧 server，也没有开启尚未实现的 worker 分析能力。
+`analysis.rs` 同时覆盖F05–F08任务、快照、结构化引用、覆盖率、审核/发布状态和公开投影。`forum.rs` 增加F09的独立匿名说话人标签/embedding命令，以及F10的严格公开peer快照/游标批次、精确公开版本选择和来源provenance。网络peer只接受PublicArtifact/PublicEvidence，不接受内部TranscriptRecord/ArtifactRecord；未知字段严格拒绝。公开标题/正文/证据需要操作者独立审核，不能从source原文自动填充。
+
+核心事务实施owner/event/session/revision与撤回约束，gateway实施网络凭证与TLS验证。模型输入仍使用既有AnalysisSnapshot格式，远端公开ID通过宿主的来源映射成为安全alias，不向worker提供网络凭证或远端私有数据。Python同版本schema模块独立存在，不import旧server。

@@ -1,8 +1,9 @@
-# Forum Meeting Worker — F05/F08 本地分析
+# Forum Meeting Worker — 本地会议与跨会场分析
 
 这是由桌面 Rust 宿主管理的 Python 3.12 文本计算进程，支持
 `insight`、`minutes`、`event_report`、`suggested_questions`、
-`redaction_review`、`closing_brief` 六种单场任务。它不导入旧 Forum
+`redaction_review`、`closing_brief` 六种任务。原文任务限定单场；报告和闭幕稿
+接受宿主明确选择的 1–100 个场次的公开版本。它不导入旧 Forum
 server/session 全局变量，不采集音频、不启动 Dora、不写会议数据库，也不发布内容。
 所有内容先作为带引用、等待审核的草稿返回，由 core 校验和存储。
 
@@ -68,8 +69,11 @@ worker 将引用映射成 core SourceSpan/ArtifactEvidence，要求 quote 在该
 snapshot.input_complete=false 会保持部分结果。部分块有效、部分块失败会返回
 succeeded_partial；全部计算块失败返回错误。拼接保留各块已验证条目，包括最后短块，
 不把全会议再次塞进一个超长 prompt。当前是确定性分块组合，尚未承诺全场去重和高质量
-综合概括；它们需要真实会议质量评估。redaction_review 只提供建议，不自动改原文；
-closing_brief 只处理本场，不实现跨场宣传或自动发布。
+综合概括；它们需要真实会议质量评估。redaction_review 只提供建议，不自动改原文。
+event_report 和 closing_brief 仅接受 core 冻结的公开正文，不接受原始片段或私有字段；
+每条公开输入须归属所选场次的非空子集，全部输入合起来须覆盖每个所选场次。
+跨会场 owner、活动、准确发布版本和失效传播由 core 权威校验；worker 不联网查询，
+不自行扩大输入，也不自动审核或发布结果。
 
 ## 验证
 

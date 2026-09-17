@@ -24,6 +24,8 @@ pub struct MeetingOptions {
     pub target_language: String,
     pub recording_enabled: bool,
     pub system_audio: bool,
+    #[serde(default)]
+    pub dual_audio: bool,
     #[serde(default = "default_max_segment_ms")]
     pub max_segment_ms: u64,
 }
@@ -58,6 +60,8 @@ impl MeetingOptions {
 pub struct SessionSetup {
     pub session: SessionSpec,
     pub track: TrackSpec,
+    #[serde(default)]
+    pub secondary_track: Option<TrackSpec>,
     pub options: MeetingOptions,
 }
 
@@ -65,7 +69,7 @@ pub struct SessionSetup {
 pub struct MeetingRepository {
     pub core: CoreHandle,
     root: PathBuf,
-    identity: [Uuid; 3],
+    identity: Arc<Mutex<[Uuid; 3]>>,
 }
 
 pub fn core_error(error: StoreError) -> RpcError {
@@ -105,6 +109,17 @@ fn write_new_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
 }
 
 impl MeetingRepository {
+    pub fn identity(&self)->[Uuid;3]{*self.identity.lock()}
+    pub fn join_event(&self,event_id:Uuid)->Result<(),String>{
+        if event_id.is_nil(){return Err("活动 ID 无效".into());}
+        let mut identity=self.identity.lock();let mut next=*identity;
+        // A room is scoped to one event in core. Reusing the prior event's room
+        // would make every subsequent session fail the ownership check.
+        if next[1]!=event_id{next[1]=event_id;next[2]=Uuid::new_v4();}
+        let path=self.root.join("store/device.json");let tmp=self.root.join("store").join(format!("device-{}.tmp",Uuid::new_v4()));
+        write_new_json(&tmp,&next)?;fs::rename(&tmp,&path).map_err(|e|e.to_string())?;fs::File::open(path.parent().unwrap()).and_then(|f|f.sync_all()).map_err(|e|e.to_string())?;
+        *identity=next;Ok(())
+    }
     pub fn export_markdown(&self, session_id: Uuid) -> Result<String, String> {
         self.core
             .call(move |store| {
@@ -194,7 +209,7 @@ impl MeetingRepository {
         Ok(Self {
             core,
             root,
-            identity,
+            identity:Arc::new(Mutex::new(identity)),
         })
     }
 
@@ -204,7 +219,7 @@ impl MeetingRepository {
             .map_err(|e| e.to_string())
     }
     pub fn import_legacy(&self, title:String, content:String) -> Result<forum_core::SessionSummary,String> {
-        let spec=SessionSpec { session_id:Uuid::new_v4(), event_id:self.identity[1], room_id:self.identity[2], owner_device_id:self.identity[0], title };
+        let spec=SessionSpec { session_id:Uuid::new_v4(), event_id:self.identity()[1], room_id:self.identity()[2], owner_device_id:self.identity()[0], title };
         self.core.call(move|store|store.import_legacy_transcript(spec,content)).map_err(|e|e.to_string())
     }
 
@@ -238,6 +253,7 @@ impl MeetingRepository {
         setup.session.validate().map_err(|e| e.to_string())?;
         setup.track.validate().map_err(|e| e.to_string())?;
         setup.options.validate()?;
+        if let Some(other)=&setup.secondary_track {other.validate().map_err(|e|e.to_string())?;if other.session_id!=session_id || other.track_id==setup.track.track_id || setup.track.kind!=TrackKind::Mic || other.kind!=TrackKind::System || !setup.options.dual_audio {return Err("双轨恢复范围无效".into());}} else if setup.options.dual_audio {return Err("双轨恢复缺少系统音轨".into());}
         if setup.session.session_id != session_id || setup.track.session_id != session_id {
             return Err("恢复资料不属于所选会议".into());
         }
@@ -253,22 +269,24 @@ impl MeetingRepository {
         let id = Uuid::new_v4();
         let session = SessionSpec {
             session_id: id,
-            event_id: self.identity[1],
-            room_id: self.identity[2],
-            owner_device_id: self.identity[0],
+            event_id: self.identity()[1],
+            room_id: self.identity()[2],
+            owner_device_id: self.identity()[0],
             title: format!("Forum {}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S")),
         };
         let track = TrackSpec {
             track_id: Uuid::new_v4(),
             session_id: id,
-            kind: if options.system_audio {
+            kind: if options.system_audio && !options.dual_audio {
                 TrackKind::System
             } else {
                 TrackKind::Mic
             },
             sample_rate: 16000,
         };
+        let secondary_track=options.dual_audio.then(||TrackSpec{track_id:Uuid::new_v4(),session_id:id,kind:TrackKind::System,sample_rate:16000});
         let setup = SessionSetup {
+            secondary_track,
             session,
             track,
             options,
@@ -279,7 +297,9 @@ impl MeetingRepository {
         self.core
             .call(move |store| {
                 store.create_session(&saved.session)?;
-                store.create_track(&saved.track)
+                store.create_track(&saved.track)?;
+                if let Some(track)=&saved.secondary_track{store.create_track(track)?;}
+                Ok(())
             })
             .map_err(|e| e.to_string())?;
         Ok(setup)
@@ -323,7 +343,7 @@ impl MeetingHost {
             None => repository.create_setup(options)?,
         };
         let session_id = setup.session.session_id;
-        let track_id = setup.track.track_id;
+        let track_ids:Vec<_>=std::iter::once(setup.track.track_id).chain(setup.secondary_track.as_ref().map(|t|t.track_id)).collect();
         let replay_only = recovery.is_some();
         let socket_directory =
             PathBuf::from("/tmp").join(format!("forum-{}", Uuid::new_v4().simple()));
@@ -346,7 +366,7 @@ impl MeetingHost {
             handle_rpc(
                 &core,
                 &scope,
-                track_id,
+                &track_ids,
                 replay_only,
                 &node_readiness,
                 request,
@@ -412,6 +432,7 @@ impl MeetingHost {
         CaptureContext {
             max_segment_ms: self.setup.options.max_segment_ms,            runtime: self.config.clone(),
             track: self.setup.track.clone(),
+            secondary_track:self.setup.secondary_track.clone(),
             recording_dir: self.repository.session_dir(self.id()).join("audio"),
             recording_enabled: self.setup.options.recording_enabled,
             replay_only: self.replay_only,
@@ -613,13 +634,14 @@ fn invalid(message: &str) -> RpcError {
 fn handle_rpc(
     core: &CoreHandle,
     scope: &SessionSpec,
-    track_id: Uuid,
+    track_ids: &[Uuid],
     replay_only: bool,
     readiness: &Arc<Mutex<ModelReadiness>>,
     request: RpcRequest,
 ) -> Result<Value, RpcError> {
     let params = request.params;
     let id = scope.session_id;
+    let track_ids=track_ids.to_vec();
     if request.method == "ingest" {
         let event = params
             .get("event")
@@ -683,7 +705,7 @@ fn handle_rpc(
                 .call(move |store| {
                     Ok((
                         store.session_status(id)?,
-                        store.registered_segment_ids(id, track_id)?,
+                        track_ids.iter().map(|track|store.registered_segment_ids(id,*track)).collect::<forum_core::Result<Vec<_>>>()?.into_iter().flatten().collect::<Vec<_>>(),
                         if replay_only {
                             store.terminal_segment_ids_for_replay(id)?
                         } else {
@@ -749,7 +771,7 @@ fn handle_rpc(
             let (registered, sealed) = core
                 .call(move |store| {
                     Ok((
-                        store.registered_segment_ids(id, track_id)?,
+                        track_ids.iter().map(|track|store.registered_segment_ids(id,*track)).collect::<forum_core::Result<Vec<_>>>()?.into_iter().flatten().collect::<Vec<_>>(),
                         store.session_status(id)?.capture_stopped,
                     ))
                 })

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "forum-speaker-worker"
+version = "0.1.0"
+description = "Offline ECAPA embeddings for anonymous session-scoped speaker assignment"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[project.scripts]
+forum-speaker-worker = "forum_speaker_worker.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

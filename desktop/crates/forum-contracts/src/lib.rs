@@ -5,6 +5,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 mod analysis;
 pub use analysis::*;
+mod forum;
+pub use forum::*;
 mod reliable;
 pub use reliable::*;
 use std::collections::HashSet;

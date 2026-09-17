@@ -212,6 +212,7 @@ fn main() -> Result<()> {
         );
     }
     let mut capture = CaptureSession::open(CaptureContext {
+        secondary_track: None,
         max_segment_ms: 10000,
         runtime: config.clone(),
         track,

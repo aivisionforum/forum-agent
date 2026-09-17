@@ -46,7 +46,7 @@
       "../scripts/macos_preflight.sh": "scripts/macos_preflight.sh",
       "../scripts/macos_bootstrap.sh": "scripts/macos_bootstrap.sh",
       "../scripts/dora_binary.sh": "scripts/dora_binary.sh",
-      "../moxin-dora-bridge/lib/libAudioCapture.dylib": "lib/libAudioCapture.dylib"
+      "../resources/setup/prepare_forum_models.py": "setup/prepare_forum_models.py"
     },
     "macOS": {
       "minimumSystemVersion": "14.0",

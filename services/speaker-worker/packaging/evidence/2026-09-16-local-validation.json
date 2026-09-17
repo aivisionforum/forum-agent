@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "date": "2026-09-16",
+  "fixture": "synthetic_tones_not_speaker_accuracy",
+  "tests": {
+    "unittest_count": 22,
+    "result": "passed"
+  },
+  "portable_python": "3.12.11",
+  "native_files_checked": 151,
+  "model_imports": {
+    "torch": "2.13.0",
+    "speechbrain": "1.1.0",
+    "cpu_threads": 2
+  },
+  "installed_probe": {
+    "success": true,
+    "installed_module": true,
+    "pcm_seconds": 3,
+    "elapsed_seconds": 3.7190893750012037,
+    "ping_latency_seconds": 0.00029216700204415247,
+    "embedding_dimension": 192,
+    "embedding_l2_norm": 1.0000000555553035,
+    "model_cache_unchanged": true,
+    "model_manifest_id": "sha256:0575cb64845e6b9a10db9bcb74d5ac32b326b8dc90352671d345e2ee3d0126a2",
+    "exit_code": 0
+  },
+  "lock_sha256": "c0d68d5cbc6421fad76235450b9b566390055b3785821b6eef56c9f92f688b7d",
+  "worker_wheel_sha256": "b62620e3807d48d7451c0712742a697b10e10c0af2cca94e0a14df917ab183ae",
+  "native_relocations": [
+    {
+      "file": "scipy/linalg/_fblas.cpython-312-darwin.so",
+      "original_sha256": "6502e4e093d03932479317d45bfea018ef0999bc5c4bd46687253322c13e9448",
+      "bundled_sha256": "66d85efee6956415b9a9ee33ecab0c70ffd79363a0aade9282f1b815b14ed325",
+      "removed_build_rpaths": [
+        "/opt/homebrew/Cellar/gcc@13/13.4.0/lib/gcc/13",
+        "/opt/homebrew/Cellar/gcc@13/13.4.0/lib/gcc/13/gcc",
+        "/opt/homebrew/Cellar/gcc@13/13.4.0/lib/gcc/13/gcc/aarch64-apple-darwin23/13"
+      ],
+      "signature": "ad-hoc, timestamp disabled"
+    },
+    {
+      "file": "torchaudio/lib/_torchaudio.abi3.so",
+      "original_sha256": "25d6ed7f5691677284f4bcfa2ad7df4fca730badc5de0c7f89c7c5b48b893af1",
+      "bundled_sha256": "e5090b9b92041d4d993f4bdaee0db54acf521d6c963cbaaf5b25f8a547dd0f85",
+      "removed_build_rpaths": [
+        "/Users/ec2-user/runner/_work/_temp/conda_environment_23408961961/lib"
+      ],
+      "added_relative_rpaths": [
+        "@loader_path/../../torch/lib"
+      ],
+      "signature": "ad-hoc, timestamp disabled"
+    },
+    {
+      "file": "torchaudio/lib/libtorchaudio.abi3.so",
+      "original_sha256": "57d5dd7ddd3764fd6ebc543122b7494672ce149c6d4fad6d211d301084dcf3cc",
+      "bundled_sha256": "d9b193bc834803c58a807b733cf9d1a266e9aaa5699df2a3799c2c5df825f8e7",
+      "removed_build_rpaths": [
+        "/Users/ec2-user/runner/_work/_temp/conda_environment_23408961961/lib"
+      ],
+      "added_relative_rpaths": [
+        "@loader_path/../../torch/lib"
+      ],
+      "signature": "ad-hoc, timestamp disabled"
+    }
+  ],
+  "distribution_model_weights_included": false,
+  "formal_C3_acceptance": false,
+  "formal_clean_mac_acceptance": false,
+  "developer_id_notarization": "not_evaluated",
+  "full_local_evidence": [
+    "artifacts/local/f09-ecapa-installed-probe-2/report.json",
+    "/tmp/forum-speaker-runtime-2-check.json"
+  ],
+  "notes": [
+    "Fresh independent standalone CPython archive; no developer virtualenv copied or modified.",
+    "Offline artifact-cache packaging and pip check passed.",
+    "Known Torchaudio build rpaths were replaced with the bundled Torch relative path.",
+    "Synthetic audio proves real model execution and responsive control, not speaker attribution quality."
+  ]
+}

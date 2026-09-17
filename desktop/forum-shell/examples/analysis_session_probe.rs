@@ -222,6 +222,7 @@ fn run(root: &PathBuf, report: &mut Value) -> anyhow::Result<()> {
             session_ids: vec![sid],
             kind: AnalysisKind::Minutes,
             automatic: false,
+            public_selections:None,
         })
         .map_err(anyhow::Error::msg)?;
     let finished = wait(&core, &requested)?;
@@ -296,6 +297,7 @@ fn run(root: &PathBuf, report: &mut Value) -> anyhow::Result<()> {
             session_ids: vec![sid],
             kind: AnalysisKind::EventReport,
             automatic: false,
+            public_selections:None,
         })
         .map_err(anyhow::Error::msg)?;
     let finished = wait(&core, &requested)?;

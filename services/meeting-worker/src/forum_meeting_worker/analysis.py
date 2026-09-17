@@ -11,6 +11,18 @@ from .job_io import (AttemptFiles, JobError, KINDS, canonical, digest, integer,
 from .prompts import load_prompt
 
 GENERATION_FIELDS = {'temperature', 'max_output_tokens', 'safety_tokens', 'max_retries', 'context_limit'}
+PUBLIC_INPUT_KINDS = frozenset(('event_report', 'closing_brief'))
+
+
+def selected_sessions(values, code='INVALID_PARAMS'):
+    require(isinstance(values, list) and 1 <= len(values) <= 100,
+            'Select between one and 100 explicit sessions.', code)
+    try:
+        ids = [uuid(value) for value in values]
+    except JobError:
+        raise JobError(code, 'Expected canonical non-nil session UUIDs.') from None
+    require(len(set(ids)) == len(ids), 'Duplicate selected session.', code)
+    return set(ids)
 
 
 def validate_run(params, configuration):
@@ -21,8 +33,9 @@ def validate_run(params, configuration):
     integer(params['attempt'], 1, 1000)
     integer(params['remaining_budget_ms'], 1, 24 * 3600 * 1000)
     require(params['kind'] in KINDS, 'Unsupported analysis task.')
-    require(isinstance(params['session_ids'], list) and len(params['session_ids']) == 1, 'This worker supports one explicitly selected session.')
-    uuid(params['session_ids'][0])
+    sessions = selected_sessions(params['session_ids'])
+    require(params['kind'] in PUBLIC_INPUT_KINDS or len(sessions) == 1,
+            'Source tasks support one explicitly selected session.')
     snapshot = params['snapshot']
     require(isinstance(snapshot, dict) and set(snapshot) == {'id', 'relative_path', 'sha256', 'input_cursor'}, 'Invalid snapshot descriptor.')
     uuid(snapshot['id']); sha(snapshot['sha256']); integer(snapshot['input_cursor'], 0, 2**63-1)
@@ -66,7 +79,7 @@ def read_inputs(params, root):
                         ('effective_config_hash', params['config']['effective_config_hash'])]:
         require(snapshot[left] == right, 'Snapshot/job identity mismatch.', 'INVALID_SNAPSHOT')
     require(isinstance(snapshot['segments'], list) and isinstance(snapshot['published_artifacts'], list), 'Invalid snapshot inputs.', 'INVALID_SNAPSHOT')
-    if params['kind'] == 'event_report':
+    if params['kind'] in PUBLIC_INPUT_KINDS:
         require(not snapshot['segments'], 'Report accepts selected published artifacts only.', 'INVALID_SNAPSHOT')
         require(bool(snapshot['published_artifacts']), 'No published artifacts were selected.', 'DEPENDENCY_NOT_READY')
     else:
@@ -95,7 +108,10 @@ def read_inputs(params, root):
 
 def input_units(snapshot):
     ready, coverage, ids = [], [], set()
-    records = snapshot['published_artifacts'] if snapshot['kind'] == 'event_report' else snapshot['segments']
+    public_inputs = snapshot['kind'] in PUBLIC_INPUT_KINDS
+    sessions = selected_sessions(snapshot['session_ids'], 'INVALID_SNAPSHOT')
+    covered_sessions = set()
+    records = snapshot['published_artifacts'] if public_inputs else snapshot['segments']
     for index, item in enumerate(records):
         require(isinstance(item, dict) and isinstance(item.get('text'), str), 'Invalid input text.', 'INVALID_SNAPSHOT')
         text = item['text']
@@ -103,9 +119,17 @@ def input_units(snapshot):
             length = len(text.encode('utf-8'))
         except UnicodeError:
             raise JobError('INVALID_SNAPSHOT', 'Input contains invalid Unicode.') from None
-        if snapshot['kind'] == 'event_report':
+        if public_inputs:
+            # Only the host's reviewed public projection enters the worker.
+            # The core binds owner/event and frozen revision to this snapshot;
+            # no private artifact body or remote source fields are accepted.
+            require(set(item) == {'artifact_id', 'revision', 'session_ids', 'kind', 'title', 'text'}
+                    and item['kind'] in KINDS and item['kind'] != snapshot['kind']
+                    and isinstance(item['title'], str), 'Invalid published input fields.', 'INVALID_SNAPSHOT')
             identity = uuid(item.get('artifact_id')); revision = integer(item.get('revision'), 1, 2**32-1)
-            require(item.get('session_ids') == snapshot['session_ids'], 'Cross-session report input.', 'INVALID_SNAPSHOT')
+            item_sessions = selected_sessions(item['session_ids'], 'INVALID_SNAPSHOT')
+            require(item_sessions <= sessions, 'Cross-session report input.', 'INVALID_SNAPSHOT')
+            covered_sessions.update(item_sessions)
             target = {'kind': 'artifact', 'artifact_id': identity, 'revision': revision}
             evidence = {'kind': 'artifact', 'artifact_id': identity, 'revision': revision}
             status = 'success'
@@ -130,6 +154,8 @@ def input_units(snapshot):
             coverage.append(cover(unit, 'ignored_empty'))
         else:
             ready.append(unit)
+    if public_inputs:
+        require(covered_sessions == sessions, 'A selected session has no published input.', 'INVALID_SNAPSHOT')
     return ready, coverage
 
 

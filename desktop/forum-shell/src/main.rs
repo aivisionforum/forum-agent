@@ -4,6 +4,8 @@
 
 mod app;
 mod analysis;
+mod lan_manager;
+mod speaker_manager;
 mod apple_speech;
 mod dataflow;
 mod identity;

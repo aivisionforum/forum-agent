@@ -142,7 +142,11 @@ fn hashes(config: &AnalysisConfig) -> Result<()> {
     Ok(())
 }
 
-fn snapshot_for(c: &Connection, r: &CreateAnalysisJob) -> Result<AnalysisSnapshotData> {
+fn snapshot_for(
+    c: &Connection,
+    r: &CreateAnalysisJob,
+    selected: Option<&[PublicSelection]>,
+) -> Result<AnalysisSnapshotData> {
     let mut ids = r.session_ids.clone();
     ids.sort();
     if ids.is_empty()
@@ -152,12 +156,16 @@ fn snapshot_for(c: &Connection, r: &CreateAnalysisJob) -> Result<AnalysisSnapsho
     {
         return Err(invalid("analysis_session_selection"));
     }
-    if r.kind != AnalysisKind::EventReport && ids.len() != 1 {
+    if !matches!(
+        r.kind,
+        AnalysisKind::EventReport | AnalysisKind::ClosingBrief
+    ) && ids.len() != 1
+    {
         return Err(StoreError::ScopeMismatch);
     }
-    let event = require_session(c, ids[0])?.event_id;
+    let event = super::forum::analysis_session_event(c, ids[0])?;
     for id in &ids {
-        if require_session(c, *id)?.event_id != event {
+        if super::forum::analysis_session_event(c, *id)? != event {
             return Err(StoreError::ScopeMismatch);
         }
     }
@@ -177,7 +185,10 @@ fn snapshot_for(c: &Connection, r: &CreateAnalysisJob) -> Result<AnalysisSnapsho
         published_artifacts: vec![],
         input_complete: true,
     };
-    if r.kind == AnalysisKind::EventReport {
+    if matches!(
+        r.kind,
+        AnalysisKind::EventReport | AnalysisKind::ClosingBrief
+    ) {
         let mut stmt=c.prepare("SELECT a.body_json,p.body_json FROM analysis_artifacts a JOIN publication_projection p ON a.id=p.artifact_id WHERE p.active=1 ORDER BY a.created_at_ms,a.id")?;
         let rows = stmt
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
@@ -185,7 +196,7 @@ fn snapshot_for(c: &Connection, r: &CreateAnalysisJob) -> Result<AnalysisSnapsho
         let mut included = HashSet::new();
         for (a, p) in rows {
             let a: ArtifactRecord = serde_json::from_str(&a)?;
-            if a.kind == AnalysisKind::EventReport
+            if a.kind == r.kind
                 || !a.session_ids.iter().all(|i| ids.contains(i))
                 || a.publication != ArtifactPublication::Published
                 || a.review != ArtifactReview::Approved
@@ -203,6 +214,14 @@ fn snapshot_for(c: &Connection, r: &CreateAnalysisJob) -> Result<AnalysisSnapsho
                 title: p.title,
                 text: p.text,
             });
+        }
+        for id in &ids {
+            for input in super::forum::analysis_peer_inputs(c, *id)? {
+                if input.kind != r.kind {
+                    included.insert(*id);
+                    s.published_artifacts.push(input);
+                }
+            }
         }
         if ids.iter().any(|i| !included.contains(i)) {
             return Err(invalid("selected_session_has_no_published_artifact"));
@@ -264,7 +283,12 @@ fn snapshot_for(c: &Connection, r: &CreateAnalysisJob) -> Result<AnalysisSnapsho
                         .unwrap_or_default(),
                     status,
                     audio: serde_json::from_str(&a)?,
-                    speaker_id: record.as_ref().and_then(|r| r.payload.speaker_id),
+                    speaker_id: super::forum::analysis_speaker(
+                        c,
+                        *id,
+                        parse_uuid(&seg)?,
+                        record.as_ref().and_then(|r| r.payload.speaker_id),
+                    )?,
                 });
             }
         }
@@ -291,11 +315,55 @@ fn snapshot_for(c: &Connection, r: &CreateAnalysisJob) -> Result<AnalysisSnapsho
             return Err(invalid("analysis_empty_input"));
         }
     }
-    if r.kind != AnalysisKind::EventReport {
+    if !matches!(
+        r.kind,
+        AnalysisKind::EventReport | AnalysisKind::ClosingBrief
+    ) {
         s.input_cursor = 0;
         for source in &s.segments {
             let seq:u64=c.query_row("SELECT MAX(c.created_seq,COALESCE(r.created_seq,0)) FROM capture_segments c JOIN segments s ON s.id=c.segment_id LEFT JOIN segment_revisions r ON r.segment_id=s.id AND r.revision=s.current_revision WHERE s.id=?1",[source.segment_id.to_string()],|r|r.get(0))?;
             s.input_cursor = s.input_cursor.max(seq);
+        }
+    }
+    if let Some(selected) = selected {
+        if !matches!(
+            r.kind,
+            AnalysisKind::EventReport | AnalysisKind::ClosingBrief
+        ) || selected.is_empty()
+            || selected.len() > 1000
+        {
+            return Err(invalid("analysis_public_selection"));
+        }
+        let mut keep = HashSet::new();
+        let mut unique = HashSet::new();
+        for selection in selected {
+            if !ids.contains(&selection.session_id)
+                || !unique.insert((
+                    selection.owner_device_id,
+                    selection.session_id,
+                    selection.public_id,
+                ))
+            {
+                return Err(StoreError::ScopeMismatch);
+            }
+            let alias = super::forum::selection_alias(c, selection)?;
+            if !s.published_artifacts.iter().any(|a| {
+                a.artifact_id == alias
+                    && a.revision == selection.revision
+                    && a.session_ids.contains(&selection.session_id)
+            }) {
+                return Err(StoreError::LateResult);
+            }
+            keep.insert(alias);
+        }
+        s.published_artifacts
+            .retain(|a| keep.contains(&a.artifact_id));
+        if ids.iter().any(|id| {
+            !s.published_artifacts
+                .iter()
+                .any(|a| a.session_ids.contains(id))
+        }) {
+            return Err(invalid("selected_session_has_no_selected_publication"));
         }
     }
     // A stable UUID from canonical input makes identical snapshots deduplicate.
@@ -324,8 +392,19 @@ fn snapshot_current(c: &Connection, s: &AnalysisSnapshot) -> Result<bool> {
         if rev != input.revision.map(Revision::get) {
             return Ok(false);
         }
+        if super::forum::analysis_speaker(c, input.session_id, input.segment_id, input.speaker_id)?
+            != input.speaker_id
+        {
+            return Ok(false);
+        }
     }
     for input in &s.published_artifacts {
+        if let Some(current) = super::forum::peer_input_current(c, input)? {
+            if !current {
+                return Ok(false);
+            }
+            continue;
+        }
         let a = load_artifact(c, input.artifact_id)?;
         if a.revision != input.revision
             || a.publication != ArtifactPublication::Published
@@ -352,6 +431,20 @@ fn snapshot_current(c: &Connection, s: &AnalysisSnapshot) -> Result<bool> {
 
 impl Store {
     pub fn create_analysis_job(&mut self, r: &CreateAnalysisJob) -> Result<AnalysisJob> {
+        self.create_analysis_job_selected(r, None)
+    }
+    pub fn create_selected_analysis_job(
+        &mut self,
+        r: &CreateAnalysisJob,
+        selected: &[PublicSelection],
+    ) -> Result<AnalysisJob> {
+        self.create_analysis_job_selected(r, Some(selected))
+    }
+    fn create_analysis_job_selected(
+        &mut self,
+        r: &CreateAnalysisJob,
+        selected: Option<&[PublicSelection]>,
+    ) -> Result<AnalysisJob> {
         hashes(&r.config)?;
         if r.request_id.is_nil()
             || r.budget_ms < 1000
@@ -364,7 +457,10 @@ impl Store {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let request_sha = digest(json(r)?);
+        let request_sha = digest(match selected {
+            Some(s) => json(&(r, s))?,
+            None => json(r)?,
+        });
         let existing: Option<(String, String)> = tx
             .query_row(
                 "SELECT j.body_json,k.request_sha256 FROM analysis_request_keys k JOIN analysis_jobs j ON j.id=k.job_id WHERE k.request_id=?1",
@@ -378,7 +474,7 @@ impl Store {
             }
             return Ok(serde_json::from_str(&body)?);
         }
-        let snapshot = snapshot_for(&tx, r)?;
+        let snapshot = snapshot_for(&tx, r, selected)?;
         if r.automatic {
             let existing:Option<String>=tx.query_row("SELECT body_json FROM analysis_jobs WHERE json_extract(body_json,'$.automatic')=1 AND json_extract(body_json,'$.snapshot_sha256')=?1 ORDER BY created_at_ms,id LIMIT 1",[&snapshot.sha256],|row|row.get(0)).optional()?;
             if let Some(body) = existing {
@@ -396,6 +492,7 @@ impl Store {
                 snapshot.compact_json
             ],
         )?;
+        super::forum::save_peer_provenance(&tx, &snapshot.snapshot)?;
         if r.automatic && r.kind == AnalysisKind::Insight {
             let mut stmt = tx.prepare(
                 "SELECT body_json FROM analysis_jobs WHERE state IN ('queued','waiting')",
@@ -923,7 +1020,7 @@ fn invalidate_artifacts(c: &Connection, initial: Vec<Uuid>) -> Result<()> {
     }
     Ok(())
 }
-fn invalidate_dependents(c: &Connection, id: Uuid) -> Result<()> {
+pub(super) fn invalidate_dependents(c: &Connection, id: Uuid) -> Result<()> {
     let mut q=c.prepare("SELECT artifact_id FROM artifact_dependencies WHERE dependency_kind='artifact' AND dependency_id=?1")?;
     let ids = q
         .query_map([id.to_string()], |r| r.get::<_, String>(0))?
@@ -1162,9 +1259,7 @@ impl Store {
             || cmd.policy_hash != a.config.projection_policy_hash
             || matches!(
                 a.kind,
-                AnalysisKind::SuggestedQuestions
-                    | AnalysisKind::RedactionReview
-                    | AnalysisKind::ClosingBrief
+                AnalysisKind::SuggestedQuestions | AnalysisKind::RedactionReview
             )
         {
             return Err(invalid("artifact_publication_policy"));
@@ -1322,7 +1417,7 @@ fn page_records<T: serde::de::DeserializeOwned>(
     after: Option<AnalysisPageKey>,
     limit: u32,
 ) -> Result<(u64, Vec<T>, Option<AnalysisPageKey>)> {
-    require_session(c, session)?;
+    super::forum::analysis_session_event(c, session)?;
     if limit == 0 || limit > 100 {
         return Err(invalid("analysis_page_limit"));
     }
@@ -1421,6 +1516,40 @@ fn content_markdown(a: &ArtifactRecord) -> String {
     out
 }
 impl Store {
+    /// Closing speech uses only the separately reviewed public copy. Call again
+    /// during playback so withdrawal, edits and peer disconnects stop narration.
+    pub fn public_artifact_for_revision(
+        &self,
+        id: Uuid,
+        revision: Revision,
+    ) -> Result<PublicArtifact> {
+        let tx = self.connection.unchecked_transaction()?;
+        let a = load_artifact(&tx, id)?;
+        expected_revision(&a, revision)?;
+        if a.kind != AnalysisKind::ClosingBrief
+            || a.publication != ArtifactPublication::Published
+            || a.review != ArtifactReview::Approved
+            || a.validation != ArtifactValidation::Valid
+            || !a.coverage_complete
+            || !snapshot_current(&tx, &load_snapshot(&tx, a.snapshot_id)?.snapshot)?
+        {
+            return Err(invalid("closing_speech_requires_current_publication"));
+        }
+        let body: Option<String> = tx
+            .query_row(
+                "SELECT body_json FROM publication_projection WHERE artifact_id=?1 AND active=1",
+                [id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let p: PublicArtifact =
+            serde_json::from_str(&body.ok_or(StoreError::NotFound("public_closing_brief"))?)?;
+        if p.revision != revision {
+            return Err(StoreError::LateResult);
+        }
+        tx.commit()?;
+        Ok(p)
+    }
     pub fn list_analysis_jobs(
         &self,
         session: Uuid,
@@ -1539,6 +1668,16 @@ impl Store {
                 end_utf8,
                 quote,
             } => {
+                if let Some(view) = super::forum::peer_evidence(
+                    &self.connection,
+                    *artifact_id,
+                    *revision,
+                    *start_utf8,
+                    *end_utf8,
+                    quote,
+                )? {
+                    return Ok(view);
+                }
                 let a = load_artifact(&self.connection, *artifact_id)?;
                 let mut stmt=self.connection.prepare("SELECT body_json FROM publication_changes WHERE artifact_id=?1 ORDER BY publication_seq DESC")?;
                 let rows = stmt

@@ -10,7 +10,7 @@ use std::{
         Arc,
     },
     thread,
-    time::Duration,
+    time::{Duration,Instant},
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -30,6 +30,7 @@ enum SpeechCommand {
     },
     Speak(String),
     Stop,
+    StopAndWait(Sender<()>),
     Shutdown,
 }
 
@@ -42,6 +43,7 @@ struct SynthesisTask {
 
 enum SynthesisCommand {
     Generate(SynthesisTask),
+    Barrier(Sender<()>),
     Shutdown,
 }
 
@@ -51,6 +53,7 @@ enum PlaybackCommand {
         output_device: Option<String>,
         path: PathBuf,
     },
+    Barrier(Sender<()>),
     Shutdown,
 }
 
@@ -88,6 +91,14 @@ impl AppleSpeech {
 
     pub fn stop(&self) {
         let _ = self.sender.send(SpeechCommand::Stop);
+    }
+
+    /// Acknowledged only after the playback worker has released its audio stream.
+    /// Old synthesis completions are fenced by generation and cannot restart it.
+    pub fn stop_and_wait(&self) -> Result<(), String> {
+        let (tx,rx)=mpsc::channel();
+        self.sender.send(SpeechCommand::StopAndWait(tx)).map_err(|_|"Speech worker unavailable".to_string())?;
+        rx.recv_timeout(Duration::from_secs(5)).map_err(|_|"Speech output has not confirmed release".to_string())
     }
 }
 
@@ -147,6 +158,11 @@ fn speech_worker(receiver: Receiver<SpeechCommand>) {
                 generation.fetch_add(1, Ordering::SeqCst);
                 enabled = false;
             }
+            SpeechCommand::StopAndWait(ack) => {
+                generation.fetch_add(1, Ordering::SeqCst);
+                enabled=false;
+                let _=synthesis_sender.send(SynthesisCommand::Barrier(ack));
+            }
             SpeechCommand::Shutdown => {
                 generation.fetch_add(1, Ordering::SeqCst);
                 let _ = synthesis_sender.send(SynthesisCommand::Shutdown);
@@ -171,7 +187,7 @@ fn synthesis_worker(
                 if task.generation != current_generation.load(Ordering::SeqCst) {
                     continue;
                 }
-                match synthesize_wave(&task.voice, &task.text) {
+                match synthesize_wave(&task.voice, &task.text,task.generation,&current_generation) {
                     Ok(path) if task.generation == current_generation.load(Ordering::SeqCst) => {
                         let _ = playback_sender.send(PlaybackCommand::Play {
                             generation: task.generation,
@@ -185,19 +201,20 @@ fn synthesis_worker(
                     Err(error) => log::error!("Could not synthesize Apple speech: {error}"),
                 }
             }
+            SynthesisCommand::Barrier(ack) => {let _=playback_sender.send(PlaybackCommand::Barrier(ack));},
             SynthesisCommand::Shutdown => break,
         }
     }
     let _ = playback_sender.send(PlaybackCommand::Shutdown);
 }
 
-fn synthesize_wave(voice: &str, text: &str) -> Result<PathBuf, String> {
+fn synthesize_wave(voice: &str, text: &str,generation:u64,current_generation:&AtomicU64) -> Result<PathBuf, String> {
     let sequence = SPEECH_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let path = std::env::temp_dir().join(format!(
         "forum-agent-speech-{}-{sequence}.wav",
         std::process::id()
     ));
-    let status = Command::new("/usr/bin/say")
+    let mut child = Command::new("/usr/bin/say")
         .arg("-v")
         .arg(voice)
         .arg("-o")
@@ -209,13 +226,28 @@ fn synthesize_wave(voice: &str, text: &str) -> Result<PathBuf, String> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
+        .spawn()
         .map_err(|error| error.to_string())?;
+    let status=wait_for_synthesis(&mut child,generation,current_generation)?;
     if status.success() {
         Ok(path)
     } else {
         let _ = fs::remove_file(&path);
         Err(format!("say exited with {status}"))
+    }
+}
+
+fn wait_for_synthesis(child:&mut Child,generation:u64,current:&AtomicU64)->Result<std::process::ExitStatus,String>{
+    let deadline=Instant::now()+Duration::from_secs(180);
+    loop {
+        if let Some(status)=child.try_wait().map_err(|e|e.to_string())?{return Ok(status);}
+        if current.load(Ordering::Acquire)!=generation || Instant::now()>=deadline {
+            // Only this directly owned `say` child, never the system speech service.
+            // Retain the handle until wait confirms exit; the caller's stop
+            // barrier times out honestly if the OS cannot release it.
+            let _=child.kill();
+        }
+        thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -239,6 +271,7 @@ fn playback_worker(receiver: Receiver<PlaybackCommand>, current_generation: Arc<
                 }
                 let _ = fs::remove_file(path);
             }
+            PlaybackCommand::Barrier(ack) => {let _=ack.send(());},
             PlaybackCommand::Shutdown => break,
         }
     }
@@ -605,6 +638,24 @@ fn is_locale(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cancelled_synthesis_reaps_its_owned_child_before_the_barrier(){
+        let mut child=Command::new("/bin/sleep").arg("10").spawn().unwrap();
+        let generation=AtomicU64::new(2);
+        let status=wait_for_synthesis(&mut child,1,&generation).unwrap();
+        assert!(!status.success());assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[test]
+    fn playback_barrier_fences_queued_old_generation_without_opening_audio(){
+        let (tx,rx)=mpsc::channel();let (ack,done)=mpsc::channel();
+        let generation=Arc::new(AtomicU64::new(2));
+        tx.send(PlaybackCommand::Play{generation:1,output_device:None,path:PathBuf::from("/does-not-exist/old-speech.wav")}).unwrap();
+        tx.send(PlaybackCommand::Barrier(ack)).unwrap();tx.send(PlaybackCommand::Shutdown).unwrap();
+        let worker=thread::spawn(move||playback_worker(rx,generation));
+        done.recv_timeout(Duration::from_secs(1)).unwrap();worker.join().unwrap();
+    }
 
     #[test]
     fn parses_multiword_apple_voice_names() {

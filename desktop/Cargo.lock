@@ -2195,8 +2195,12 @@ name = "forum-gateway"
 version = "0.1.0-dev.1"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
+ "forum-contracts",
+ "rustls",
  "serde",
  "serde_json",
+ "sha2",
  "uuid",
 ]
 

@@ -1,4 +1,5 @@
-//! Loopback-only, bounded read-only display projection.
+//! Bounded read-only projection. LAN TLS is a separate, explicitly started service.
+pub mod lan;
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -576,7 +577,7 @@ fn constant_eq(left: &str, right: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    static SERIAL: Mutex<()> = Mutex::new(());
+    pub(crate) static SERIAL: Mutex<()> = Mutex::new(());
     fn connection(info: &DisplayInfo, path: &str, auth: bool, origin: Option<&str>) -> TcpStream {
         let host = info
             .url

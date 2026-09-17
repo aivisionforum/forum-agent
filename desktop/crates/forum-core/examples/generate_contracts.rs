@@ -263,7 +263,20 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
         AnalysisPageKey,
         AnalysisJobPage,
         ArtifactPage,
-        AnalysisEvidenceView
+        AnalysisEvidenceView,
+        SpeakerLabel,
+        SpeakerAssignmentOrigin,
+        SpeakerAssignmentCommand,
+        SpeakerAssignment,
+        SpeakerEmbeddingCommand,
+        PeerSession,
+        PeerSessionState,
+        PeerPublicationSnapshot,
+        PeerPublicationBatch,
+        PublicSearchHit,
+        PublicSessionView,
+        PublicSelection,
+        PeerAnalysisProvenance
     );
     let mut events = Vec::new();
     macro_rules! event {($payload:ty,$variant:ident)=>{{let name=concat!(stringify!($payload),"Event");add_event::<$payload>(&mut defs,name,EventType::$variant);events.push(json!({"$ref":format!("#/$defs/{name}")}));}};}

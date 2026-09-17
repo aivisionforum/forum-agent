@@ -6,10 +6,12 @@
     type ExportFormat } from '../lib/forum/client';
   export let artifact: ArtifactRecord;
   export let busy = false;
+  export let running = false;
   const dispatch = createEventDispatcher<{
     edit: ArtifactEdit; review: ArtifactReviewCommand; publish: ArtifactPublishCommand;
-    hide: ArtifactVisibilityCommand; evidence: AnalysisEvidence; export: ExportFormat;
+    hide: ArtifactVisibilityCommand; evidence: AnalysisEvidence; export: ExportFormat; startClosing: 'zh' | 'en'; stopClosing: void;
   }>();
+  let readoutLanguage: 'zh' | 'en' = 'zh';
   let editing = false;
   let editRevision = 0;
   let content: ArtifactContent = { title: '', sections: [] };
@@ -102,6 +104,7 @@
     <button class="primary" disabled={busy || editing || !canPublish(artifact)} on:click={beginPublish}>审核公开版本</button>
     {#if artifact.publication === 'published'}<button disabled={busy} on:click={() => dispatch('hide',{artifact_id:artifact.artifact_id,expected_revision:artifact.revision,publication:'hidden',operator_id:operator,reason:reason.trim() || '操作员隐藏公开内容'})}>从大屏隐藏</button>{/if}
   </div>
+  {#if artifact.kind === 'closing_brief'}<div class="actions"><label>朗读语言<select bind:value={readoutLanguage} disabled={busy}><option value="zh">中文</option><option value="en">English</option></select></label><button disabled={busy || running || artifact.publication !== 'published' || !canPublish(artifact)} on:click={() => dispatch('startClosing',readoutLanguage)}>朗读已审核公开版</button><button disabled={busy} on:click={() => dispatch('stopClosing')}>停止朗读</button></div><p class="small">朗读前须停止采音并安装对应 Apple 音色；朗读只使用已审核公开正文。</p>{/if}
   {#if artifact.kind === 'suggested_questions'}<p class="small">主持人问题仅在操作台显示。</p>{/if}
   <div class="exports"><span>导出当前版本</span>{#each ['markdown','html','json'] as format}<button disabled={busy} on:click={() => dispatch('export',format as ExportFormat)}>{format === 'markdown' ? 'Markdown' : format.toUpperCase()}</button>{/each}<small>草稿导出保留审核状态；导出文件无法远程撤回。</small></div>
   {#if publishing}

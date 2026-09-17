@@ -13,6 +13,7 @@ use std::{
 use thiserror::Error;
 mod actor;
 mod analysis;
+mod forum;
 mod legacy;
 
 mod direction;
@@ -23,7 +24,7 @@ pub use actor::*;
 pub use reliable::*;
 pub use translation::*;
 
-pub const DATABASE_VERSION: u32 = 5;
+pub const DATABASE_VERSION: u32 = 6;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -146,10 +147,36 @@ pub struct OutboxMessage {
     pub body: serde_json::Value,
 }
 
+/// `flock` follows the open-file description, which fork/dup can share. Merely
+/// closing the owner's descriptor can leave its lock held until a concurrent
+/// spawn reaches exec. Explicit unlock releases it at the owner's real close.
+struct OwnershipLock {
+    file: File,
+    owner_pid: u32,
+}
+impl OwnershipLock {
+    fn new(file: File) -> Self {
+        Self {
+            file,
+            owner_pid: std::process::id(),
+        }
+    }
+}
+impl Drop for OwnershipLock {
+    fn drop(&mut self) {
+        // A fork copy must never release its still-active parent's lock.
+        if self.owner_pid == std::process::id() {
+            let _ = self.file.unlock();
+        }
+    }
+}
+
 pub struct Store {
+    // Fields drop in declaration order. SQLite must close before ownership is
+    // released, on normal shutdown as well as failed initialization/migration.
     connection: Connection,
     // Sidecar lock is shared by canonical path aliases; hard links are rejected.
-    _ownership: Option<File>,
+    _ownership: Option<OwnershipLock>,
     pub migration_backup: Option<PathBuf>,
 }
 
@@ -195,6 +222,7 @@ impl Store {
             Err(TryLockError::WouldBlock) => return Err(StoreError::AlreadyOwned),
             Err(TryLockError::Error(error)) => return Err(error.into()),
         }
+        let ownership = OwnershipLock::new(ownership);
         let mut store =
             Self::from_connection(Connection::open(&path)?, Some(&path), Some(ownership))?;
         store.recover_interrupted_sessions()?;
@@ -207,10 +235,23 @@ impl Store {
     }
 
     fn from_connection(
-        mut connection: Connection,
+        connection: Connection,
         path: Option<&Path>,
-        ownership: Option<File>,
+        ownership: Option<OwnershipLock>,
     ) -> Result<Self> {
+        // Construct the ordered owner before fallible work. Function parameters
+        // would otherwise drop in reverse order on an initialization error.
+        let mut store = Self {
+            connection,
+            _ownership: ownership,
+            migration_backup: None,
+        };
+        store.initialize(path)?;
+        Ok(store)
+    }
+
+    fn initialize(&mut self, path: Option<&Path>) -> Result<()> {
+        let connection = &mut self.connection;
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if version > DATABASE_VERSION {
             return Err(StoreError::UnsupportedDatabase(version));
@@ -254,11 +295,13 @@ impl Store {
             tx.execute_batch(include_str!("../migrations/005_analysis.sql"))?;
             tx.commit()?;
         }
-        Ok(Self {
-            connection,
-            _ownership: ownership,
-            migration_backup,
-        })
+        if version < 6 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(include_str!("../migrations/006_forum.sql"))?;
+            tx.commit()?;
+        }
+        self.migration_backup = migration_backup;
+        Ok(())
     }
 
     /// Idempotent catalog setup, before capture begins. Future lifecycle
@@ -269,6 +312,14 @@ impl Store {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let peer_owned: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM peer_sessions WHERE session_id=?1)",
+            [spec.session_id.to_string()],
+            |r| r.get(0),
+        )?;
+        if peer_owned {
+            return Err(StoreError::ScopeMismatch);
+        }
         let existing: Option<String> = tx
             .query_row(
                 "SELECT spec_json FROM sessions WHERE id=?1",

@@ -1,18 +1,28 @@
 # Forum 数据模型与进程协议 v1
 
-配套：[主工程方案](VISION_FORUM_ENGINEERING_PLAN_ZH.md)、[实施任务](IMPLEMENTATION_TASKS_ZH.md)。本文定义目标 v1 契约；示例仅使用合成内容。F02–F08 已实现单机原译文、分析任务、审核发布和 loopback 大屏；跨机同步、远程查询及双轨说话人仍是后续目标。准确字段以 `forum-contracts` 生成的 TS/schema 为准，实际入口和验证边界见 [F05–F08 本机记录](F05_F08_LOCAL_VALIDATION_ZH.md)。
+配套：[主工程方案](VISION_FORUM_ENGINEERING_PLAN_ZH.md)、[实施任务](IMPLEMENTATION_TASKS_ZH.md)。本文定义目标 v1 契约；示例仅使用合成内容。F02–F10 已实现单机原译文、分析任务、审核发布、双轨说话人及受控局域网公开投影；真实双机、手机和声学验收仍待执行。准确字段以 `forum-contracts` 生成的 TS/schema 为准，实际入口和验证边界见 [F05–F08 本机记录](F05_F08_LOCAL_VALIDATION_ZH.md)。
 
-### 2026-09-16 单机实现约定
+### 2026-09-16 当前实现约定
 
-- SQLite 迁移版本为 5，传输 `schema_version`/worker `protocol_version` 仍为 1，两者不混用。`analysis.rs` 集中实现任务、快照、checkpoint、artifact、review 和 publication；文中拆文件名称是职责划分。
+- SQLite 迁移版本为 6，传输 `schema_version`/worker `protocol_version` 仍为 1，两者不混用。`analysis.rs` 集中实现任务、快照、checkpoint、artifact、review 和 publication；文中拆文件名称是职责划分。
 - 分析种类使用单数 `insight`，其余为 `minutes/event_report/suggested_questions/redaction_review/closing_brief`。六类计算可用不等于完整活动及公开产品验收通过。
 - 默认 `meeting-8b-v1`，宿主可显式指定 `meeting-32b-v1` 的本机路径。initialize 的 `model_grants` 决定允许的路径、实际模型文件指纹和 context/output 限制；没有 grant 不运行模型。前端不提供这些路径。
 - `jobs.run` 必须附完整 `AnalysisConfig` 和宿主确认的 `confirmed_checkpoints` 文件描述；完整报文见 [worker README](../../services/meeting-worker/README.md)。generation 固定包含 `temperature/max_output_tokens/safety_tokens/max_retries/context_limit`。model manifest 使用 `sha256:` 前缀，其余 SHA 是 64 位小写十六进制。
 - 配置/语义快照采用递归键排序、紧凑 UTF-8 JSON 后计算 hash，不能依赖 serde_json map 的编译特性。传输快照和结果另外验证实际文件字节 hash。宿主单文件上限 16 MiB，worker 独立入口上限 32 MiB；桌面有效限制为前者。
 - core 确认 checkpoint 后才 ACK。跨 job/snapshot 缓存限定同活动、同明确场次集合、同 kind/config；每个块还校验来源 ID/revision/字节范围和全文 hash。追加原文后可复用满前块，变化的尾块重新计算。
 - Runtime 的 Started/Stopped 直接通知分析模块，不依赖可覆盖的 UI 状态消息。Stopped 同步登记持久纪要 intent，重启后再构造有预算的 job；新一次停止更新 marker，旧 ACK 不能删除它。退出只有在实时资源、分析进程和 intent 保存均确认后完成。
-- 当前大屏每 2 秒读取完整公开快照并整体替换；断线清空旧画面。仅 loopback GET，使用带有效期的场次 token；没有实现文中目标的远程控制、SSE 和跨机接口。
+- 同机大屏和参会者页面轮询公开快照并整体替换；页面断线清空旧内容，操作员跨场概览保留已同步副本但标 stale 和时间。LAN 模式默认关闭，启用后仅提供受限公开/peer 路由，无桌面控制 API。没有使用 SSE。
 - 旧 JSONL 的 `t_start/t_end` 以秒解释，`legacy_import` 为来源类型；保留文件 hash/行号/旧 speaker 标签。没有原录音封存证明，导入保持不完整，只产生部分私有草稿。
+
+### 第四部分持久化与网络实现
+
+- `forum-contracts/src/forum.rs` 生成 speaker、peer、选定公开版本 DTO。`SpeakerAssignment` 与原文修订分表，保存 source_revision、标签自身 revision、自动模型或人工操作者来源；current 由当前原文/最新标签共同决定。匿名聚类只在同场次/同模型下匹配，不能跨场对齐身份。
+- capture context 新增可空 secondary_track。双轨为 mic+system，各自 producer/outbox/journal，所有来源共享一个 16 kHz 时间轴；共同停止边界裁剪后，以最后实际观测样本作为封存上界。缺失轨道范围存 gap；单个 CaptureSession 不得发送双轨会话的单轨 seal。
+- LAN 使用本机 CA 和服务端 TLS 证书，拉取方校验 CA/hostname/expiry/signature 和 leaf fingerprint。一次性邀请兑换限定设备/场次的 bearer；这不是客户端证书 mTLS。participant 与 peer 凭证相互隔离，均可撤销且有期限；详情见 [网关说明](../../desktop/crates/forum-gateway/README.md)。
+- peer 存储 owner/event/session、cursor、last_sync_at、stale；快照/增量接收严格的 PublicArtifact，包含独立审核后的 evidence 副本。公开版本历史、撤回水位和同 cursor hash 防止重放复活。断线会使跨场依赖失效，重新连接也不自动重新发布旧报告。
+- `create_selected_analysis_job` 接收 `PublicSelection[]`（owner/session/public_id/revision），每个所选场次必须有确切可用的公开来源，不自动换成新 revision。core 为远端来源创建不可变安全别名，worker 只看到该快照；`analysis_peer_provenance` 可追溯原 owner/event/session/public ID/revision/cursor。
+- `public_artifact_for_revision` 只返回当前有效、完整、审核通过且已发布的 ClosingBrief 公共投影。宿主朗读这个公开正文，失效后取消；停止确认和采集活动锁阻止回灌。C8 主持人问题不能进入该接口。
+- 退出还需确认 LAN 监听/证书生成、speaker 计算进程/待提交 core 闭包及朗读输出释放。保存过的证书可复用，但重启不自动开启 LAN 或恢复访问凭证。
 
 ## 1. 数据流与基本不变量
 

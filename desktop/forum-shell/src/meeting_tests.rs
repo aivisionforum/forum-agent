@@ -1,6 +1,17 @@
 use super::*;
 use forum_runtime::RuntimeClient;
 
+#[test]
+fn joining_event_changes_only_future_sessions_and_persists_across_reopen(){
+    let (root,repo,host)=fixture();let old=host.setup.session.clone();let mut options=host.setup.options.clone();options.dual_audio=true;
+    let next_event=Uuid::new_v4();assert!(repo.join_event(Uuid::nil()).is_err());repo.join_event(next_event).unwrap();
+    let next=repo.create_setup(options).unwrap();assert_eq!(next.session.event_id,next_event);assert_eq!(next.session.owner_device_id,old.owner_device_id);assert_ne!(next.session.room_id,old.room_id);assert_ne!(next.track.track_id,next.secondary_track.as_ref().unwrap().track_id);
+    assert_eq!(repo.setup(old.session_id).unwrap().session,old);assert_eq!(repo.setup(next.session.session_id).unwrap().secondary_track,next.secondary_track);
+    drop(host);repo.core.shutdown().unwrap();drop(repo);
+    let reopened=MeetingRepository::open(root.clone()).unwrap();assert_eq!(reopened.identity()[1],next_event);assert_eq!(reopened.setup(old.session_id).unwrap().session,old);
+    reopened.core.shutdown().unwrap();drop(reopened);fs::remove_dir_all(root).unwrap();
+}
+
 fn fixture() -> (PathBuf, MeetingRepository, MeetingHost) {
     let root = PathBuf::from("/tmp").join(format!("forum-host-test-{}", Uuid::new_v4()));
     let repo = MeetingRepository::open(root.clone()).unwrap();
@@ -11,6 +22,7 @@ fn fixture() -> (PathBuf, MeetingRepository, MeetingHost) {
             target_language: "bilingual".into(),
             recording_enabled: true,
             system_audio: false,
+            dual_audio: false,
         },
         None,
     )

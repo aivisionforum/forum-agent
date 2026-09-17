@@ -47,6 +47,8 @@ pub struct JobRequest {
     pub session_ids: Vec<Uuid>,
     pub kind: AnalysisKind,
     pub automatic: bool,
+    #[serde(default)]
+    pub public_selections: Option<Vec<PublicSelection>>,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -334,7 +336,10 @@ impl AnalysisClient {
         };
         self.0
             .core
-            .call(move |store| store.create_analysis_job(&create))
+            .call(move |store| match request.public_selections {
+                Some(selected) => store.create_selected_analysis_job(&create, &selected),
+                None => store.create_analysis_job(&create),
+            })
             .map_err(|e| e.to_string())
     }
     pub fn cancel(&self, action: JobAction) -> Result<AnalysisJob, String> {
@@ -373,6 +378,7 @@ fn run_loop(inner: Arc<Inner>) {
                     session_ids: vec![id],
                     kind: AnalysisKind::Minutes,
                     automatic: true,
+                    public_selections: None,
                 }) {
                     Ok(_) => {
                         if let Err(error) = inner
@@ -401,6 +407,7 @@ fn run_loop(inner: Arc<Inner>) {
                 session_ids: vec![id],
                 kind,
                 automatic: true,
+                public_selections: None,
             }) {
                 *inner.notice.lock() = Some(format!("自动会议分析尚未入队：{error}"));
                 log::warn!("自动会议分析未入队：{error}");

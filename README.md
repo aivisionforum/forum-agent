@@ -1,6 +1,6 @@
 # forum-agent
 
-Forum 整合开发已开始：[工程方案](docs/engineering/VISION_FORUM_ENGINEERING_PLAN_ZH.md) · [数据与协议](docs/engineering/DATA_AND_PROTOCOL_ZH.md) · [分阶段任务](docs/engineering/IMPLEMENTATION_TASKS_ZH.md) · **[实际进度与验证](docs/engineering/PROGRESS_ZH.md)**。当前完成 F00 基线，F01 和 F02 正在实施；新桌面源码位于 `desktop/`，独立分析进程位于 `services/meeting-worker/`。先完成 Forum 版，再派生 Hen Local Minutes。以下状态、截图与运行说明仍描述原 Python 应用，不代表新的整合产品已经通过验收。
+Forum 整合开发：[工程方案](docs/engineering/VISION_FORUM_ENGINEERING_PLAN_ZH.md) · [分阶段任务](docs/engineering/IMPLEMENTATION_TASKS_ZH.md) · **[实际进度与验证](docs/engineering/PROGRESS_ZH.md)**。新桌面版位于 `desktop/`，已接入可靠字幕、会议分析、双轨/匿名标签、双会场、公开查询和闭幕综述；第四部分本机回归与开发 `.app` 构建已通过，正式跨设备/90 分钟/签名验收待完成。安装与开发包见 [发行说明](docs/engineering/PACKAGING_RELEASE_ZH.md)，使用见 [操作指南](docs/OPERATOR_GUIDE.md)。先完成 Forum，再派生 Hen Local Minutes。下方截图和 Python Quickstart 描述旧版应用，不能据此认定整合桌面版功能或验收状态。
 
 An open-source AI participant for any conference, forum, or working
 meeting, with first-class bilingual (中文/English) support. It listens to

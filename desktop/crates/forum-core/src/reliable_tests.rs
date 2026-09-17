@@ -457,8 +457,21 @@ fn actor_queue_is_bounded_and_timeout_is_ack_unknown_then_replay_is_idempotent()
     assert!(start.elapsed() < Duration::from_millis(100));
     release_tx.send(()).unwrap();
     hold.wait().unwrap();
-    h.call(|_| Ok(())).unwrap();
-    assert!(h.ingest_json(body).unwrap().duplicate);
+    // The hold ACK does not promise that the next queued command has already
+    // been dequeued. Retry admission under real backpressure; FIFO then ensures
+    // the original event is persisted before this replay executes.
+    let deadline = Instant::now() + Duration::from_secs(4);
+    let replay = loop {
+        match h.try_ingest_json(body.clone()) {
+            Ok(ticket) => break ticket.wait().unwrap(),
+            Err(StoreError::QueueFull) => {
+                assert!(Instant::now() < deadline, "actor queue did not drain");
+                std::thread::yield_now();
+            }
+            Err(error) => panic!("unexpected replay admission error: {error}"),
+        }
+    };
+    assert!(replay.duplicate);
     h.shutdown().unwrap();
 }
 
@@ -1282,4 +1295,161 @@ fn exact_recovery_revisions_distinguish_terminal_missing_and_invalid_scope() {
             vec![missing.payload.segment_id, missing.payload.segment_id]
         )
         .is_err());
+}
+
+#[test]
+fn duplicated_descriptor_cannot_extend_closed_store_ownership() {
+    let db = TempDatabase::new();
+    let store = Store::open(db.path()).unwrap();
+    let duplicate = store._ownership.as_ref().unwrap().file.try_clone().unwrap();
+    assert!(matches!(
+        Store::open(db.path()),
+        Err(StoreError::AlreadyOwned)
+    ));
+    drop(store);
+    // `duplicate` intentionally remains open and shares the kernel lock owner.
+    // This failed with close-only cleanup, just as a fork-before-exec copy does.
+    let reopened = Store::open(db.path()).unwrap();
+    assert!(matches!(
+        Store::open(db.path()),
+        Err(StoreError::AlreadyOwned)
+    ));
+    drop(duplicate);
+    assert!(matches!(
+        Store::open(db.path()),
+        Err(StoreError::AlreadyOwned)
+    ));
+    drop(reopened);
+    Store::open(db.path()).unwrap();
+}
+
+#[cfg(unix)]
+mod inherited_ownership {
+    use super::*;
+    use std::os::raw::{c_int, c_void};
+    unsafe extern "C" {
+        fn fork() -> c_int;
+        fn pipe(fds: *mut c_int) -> c_int;
+        fn read(fd: c_int, buf: *mut c_void, len: usize) -> isize;
+        fn write(fd: c_int, buf: *const c_void, len: usize) -> isize;
+        fn close(fd: c_int) -> c_int;
+        fn waitpid(pid: c_int, status: *mut c_int, flags: c_int) -> c_int;
+        fn _exit(code: c_int) -> !;
+    }
+    struct ForkHold {
+        pid: c_int,
+        release: c_int,
+    }
+    impl ForkHold {
+        fn start(drop_in_child: Option<OwnershipLock>) -> Self {
+            let mut release = [0; 2];
+            assert_eq!(unsafe { pipe(release.as_mut_ptr()) }, 0);
+            let mut ready = [0; 2];
+            assert_eq!(unsafe { pipe(ready.as_mut_ptr()) }, 0);
+            let pid = unsafe { fork() };
+            assert!(pid >= 0);
+            if pid == 0 {
+                // Child side uses only stack operations and async-signal-safe
+                // FD syscalls. It never touches SQLite/actor locks or allocates.
+                unsafe {
+                    close(release[1]);
+                    close(ready[0]);
+                }
+                drop(drop_in_child); // PID-guarded unlock + close only
+                let mut byte = 1u8;
+                unsafe {
+                    write(ready[1], (&byte as *const u8).cast(), 1);
+                    close(ready[1]);
+                    read(release[0], (&mut byte as *mut u8).cast(), 1);
+                    close(release[0]);
+                    _exit(0);
+                }
+            }
+            unsafe {
+                close(release[0]);
+                close(ready[1]);
+            }
+            let guard = Self {
+                pid,
+                release: release[1],
+            };
+            let mut byte = 0u8;
+            assert_eq!(
+                unsafe { read(ready[0], (&mut byte as *mut u8).cast(), 1) },
+                1
+            );
+            unsafe {
+                close(ready[0]);
+            }
+            // In the parent, this is merely an extra descriptor. Avoid invoking
+            // a second owner unlock while the original Store is still active.
+            if let Some(mut owner) = drop_in_child {
+                owner.owner_pid = 0; // no live process has PID zero
+                drop(owner);
+            }
+            guard
+        }
+    }
+    impl Drop for ForkHold {
+        fn drop(&mut self) {
+            let byte = 1u8;
+            unsafe {
+                write(self.release, (&byte as *const u8).cast(), 1);
+                close(self.release);
+            }
+            let mut status = 0;
+            loop {
+                let result = unsafe { waitpid(self.pid, &mut status, 0) };
+                if result >= 0
+                    || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted
+                {
+                    break;
+                }
+            }
+        }
+    }
+    #[test]
+    fn dropping_fork_copy_does_not_unlock_active_parent() {
+        let db = TempDatabase::new();
+        let store = Store::open(db.path()).unwrap();
+        let duplicate = store._ownership.as_ref().unwrap().file.try_clone().unwrap();
+        let child = ForkHold::start(Some(OwnershipLock::new(duplicate)));
+        // The child already dropped its copied RAII owner and acknowledged it.
+        // Its destructor must not issue LOCK_UN against the parent's shared fd.
+        assert!(matches!(
+            Store::open(db.path()),
+            Err(StoreError::AlreadyOwned)
+        ));
+        drop(child);
+        assert!(matches!(
+            Store::open(db.path()),
+            Err(StoreError::AlreadyOwned)
+        ));
+        drop(store);
+        Store::open(db.path()).unwrap();
+    }
+    #[test]
+    fn shutdown_ack_releases_lock_while_fork_child_still_holds_inherited_fd() {
+        let db = TempDatabase::new();
+        let core = CoreHandle::open(db.path(), 4).unwrap();
+        let child = ForkHold::start(None);
+        assert!(matches!(
+            Store::open(db.path()),
+            Err(StoreError::AlreadyOwned)
+        ));
+        core.shutdown().unwrap();
+        // No sleep/retry: child remains blocked on the release pipe here.
+        let reopened = Store::open(db.path()).unwrap();
+        assert!(matches!(
+            Store::open(db.path()),
+            Err(StoreError::AlreadyOwned)
+        ));
+        drop(child);
+        assert!(matches!(
+            Store::open(db.path()),
+            Err(StoreError::AlreadyOwned)
+        ));
+        drop(reopened);
+        Store::open(db.path()).unwrap();
+    }
 }

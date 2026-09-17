@@ -77,6 +77,23 @@ pub struct PendingEvent {
     pub event: Value,
     pub path: PathBuf,
 }
+
+struct ProducerOwnership {
+    file: File,
+    owner_pid: u32,
+}
+impl Drop for ProducerOwnership {
+    fn drop(&mut self) {
+        // flock belongs to the open file description, which fork/dup can share.
+        // Release when the actual producer closes, but never from a fork copy.
+        if self.owner_pid == std::process::id() {
+            unsafe {
+                libc::flock(self.file.as_raw_fd(), libc::LOCK_UN);
+            }
+        }
+    }
+}
+
 pub struct DurableProducer {
     config: RuntimeConfig,
     client: RuntimeClient,
@@ -85,7 +102,7 @@ pub struct DurableProducer {
     append_poisoned: bool,
     cleanup_warning: Option<String>,
     // Exclusive filesystem lock prevents two workers sharing one producer journal.
-    _ownership: File,
+    _ownership: ProducerOwnership,
 }
 impl DurableProducer {
     pub fn open(config: RuntimeConfig) -> anyhow::Result<Self> {
@@ -102,6 +119,10 @@ impl DurableProducer {
             unsafe { libc::flock(ownership.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
             "producer journal already owned"
         );
+        let ownership = ProducerOwnership {
+            file: ownership,
+            owner_pid: std::process::id(),
+        };
         let client = RuntimeClient::new(config.endpoint.clone());
         let run_id = Uuid::new_v4();
         atomic_write(
@@ -325,5 +346,97 @@ impl DurableProducer {
             }
             Err(error) => vec![(Uuid::nil(), Err(RpcError::new("OUTBOX_IO", false, error)))],
         }
+    }
+}
+
+#[cfg(test)]
+mod ownership_tests {
+    use super::*;
+    use std::mem::ManuallyDrop;
+
+    struct Fixture {
+        root: PathBuf,
+        config: RuntimeConfig,
+    }
+    impl Fixture {
+        fn new() -> Self {
+            let root = PathBuf::from("/tmp").join(format!("forum-producer-lock-{}", Uuid::new_v4()));
+            private_directory(&root).unwrap();
+            let config = RuntimeConfig {
+                endpoint: Endpoint::new(root.join("core.sock")),
+                session: SessionSpec {
+                    session_id: Uuid::new_v4(),
+                    event_id: Uuid::new_v4(),
+                    room_id: Uuid::new_v4(),
+                    owner_device_id: Uuid::new_v4(),
+                    title: "synthetic lock test".into(),
+                },
+                producer_dir: root.join("producer"),
+                producer_name: "lock-test".into(),
+            };
+            Self { root, config }
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn duplicated_fd_cannot_extend_closed_producer_ownership() {
+        let fixture = Fixture::new();
+        let first = DurableProducer::open(fixture.config.clone()).unwrap();
+        let duplicate = first._ownership.file.try_clone().unwrap();
+        assert!(DurableProducer::open(fixture.config.clone()).is_err());
+        drop(first);
+        // No sleeps: the duplicated kernel open-file description remains alive.
+        let next = DurableProducer::open(fixture.config.clone()).unwrap();
+        assert!(DurableProducer::open(fixture.config.clone()).is_err());
+        drop(duplicate);
+        assert!(DurableProducer::open(fixture.config.clone()).is_err());
+        drop(next);
+        DurableProducer::open(fixture.config.clone()).unwrap();
+    }
+
+    #[test]
+    fn dropping_fork_copy_cannot_unlock_active_producer() {
+        let fixture = Fixture::new();
+        let first = DurableProducer::open(fixture.config.clone()).unwrap();
+        let duplicate = ProducerOwnership {
+            file: first._ownership.file.try_clone().unwrap(),
+            owner_pid: std::process::id(),
+        };
+        let mut duplicate = ManuallyDrop::new(duplicate);
+        let pid = unsafe { libc::fork() };
+        if pid == 0 {
+            // Only PID/FD syscalls after fork: never allocate or touch the
+            // producer's other Rust state in this multithreaded test process.
+            unsafe {
+                ManuallyDrop::drop(&mut duplicate);
+                libc::_exit(0);
+            }
+        }
+        // The parent's duplicate must close without releasing the real owner.
+        duplicate.owner_pid = 0;
+        unsafe {
+            ManuallyDrop::drop(&mut duplicate);
+        }
+        assert!(pid > 0, "fork failed");
+        let mut status = 0;
+        loop {
+            let result = unsafe { libc::waitpid(pid, &mut status, 0) };
+            if result == pid {
+                break;
+            }
+            assert_eq!(
+                std::io::Error::last_os_error().kind(),
+                std::io::ErrorKind::Interrupted
+            );
+        }
+        assert!(libc::WIFEXITED(status) && libc::WEXITSTATUS(status) == 0);
+        assert!(DurableProducer::open(fixture.config.clone()).is_err());
+        drop(first);
+        DurableProducer::open(fixture.config.clone()).unwrap();
     }
 }

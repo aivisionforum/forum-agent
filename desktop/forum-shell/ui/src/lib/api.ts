@@ -145,7 +145,7 @@ export const previewSettings: SettingsPayload = {
     transcriptFileName: 'transcript.md',
     transcriptSaveDir: null
   },
-  inputDevices: ['__system_audio__', '__default_microphone__', 'MacBook Pro Microphone'],
+  inputDevices: ['__dual_audio__', '__system_audio__', '__default_microphone__', 'MacBook Pro Microphone'],
   outputDevices: ['MacBook Pro Speakers'],
   installedAppleVoices: [
     { name: 'Yue (Premium)', locale: 'zh_CN', sample: '你好！我叫月。' },
