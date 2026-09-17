@@ -1,0 +1,46 @@
+[package]
+name = "forum-shell"
+default-run = "forum-shell"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+serde_json.workspace = true
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+moxin-dora-bridge = { path = "../moxin-dora-bridge" }
+
+# Audio device discovery
+cpal.workspace = true
+hound = "3.5"
+
+# Runtime and channels
+tokio.workspace = true
+crossbeam-channel.workspace = true
+parking_lot.workspace = true
+
+# Serialization and utilities
+serde.workspace = true
+serde_json.workspace = true
+log.workspace = true
+env_logger.workspace = true
+dirs.workspace = true
+anyhow.workspace = true
+clap = { version = "4.4", features = ["derive"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid.workspace = true
+tauri-plugin-single-instance = "2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = "0.3"
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFString"] }
+objc2-foundation = "0.3"
+objc2-io-kit = { version = "0.3", default-features = false, features = ["pwr_mgt"] }
+
+[[bin]]
+name = "forum-shell"
+path = "src/main.rs"

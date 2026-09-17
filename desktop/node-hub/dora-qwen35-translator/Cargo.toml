@@ -1,0 +1,38 @@
+[package]
+name = "dora-qwen35-translator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LLM translation Dora node for Hen Local Translator (macOS: Qwen3.5 MLX; Windows: llama.cpp server)"
+
+# Dora and shared utilities: the event loop, transcript buffer and commit logic
+# are platform-independent.
+[dependencies]
+dora-node-api = "0.4.0"
+arrow = { version = "54.2.1", default-features = false, features = ["ipc"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "5.0"
+
+# macOS / Apple Silicon: Qwen3.5 LLM inference via OminiX-MLX.
+# All OminiX-MLX deps are pinned to the same rev so cargo unifies them across
+# workspace members (otherwise it would resolve duplicates and fail).
+[target.'cfg(target_os = "macos")'.dependencies]
+qwen3-5-35b-mlx = { git = "https://github.com/OminiX-ai/OminiX-MLX.git", rev = "6aac996db8b71fb7dae7a2409c46b4f2ade93092", package = "qwen3-5-35b-mlx" }
+mlx-lm-utils = { git = "https://github.com/OminiX-ai/OminiX-MLX.git", rev = "6aac996db8b71fb7dae7a2409c46b4f2ade93092", package = "mlx-lm-utils" }
+mlx-rs = { git = "https://github.com/OminiX-ai/OminiX-MLX.git", rev = "6aac996db8b71fb7dae7a2409c46b4f2ade93092", package = "mlx-rs" }
+mlx-sys = { git = "https://github.com/OminiX-ai/OminiX-MLX.git", rev = "6aac996db8b71fb7dae7a2409c46b4f2ade93092", package = "mlx-sys" }
+minijinja = "2.12"
+minijinja-contrib = { version = "2.12", features = ["pycompat"] }
+
+# Windows: translation runs in a managed llama-server.exe child process
+# (official llama.cpp prebuilt binary); this node talks to it over HTTP/SSE.
+[target.'cfg(windows)'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
+[[bin]]
+name = "dora-qwen35-translator"
+path = "src/main.rs"

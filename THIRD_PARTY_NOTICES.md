@@ -1,0 +1,27 @@
+# Third-party source provenance
+
+The Forum integration includes selected source files and runtime resources from
+[Hen Local Translator](https://github.com/Hen-Local/Hen-Local-Translator), commit
+`49042697f11bc86dfa8e6bd10ef0dc07cffbaf84`, under its Apache-2.0 repository license.
+The imported license is preserved at `desktop/LICENSE`.
+
+The original file paths, Git blob IDs and SHA-256 hashes before Forum adaptations
+are recorded in `docs/engineering/hen-import-manifest.json`. The import reads Git
+objects at the pinned commit, never the source checkout's uncommitted contents.
+Forum-specific edits are maintained in this repository's history.
+
+Imported modules include the Tauri/Svelte shell, Dora audio bridge, Qwen ASR and
+translation nodes, model downloader and selected macOS packaging scripts.
+Account credentials, subscription implementation, experimental voice lab,
+generated build outputs and model weights are excluded. Existing upstream icons
+are retained as development placeholders; Forum branding is a later UI task.
+
+OminiX-MLX dependencies retain upstream commit
+`6aac996db8b71fb7dae7a2409c46b4f2ade93092`. Cargo and npm lockfiles record transitive
+dependency versions; their individual licenses continue to apply. This file is
+an import record, not a completed redistribution audit of all dependencies.
+
+The upstream tracked `desktop/moxin-dora-bridge/lib/libAudioCapture.dylib` is an
+arm64 runtime resource. Reproducible build provenance, inclusion in the final
+bundle and signing must be verified during F01/F11. Models are obtained separately
+and require their own manifest, revision and license records before release.

@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = [
+    "forum-shell",
+    "moxin-dora-bridge",
+    "hen-local-init",
+    "node-hub/dora-qwen3-asr",
+    "node-hub/dora-qwen35-translator",
+]
+
+[workspace.package]
+version = "0.1.0-dev.1"
+edition = "2021"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+# Audio
+cpal = "0.15"
+
+# Async runtime
+tokio = { version = "1", features = ["full", "sync"] }
+
+# Utilities
+parking_lot = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+log = "0.4"
+env_logger = "0.11"
+dirs = "5.0"
+crossbeam-channel = "0.5"
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+uuid = { version = "1.0", features = ["v4"] }
+rand = "0.8"
+
+# Dora - robotics framework for voice chat architecture
+dora-node-api = "0.4.0"
+# dora-node-api = { git = "https://github.com/dora-rs/dora.git", tag = "v0.3.12" }
+
+# OminiX-MLX crates are pinned directly in their consuming Cargo.toml files
+# via `{ git = "...", rev = "6aac996db..." }`.

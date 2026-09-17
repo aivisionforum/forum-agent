@@ -5,3 +5,20 @@ __pycache__/
 
 # all runtime data (recordings, transcripts, sessions, logs) stays local
 data/
+
+# Integrated desktop build outputs and local runtime state
+desktop/target/
+desktop/dist/
+**/node_modules/
+**/ui/dist/
+**/.tauri-sidecars/
+**/gen/schemas/
+**/out/
+**/.pytest_cache/
+**/*.egg-info/
+services/**/.venv/
+services/**/dist/
+services/**/build/
+artifacts/local/
+.env
+.env.local

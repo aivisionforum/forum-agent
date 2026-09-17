@@ -1,0 +1,700 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/Hen-Local/Hen-Local-Translator.git",
+  "commit": "49042697f11bc86dfa8e6bd10ef0dc07cffbaf84",
+  "license": "Apache-2.0",
+  "import_method": "git-object-allowlist",
+  "note": "Hashes describe the upstream baseline before Forum adaptations, not current files.",
+  "excluded_paths": [
+    "hen-local-translator-shell/account_config.example.json",
+    "hen-local-translator-shell/license-public-key.b64",
+    "hen-local-translator-shell/src/account.rs",
+    "hen-local-translator-shell/ui/src/VoiceLab.svelte",
+    "hen-local-translator-shell/ui/src/voice-lab.css",
+    "hen-local-translator-shell/ui/src/voice-lab.ts",
+    "hen-local-translator-shell/ui/voice-lab.html",
+    "node-hub/dora-qwen35-translator/src/bin/translator-prompt-harness.rs"
+  ],
+  "files": [
+    {
+      "source_path": "Cargo.lock",
+      "destination_path": "desktop/Cargo.lock",
+      "source_blob": "50c07aa575f46cae2dd8081ba214fb4f43687f0f",
+      "source_sha256": "d5f06c2b12981ea6e9044ff1ef519603e77a1da32bf4b26116bd7bb56bcf3832",
+      "source_mode": "100644",
+      "size": 216635
+    },
+    {
+      "source_path": "Cargo.toml",
+      "destination_path": "desktop/Cargo.toml",
+      "source_blob": "ee51ee8637b245532902e977179c5a2f332b7821",
+      "source_sha256": "f068fcd096854750f1013e2cab52abb1e6fac2a6bd308ddb3d97258b533c458c",
+      "source_mode": "100644",
+      "size": 988
+    },
+    {
+      "source_path": "LICENSE",
+      "destination_path": "desktop/LICENSE",
+      "source_blob": "affe031ef721e9cc8027957faeffd65d1927c2bd",
+      "source_sha256": "5ba3d2b3af5409f87550dcdba0946abff319fb04505f57d91d4a328a84556703",
+      "source_mode": "100644",
+      "size": 11362
+    },
+    {
+      "source_path": "hen-local-init/Cargo.toml",
+      "destination_path": "desktop/hen-local-init/Cargo.toml",
+      "source_blob": "80380147ef899077f670d0814fc4c68edb483dfd",
+      "source_sha256": "e1695a06d635494c4f57e71a6872f7520db663d8560cdf0220eec00999049edf",
+      "source_mode": "100644",
+      "size": 461
+    },
+    {
+      "source_path": "hen-local-init/src/main.rs",
+      "destination_path": "desktop/hen-local-init/src/main.rs",
+      "source_blob": "e972ffe3ef380e56f89ca0e927c81599c6610aa9",
+      "source_sha256": "3be51657a3a268bb302833225ba4025ccb97896074fdaf1adc22dad840533ef9",
+      "source_mode": "100644",
+      "size": 44234
+    },
+    {
+      "source_path": "hen-local-translator-shell/.gitignore",
+      "destination_path": "desktop/forum-shell/.gitignore",
+      "source_blob": "bce8ce652b2098d3421e5a5d22e982785ed2b9cb",
+      "source_sha256": "5acd8a108646c825f7d0e762190fb7f5122830717a52d67a6a2b7a0c5d137ac2",
+      "source_mode": "100644",
+      "size": 42
+    },
+    {
+      "source_path": "hen-local-translator-shell/Cargo.toml",
+      "destination_path": "desktop/forum-shell/Cargo.toml",
+      "source_blob": "01fd09463487810fa121c7527064b97a738d22a2",
+      "source_sha256": "d30ce1c0d1d7406f00e855ab0f7d303224c4634c7e47ae18cefc9a39caa6f6d7",
+      "source_mode": "100644",
+      "size": 1557
+    },
+    {
+      "source_path": "hen-local-translator-shell/Info.plist",
+      "destination_path": "desktop/forum-shell/Info.plist",
+      "source_blob": "823e5c81260be6bf09acc6b80691071897a385ae",
+      "source_sha256": "913c4cce097c23f41fe62867915d8df680f54670cc63bd0644aa03493e386d2d",
+      "source_mode": "100644",
+      "size": 436
+    },
+    {
+      "source_path": "hen-local-translator-shell/build.rs",
+      "destination_path": "desktop/forum-shell/build.rs",
+      "source_blob": "c5ee9cac82936ceca3dd705406222dda17e61727",
+      "source_sha256": "0cb391fbc61281aee21298fbc70ae5c985897a9214e7ea39689af6d7bbd3277b",
+      "source_mode": "100644",
+      "size": 312
+    },
+    {
+      "source_path": "hen-local-translator-shell/capabilities/default.json",
+      "destination_path": "desktop/forum-shell/capabilities/default.json",
+      "source_blob": "1912abeb98c18c17d92bf023acef081821b20836",
+      "source_sha256": "ad44f06b0e577da632e4b5b99e5f3d9fd0b5a66f4a052865bd247a72ea55901d",
+      "source_mode": "100644",
+      "size": 349
+    },
+    {
+      "source_path": "hen-local-translator-shell/dataflow/translation_qwen35.yml",
+      "destination_path": "desktop/forum-shell/dataflow/translation_qwen35.yml",
+      "source_blob": "b1bf33f3e22e4a1a057dc48f4a476ede3344230f",
+      "source_sha256": "7c4abd664bbd0f0b4a677b69fa41cce788f9175281e45939f88ed7a17e357dc1",
+      "source_mode": "100644",
+      "size": 1589
+    },
+    {
+      "source_path": "hen-local-translator-shell/icons/128x128.png",
+      "destination_path": "desktop/forum-shell/icons/128x128.png",
+      "source_blob": "cfd929aceab106a8e7696a127e3f917df8bbf5ee",
+      "source_sha256": "994c2716e6d3e8ef2dfb0431dd0e817dd0cf43a9f950c4fde1999d32882579b1",
+      "source_mode": "100644",
+      "size": 8054
+    },
+    {
+      "source_path": "hen-local-translator-shell/icons/128x128@2x.png",
+      "destination_path": "desktop/forum-shell/icons/128x128@2x.png",
+      "source_blob": "562b0dcfa5236f4dd65160b724dc350cfd340dae",
+      "source_sha256": "01a3cf5b8cfd712b669e33e6bed7819cbd1845f99144aecb5e4f3dfce12538c6",
+      "source_mode": "100644",
+      "size": 19247
+    },
+    {
+      "source_path": "hen-local-translator-shell/icons/32x32.png",
+      "destination_path": "desktop/forum-shell/icons/32x32.png",
+      "source_blob": "66b9dad688332407c1ecd2a26b934458a515f023",
+      "source_sha256": "b56f5788679c65f19f647eda4ab4aed70da5ae590b429a8fdae300af1316997c",
+      "source_mode": "100644",
+      "size": 1423
+    },
+    {
+      "source_path": "hen-local-translator-shell/icons/HenLocal_logo.jpeg",
+      "destination_path": "desktop/forum-shell/icons/HenLocal_logo.jpeg",
+      "source_blob": "318bec4b3f8b5b71bc29abad39c82a1484f65b12",
+      "source_sha256": "40d5dcec89d1bb10a5a6f14dc7804afa320fe0d0f44ac4d7db621eb769e74c95",
+      "source_mode": "100644",
+      "size": 31149
+    },
+    {
+      "source_path": "hen-local-translator-shell/icons/icon-neon-blue.png",
+      "destination_path": "desktop/forum-shell/icons/icon-neon-blue.png",
+      "source_blob": "b11f52b5692bafc102b6d10a386f84ea42256a23",
+      "source_sha256": "b9a605b5a2edc376a6dd1f32c78963e6faf3ea44af3bec4f4ccc0108940992f0",
+      "source_mode": "100644",
+      "size": 132022
+    },
+    {
+      "source_path": "hen-local-translator-shell/icons/icon-neon-green.png",
+      "destination_path": "desktop/forum-shell/icons/icon-neon-green.png",
+      "source_blob": "3390ef77b449cccf96a52f0434f6e8853b58690a",
+      "source_sha256": "1a65c3dae82783ec91c6651ef10fbca3f3e7e06b9070ce957fd8bcac8bee58d2",
+      "source_mode": "100644",
+      "size": 137579
+    },
+    {
+      "source_path": "hen-local-translator-shell/icons/icon-neon-orange.png",
+      "destination_path": "desktop/forum-shell/icons/icon-neon-orange.png",
+      "source_blob": "6b988264de192fa95eb482d2f5fda5e9c32bd785",
+      "source_sha256": "9b7af299e86979a5d716399545f2847889b9c4e31531e1b26d799a5443dbd81b",
+      "source_mode": "100644",
+      "size": 138617
+    },
+    {
+      "source_path": "hen-local-translator-shell/icons/icon-neon-pink.png",
+      "destination_path": "desktop/forum-shell/icons/icon-neon-pink.png",
+      "source_blob": "ea88bda38bcc2518d9361a9e3ee2a3e827190409",
+      "source_sha256": "fee512d6bae475cb6dfef303a8d3de3d8bc34cfb0c07ee9f79d96ab5f83eb280",
+      "source_mode": "100644",
+      "size": 136570
+    },
+    {
+      "source_path": "hen-local-translator-shell/icons/icon.icns",
+      "destination_path": "desktop/forum-shell/icons/icon.icns",
+      "source_blob": "e1daafec78f1c26b1d0f3e9e57a5935af164543c",
+      "source_sha256": "1f944745107b3f6cd7bd29606fa7af2b6ea4f354aa3adfd34079539fb52c75c9",
+      "source_mode": "100644",
+      "size": 380712
+    },
+    {
+      "source_path": "hen-local-translator-shell/icons/icon.ico",
+      "destination_path": "desktop/forum-shell/icons/icon.ico",
+      "source_blob": "8865847fd12ac1b9be2a76bd51dcbac55507671f",
+      "source_sha256": "30679ceabb8d38149cffabd608cf3bf131b9e5d8e0b60ab054df03b1defcc095",
+      "source_mode": "100644",
+      "size": 36313
+    },
+    {
+      "source_path": "hen-local-translator-shell/icons/icon.png",
+      "destination_path": "desktop/forum-shell/icons/icon.png",
+      "source_blob": "b346636b2df0d68204d0fd2e329929bf0593db5b",
+      "source_sha256": "5a8e26fab71ce4846e2e8bcbd41431ecf06c5a04d577a6fa106582efc35bc570",
+      "source_mode": "100644",
+      "size": 143500
+    },
+    {
+      "source_path": "hen-local-translator-shell/icons/logo-mark.png",
+      "destination_path": "desktop/forum-shell/icons/logo-mark.png",
+      "source_blob": "37f850634e13dc9cadf2d322bd95076cdfe989c1",
+      "source_sha256": "e7e5754f2f8644a774fbc20999ac4b5248751f516284c4658e8d870f2ca5bbc0",
+      "source_mode": "100644",
+      "size": 75475
+    },
+    {
+      "source_path": "hen-local-translator-shell/scripts/generate_theme_icons.py",
+      "destination_path": "desktop/forum-shell/scripts/generate_theme_icons.py",
+      "source_blob": "3b28cc2c7cf969ab56da9c688fee2ec920590cf6",
+      "source_sha256": "b9b2a6a02b3bec0a3b0bb005e31121d6b148a06e356f0175cf1647e506b84074",
+      "source_mode": "100644",
+      "size": 1622
+    },
+    {
+      "source_path": "hen-local-translator-shell/src/app.rs",
+      "destination_path": "desktop/forum-shell/src/app.rs",
+      "source_blob": "e3be6b405046b1e2329b45214da55b566cdcaf11",
+      "source_sha256": "161654a4f0c124de2144dac84345b9b605422f9a6569074c498b486fc397504c",
+      "source_mode": "100644",
+      "size": 62663
+    },
+    {
+      "source_path": "hen-local-translator-shell/src/apple_speech.rs",
+      "destination_path": "desktop/forum-shell/src/apple_speech.rs",
+      "source_blob": "c62e1caba297fe6aff0dba51ca937a8cbb70850c",
+      "source_sha256": "c1bc3a97faf8c49eb62999f0737eb04320b00203c2133e1aaac05c4a4c96cc70",
+      "source_mode": "100644",
+      "size": 23298
+    },
+    {
+      "source_path": "hen-local-translator-shell/src/dataflow.rs",
+      "destination_path": "desktop/forum-shell/src/dataflow.rs",
+      "source_blob": "dc26fc598b3941a428dfb23f199bbd9528b92f31",
+      "source_sha256": "3e21d7b1662ef96a0d8adb7a816899f78e9c31d1fc9888e5327abbba2a3f773d",
+      "source_mode": "100644",
+      "size": 10500
+    },
+    {
+      "source_path": "hen-local-translator-shell/src/main.rs",
+      "destination_path": "desktop/forum-shell/src/main.rs",
+      "source_blob": "c62d895d1d58aa5880d69c06593ffb9f8c3ced3e",
+      "source_sha256": "1f5b5004e682fba9e4cbd964c62ec466dd95675bca1ac2c81eeeaa32158518fd",
+      "source_mode": "100644",
+      "size": 1333
+    },
+    {
+      "source_path": "hen-local-translator-shell/src/power_activity.rs",
+      "destination_path": "desktop/forum-shell/src/power_activity.rs",
+      "source_blob": "326bbf28d7fb73eab1431671a4086f379b041610",
+      "source_sha256": "f784dec52177c89806ac6ff380ce40ade6e1ad6646c0cf99caadc0495b239181",
+      "source_mode": "100644",
+      "size": 6956
+    },
+    {
+      "source_path": "hen-local-translator-shell/src/preferences.rs",
+      "destination_path": "desktop/forum-shell/src/preferences.rs",
+      "source_blob": "019609445e8056b9143392fb3db0f8da698730b8",
+      "source_sha256": "0cdbbc832b2f2faad362b1174c5f1f4cbf9cabd7a26d48a56c0ee3508d38b4fb",
+      "source_mode": "100644",
+      "size": 8640
+    },
+    {
+      "source_path": "hen-local-translator-shell/src/runtime.rs",
+      "destination_path": "desktop/forum-shell/src/runtime.rs",
+      "source_blob": "303ab3b3dde886f9c03408f66f830d26eb20de09",
+      "source_sha256": "ada6c4276e22fce079d56bab49f6957d108b81cf1c70dc36d499169c02082ddf",
+      "source_mode": "100644",
+      "size": 8888
+    },
+    {
+      "source_path": "hen-local-translator-shell/src/usage.rs",
+      "destination_path": "desktop/forum-shell/src/usage.rs",
+      "source_blob": "9dd65576133d4900be96d9d9b9697c464789a800",
+      "source_sha256": "8f294cd85511e41f994283ed2a2055f8c5db85c50a7ab28534d223b5f56de320",
+      "source_mode": "100644",
+      "size": 9295
+    },
+    {
+      "source_path": "hen-local-translator-shell/tauri.bundle.conf.json",
+      "destination_path": "desktop/forum-shell/tauri.bundle.conf.json",
+      "source_blob": "ea6ddfbec2f6f72c31f228d4bd1596594132c0aa",
+      "source_sha256": "afae257631c045442f1d7dcc733b8e8c4de3490f29d897e96b7dac4fa49d2379",
+      "source_mode": "100644",
+      "size": 330
+    },
+    {
+      "source_path": "hen-local-translator-shell/tauri.conf.json",
+      "destination_path": "desktop/forum-shell/tauri.conf.json",
+      "source_blob": "f81d5d36d2696c2b0941a9b5ed5f3670329702de",
+      "source_sha256": "1c7174e654f99658677a8f9191c89cde747709b7aea5f7bd3e549bb059a67b45",
+      "source_mode": "100644",
+      "size": 1644
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/index.html",
+      "destination_path": "desktop/forum-shell/ui/index.html",
+      "source_blob": "1c5ba3828da1abfbfb5d5996bb58bdefb76f25ae",
+      "source_sha256": "d66f1a4fb8bd47915d720cf17196a7d19d067b5e7c36e303f88c36ef8c045291",
+      "source_mode": "100644",
+      "size": 424
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/overlay.html",
+      "destination_path": "desktop/forum-shell/ui/overlay.html",
+      "source_blob": "b31c570966f1b793882ec48ff98f03d7c4f7012e",
+      "source_sha256": "1e31ca6816807a0cdba646196c5d143120cc5f7e77dd9340efd01a01bb01ab2c",
+      "source_mode": "100644",
+      "size": 366
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/package-lock.json",
+      "destination_path": "desktop/forum-shell/ui/package-lock.json",
+      "source_blob": "915acd0cc8f75674b7f3ffcd0c77ebad3bcffa1f",
+      "source_sha256": "b26f114c354afb271d96b3e9edd3744858af0ac27f4c47e5895c8aca0887f591",
+      "source_mode": "100644",
+      "size": 57374
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/package.json",
+      "destination_path": "desktop/forum-shell/ui/package.json",
+      "source_blob": "16a23fcf6ab630d25c3657e1b81dbcd80924a7fb",
+      "source_sha256": "7b79c55ecca037fade15aae50cbb1a2ea19b16fda9df1f9170c23c02c53f33e0",
+      "source_mode": "100644",
+      "size": 837
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/src/App.svelte",
+      "destination_path": "desktop/forum-shell/ui/src/App.svelte",
+      "source_blob": "86e4717aad958c54e80474163fb56dd193d6a4f3",
+      "source_sha256": "dcbdabf0f2f208a6a5eec221e02fbf01440d6b3149804bc7069718077546c3dd",
+      "source_mode": "100644",
+      "size": 60148
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/src/Overlay.svelte",
+      "destination_path": "desktop/forum-shell/ui/src/Overlay.svelte",
+      "source_blob": "516b5a64afdfd339379886d870b76e5f30733b65",
+      "source_sha256": "8dab9d74f1de32b8494f503624e8f55aae09a287c89471c52c995bb8250bae3f",
+      "source_mode": "100644",
+      "size": 12971
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/src/lib/api.ts",
+      "destination_path": "desktop/forum-shell/ui/src/lib/api.ts",
+      "source_blob": "9a59df28f17d664200843cd6f15ba456641f0ade",
+      "source_sha256": "3b9e6f973549871ffeca21333f42e4c6f8af67121411866b42d5c540e6ad7342",
+      "source_mode": "100644",
+      "size": 18321
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/src/lib/caption-metrics.ts",
+      "destination_path": "desktop/forum-shell/ui/src/lib/caption-metrics.ts",
+      "source_blob": "de17bd1f49dcb9bacafa7f0955db51b9a4f54c97",
+      "source_sha256": "8d73a4e5d73b83f6db6cb9ee9d3aec8c486fc66ca8f8a33d8fc0c4b834afbaac",
+      "source_mode": "100644",
+      "size": 773
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/src/main.ts",
+      "destination_path": "desktop/forum-shell/ui/src/main.ts",
+      "source_blob": "4ec504ad8fec8ab2ce10f86f01330a6d9455e87a",
+      "source_sha256": "1c8a3ea3f918158356e0d8b5abc180ca7d3fa157df15573963c6370436c9a917",
+      "source_mode": "100644",
+      "size": 145
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/src/overlay.css",
+      "destination_path": "desktop/forum-shell/ui/src/overlay.css",
+      "source_blob": "a8f88a831d9c990fa5c20ddcde176f9d852a4260",
+      "source_sha256": "e23d0757842a7301ba5436e00a49238374061f0b0b7dc7f6f0467978d45c7cd3",
+      "source_mode": "100644",
+      "size": 8223
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/src/overlay.ts",
+      "destination_path": "desktop/forum-shell/ui/src/overlay.ts",
+      "source_blob": "eb256616bc5da2bca8a8bc174571664cb3f4120a",
+      "source_sha256": "9606bd87dc84f18f066d8e3c3f986654e1d8e4f81c9a9d10086abed1f1b13057",
+      "source_mode": "100644",
+      "size": 158
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/src/styles.css",
+      "destination_path": "desktop/forum-shell/ui/src/styles.css",
+      "source_blob": "1580cd9e2e15b630d63e561abcaf49b50866ba8f",
+      "source_sha256": "440d8f52969882944fb2d9885b31c61a0044446d37c54452750e774973fafc1b",
+      "source_mode": "100644",
+      "size": 30239
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/src/vite-env.d.ts",
+      "destination_path": "desktop/forum-shell/ui/src/vite-env.d.ts",
+      "source_blob": "c285ae77810c24eeac4382e36e23696fc3df7ef0",
+      "source_sha256": "c6c154650c34ba2e94abaac522f423570c7e83a21e1252337b5d9363deee9af7",
+      "source_mode": "100644",
+      "size": 130
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/tests/caption-metrics.test.ts",
+      "destination_path": "desktop/forum-shell/ui/tests/caption-metrics.test.ts",
+      "source_blob": "17b1776c43d7ef0981f47fe40d487a7c1d6c16a1",
+      "source_sha256": "fe4eacb1874acdf9fa37d0c340c1ca5017c08ea9508d6fff7a2213da048e5bf3",
+      "source_mode": "100644",
+      "size": 776
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/tests/p0-scope.test.ts",
+      "destination_path": "desktop/forum-shell/ui/tests/p0-scope.test.ts",
+      "source_blob": "fc2e652298e1b12f6f27b87c687e128068e70777",
+      "source_sha256": "da105a7b06626a8570b280ec6a563005cdfb4868caaa4eac6db67b2ab05b0069",
+      "source_mode": "100644",
+      "size": 3768
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/tsconfig.json",
+      "destination_path": "desktop/forum-shell/ui/tsconfig.json",
+      "source_blob": "124a4cf31a99e34c1c059a68645e96744df4ecaf",
+      "source_sha256": "6cca24a5948606c526b8c7dd66d935c621c9653fed1552f24202c9b90654bce8",
+      "source_mode": "100644",
+      "size": 464
+    },
+    {
+      "source_path": "hen-local-translator-shell/ui/vite.config.ts",
+      "destination_path": "desktop/forum-shell/ui/vite.config.ts",
+      "source_blob": "9b17b8267fadf04dadcda0402b54daa8e96c17f2",
+      "source_sha256": "704a76133f2e2c986623c553e9b151c393a808589e2ccbab9eb6f6caa06fa6e7",
+      "source_mode": "100644",
+      "size": 677
+    },
+    {
+      "source_path": "moxin-dora-bridge/Cargo.toml",
+      "destination_path": "desktop/moxin-dora-bridge/Cargo.toml",
+      "source_blob": "2543e12ccb5b82aa4194dd7ff93c2e6be0f55699",
+      "source_sha256": "e33d81428fe7bfbc9ad082d21a81bfd92d4f93550f20f30bd8762746a9367969",
+      "source_mode": "100644",
+      "size": 1029
+    },
+    {
+      "source_path": "moxin-dora-bridge/lib/libAudioCapture.dylib",
+      "destination_path": "desktop/moxin-dora-bridge/lib/libAudioCapture.dylib",
+      "source_blob": "e072c097fc188b34bf9e52fb3a82f191dc1cc5b7",
+      "source_sha256": "e49e35f533177aaad40d5408ddf683206d0dda45fb25be71ac32453722c643ca",
+      "source_mode": "100644",
+      "size": 151544
+    },
+    {
+      "source_path": "moxin-dora-bridge/src/bridge.rs",
+      "destination_path": "desktop/moxin-dora-bridge/src/bridge.rs",
+      "source_blob": "164d1921927e27ec5526f215be1b33fbd62e2d1d",
+      "source_sha256": "cda33c6a1cdffb30e443c337451b5edadee692ea8690816812817f8055d545a0",
+      "source_mode": "100644",
+      "size": 4217
+    },
+    {
+      "source_path": "moxin-dora-bridge/src/controller.rs",
+      "destination_path": "desktop/moxin-dora-bridge/src/controller.rs",
+      "source_blob": "f155333971f14b1f154f6c009b5270f6b076d6bf",
+      "source_sha256": "eeab7de877b71b0fb760d1ccfd12fcda43a6055eb9d9a3a433e1948ccc03e4ed",
+      "source_mode": "100644",
+      "size": 16678
+    },
+    {
+      "source_path": "moxin-dora-bridge/src/data.rs",
+      "destination_path": "desktop/moxin-dora-bridge/src/data.rs",
+      "source_blob": "55c3cecdc739f246f09902e50860e6337fc211c4",
+      "source_sha256": "7df30092b18605ddd9a4251c351a211ea3244aad70f55284a319a82bdd990ab9",
+      "source_mode": "100644",
+      "size": 1980
+    },
+    {
+      "source_path": "moxin-dora-bridge/src/dispatcher.rs",
+      "destination_path": "desktop/moxin-dora-bridge/src/dispatcher.rs",
+      "source_blob": "cc4e728ab19311a764f838ac1048eaceff52a150",
+      "source_sha256": "8b903ff387fa46be0bda97dd37517372e06b3f1db9159aa5ee0d056a65d1cdf1",
+      "source_mode": "100644",
+      "size": 14389
+    },
+    {
+      "source_path": "moxin-dora-bridge/src/error.rs",
+      "destination_path": "desktop/moxin-dora-bridge/src/error.rs",
+      "source_blob": "6f9796c41f4f0d2c50c2162335ab50dc09a5b0ad",
+      "source_sha256": "a71201146e3ad47fe31707a9bd2e35fc0c44dfcfff676cd284e78e8f7d668b72",
+      "source_mode": "100644",
+      "size": 1917
+    },
+    {
+      "source_path": "moxin-dora-bridge/src/lib.rs",
+      "destination_path": "desktop/moxin-dora-bridge/src/lib.rs",
+      "source_blob": "ce3fe099dec19aa030a4c3efbec7a115a0d11643",
+      "source_sha256": "0e3c632cc66f5709e0db2e53905455cd6fddccb7aa20f4def00f6d7b9a49c78e",
+      "source_mode": "100644",
+      "size": 2379
+    },
+    {
+      "source_path": "moxin-dora-bridge/src/parser.rs",
+      "destination_path": "desktop/moxin-dora-bridge/src/parser.rs",
+      "source_blob": "5201cc44d3dccd68cf2934e3f1915533558ee69e",
+      "source_sha256": "75cc9bccb4af249d78ce1bdff0e215b65510db5463a751b5756a73589d03d9fb",
+      "source_mode": "100644",
+      "size": 12125
+    },
+    {
+      "source_path": "moxin-dora-bridge/src/shared_state.rs",
+      "destination_path": "desktop/moxin-dora-bridge/src/shared_state.rs",
+      "source_blob": "1a07c5fb5ef0ffc9475555ec9540982d3e8dabd5",
+      "source_sha256": "2cbdc1ad0781a935c1f165aa11fb41dce09dc42479a41f41e9b2c54bc8afec76",
+      "source_mode": "100644",
+      "size": 8642
+    },
+    {
+      "source_path": "moxin-dora-bridge/src/widgets/aec_input.rs",
+      "destination_path": "desktop/moxin-dora-bridge/src/widgets/aec_input.rs",
+      "source_blob": "ec4e5ed35cd7731dec655139c8ae7f6172303d6a",
+      "source_sha256": "b490bb85fb9eddb1be6edc1154e10e25d3a0032e5640497e8e9f862ddc63de90",
+      "source_mode": "100644",
+      "size": 80382
+    },
+    {
+      "source_path": "moxin-dora-bridge/src/widgets/audio_player.rs",
+      "destination_path": "desktop/moxin-dora-bridge/src/widgets/audio_player.rs",
+      "source_blob": "e55e2c3fc0b5b10c0843865f5ac27361e45fb4ba",
+      "source_sha256": "67eb0b4934f316f71984606150c8900e3400154900ecd64c39050b6842df60b6",
+      "source_mode": "100644",
+      "size": 40032
+    },
+    {
+      "source_path": "moxin-dora-bridge/src/widgets/mod.rs",
+      "destination_path": "desktop/moxin-dora-bridge/src/widgets/mod.rs",
+      "source_blob": "c225f44db1e50f2602d499e161aabd9cc4a06dc5",
+      "source_sha256": "001a60ea5a238f500224dc0d692f34371d448bfdcdb2c51a2fd257c94452947f",
+      "source_mode": "100644",
+      "size": 798
+    },
+    {
+      "source_path": "moxin-dora-bridge/src/widgets/screencapture_input.rs",
+      "destination_path": "desktop/moxin-dora-bridge/src/widgets/screencapture_input.rs",
+      "source_blob": "2ade91ae3720fae4e4ea923003c8425c6e362fe7",
+      "source_sha256": "e01045d2ff8b31412eed30c6dc1e69cb4dc046471ec77340d2e093a200b24307",
+      "source_mode": "100644",
+      "size": 6890
+    },
+    {
+      "source_path": "moxin-dora-bridge/src/widgets/translation_listener.rs",
+      "destination_path": "desktop/moxin-dora-bridge/src/widgets/translation_listener.rs",
+      "source_blob": "3aafcbdd298ada24ef19297d783c3a9a592b0930",
+      "source_sha256": "55cfd194bd11361908f06f9e3ef718fc9f151a229bf9c31d262b6a0d6d4b4a03",
+      "source_mode": "100644",
+      "size": 35136
+    },
+    {
+      "source_path": "node-hub/dora-qwen3-asr/Cargo.toml",
+      "destination_path": "desktop/node-hub/dora-qwen3-asr/Cargo.toml",
+      "source_blob": "e0ccfd85c19d24bed58343914dfeb4a486ab9a66",
+      "source_sha256": "fd8d0daa64a9fb23f144d813ef20eac68d0c066776a209f71c69e4cfd8c84b89",
+      "source_mode": "100644",
+      "size": 1235
+    },
+    {
+      "source_path": "node-hub/dora-qwen3-asr/examples/print_sink.rs",
+      "destination_path": "desktop/node-hub/dora-qwen3-asr/examples/print_sink.rs",
+      "source_blob": "b01d366924346eb499068407cfc724c6e7de6b2d",
+      "source_sha256": "f452be1298f16bb56722f172d07635ffdaf3c3ba22be746a689e1427e4524cd5",
+      "source_mode": "100644",
+      "size": 1496
+    },
+    {
+      "source_path": "node-hub/dora-qwen3-asr/examples/wav_source.rs",
+      "destination_path": "desktop/node-hub/dora-qwen3-asr/examples/wav_source.rs",
+      "source_blob": "5841bb44fd4bf096be40e3d939f16c3b6408235a",
+      "source_sha256": "2c31a61818f7efec5c545a71f6386285e2a3be1447d132fe2b4d1720622a2262",
+      "source_mode": "100644",
+      "size": 2510
+    },
+    {
+      "source_path": "node-hub/dora-qwen3-asr/src/backend/macos.rs",
+      "destination_path": "desktop/node-hub/dora-qwen3-asr/src/backend/macos.rs",
+      "source_blob": "b43124b53b335d27d61da0e20fd738a0ed99357c",
+      "source_sha256": "f487530247d9607acf571f95cbc54c87b3d5abc1df301e9068d6ea0ccc8f9dc2",
+      "source_mode": "100644",
+      "size": 1041
+    },
+    {
+      "source_path": "node-hub/dora-qwen3-asr/src/backend/mod.rs",
+      "destination_path": "desktop/node-hub/dora-qwen3-asr/src/backend/mod.rs",
+      "source_blob": "5fa30c063dbd5270cef35979e8773463dedfb199",
+      "source_sha256": "ea80a529186ffa41cb06943ff912267cb69e70340ccbc6bc354b551574dc95a8",
+      "source_mode": "100644",
+      "size": 481
+    },
+    {
+      "source_path": "node-hub/dora-qwen3-asr/src/backend/windows.rs",
+      "destination_path": "desktop/node-hub/dora-qwen3-asr/src/backend/windows.rs",
+      "source_blob": "274ae135d2c5617a9be72d1fe93ce7115d140396",
+      "source_sha256": "c8acf62a6c9dd186386a9f958623037edee53f48be5552c832625c088eab625f",
+      "source_mode": "100644",
+      "size": 3609
+    },
+    {
+      "source_path": "node-hub/dora-qwen3-asr/src/main.rs",
+      "destination_path": "desktop/node-hub/dora-qwen3-asr/src/main.rs",
+      "source_blob": "d2afa551fd88716d652a41b7e5d9e506805b53c7",
+      "source_sha256": "71d9ef599e9302736908bb3ae4d06b5272998608a042f29a5446c6e1298d639a",
+      "source_mode": "100644",
+      "size": 24849
+    },
+    {
+      "source_path": "node-hub/dora-qwen35-translator/Cargo.toml",
+      "destination_path": "desktop/node-hub/dora-qwen35-translator/Cargo.toml",
+      "source_blob": "b8af244486e0601a3fefeb458c8e985157107a96",
+      "source_sha256": "b2f6c18d67e4abd67dfa555336cf6e8f9fdee87e112a929e404627fdf307f884",
+      "source_mode": "100644",
+      "size": 2234
+    },
+    {
+      "source_path": "node-hub/dora-qwen35-translator/src/backend_llamacpp.rs",
+      "destination_path": "desktop/node-hub/dora-qwen35-translator/src/backend_llamacpp.rs",
+      "source_blob": "83837b32c34ca0ff60b712d6f1cf1142fb4766b1",
+      "source_sha256": "3b6710d8cb993f44561d5241a69c1ab45ac2d580e6f5785e87bd87cf38534f80",
+      "source_mode": "100644",
+      "size": 12711
+    },
+    {
+      "source_path": "node-hub/dora-qwen35-translator/src/backend_mlx.rs",
+      "destination_path": "desktop/node-hub/dora-qwen35-translator/src/backend_mlx.rs",
+      "source_blob": "e3e3e48ae0cbaa12f7456e6e988c4098d0ebf640",
+      "source_sha256": "82d0edb1b0802efbf474346a762dda43f0ee7398e0fb277be28bf18679f7d009",
+      "source_mode": "100644",
+      "size": 12866
+    },
+    {
+      "source_path": "node-hub/dora-qwen35-translator/src/main.rs",
+      "destination_path": "desktop/node-hub/dora-qwen35-translator/src/main.rs",
+      "source_blob": "26a18c3e650b58c51c9cd2cc3da6122040256616",
+      "source_sha256": "bab86d3e8fa35953a009676eaf3dcef83c6065587bc22b26a7f45c5f17f25691",
+      "source_mode": "100644",
+      "size": 46587
+    },
+    {
+      "source_path": "node-hub/dora-qwen35-translator/src/transcript_buffer.rs",
+      "destination_path": "desktop/node-hub/dora-qwen35-translator/src/transcript_buffer.rs",
+      "source_blob": "ec1acdb6a9d0e9425fce6c762c8f3fb005f94c7b",
+      "source_sha256": "d7b4042134868b080b023fb40c02adb35594d3c2ccf98529243f7e333ad5262e",
+      "source_mode": "100644",
+      "size": 5572
+    },
+    {
+      "source_path": "scripts/build_macos_app.sh",
+      "destination_path": "desktop/scripts/build_macos_app.sh",
+      "source_blob": "4c2b9aa8ddcacade97d191a55347a509777f9ca1",
+      "source_sha256": "85b105746e14e9d6e5fbf8cf861b5ac5b5155fcfd615d8b5a24d89909b382000",
+      "source_mode": "100755",
+      "size": 7631
+    },
+    {
+      "source_path": "scripts/build_macos_dmg.sh",
+      "destination_path": "desktop/scripts/build_macos_dmg.sh",
+      "source_blob": "fc5954152d23f0169bd43d51a4cf1ac95cceffb3",
+      "source_sha256": "2d59b5e2f0b3ed20ebf84bab17b0eeea14cf655867533c74ce7ce9da68a4ad9c",
+      "source_mode": "100755",
+      "size": 3206
+    },
+    {
+      "source_path": "scripts/init_qwen3_models.sh",
+      "destination_path": "desktop/scripts/init_qwen3_models.sh",
+      "source_blob": "3595c0852211d854719ac26f98080570165a2550",
+      "source_sha256": "61d5da6aaa7925fcd17671497ed21a019595a649ca84cc5000f48d80ff61b980",
+      "source_mode": "100755",
+      "size": 2487
+    },
+    {
+      "source_path": "scripts/macos_bootstrap.sh",
+      "destination_path": "desktop/scripts/macos_bootstrap.sh",
+      "source_blob": "66d78fa9686adedbccd4bb202b377987a615c534",
+      "source_sha256": "ad07cbecb303f3abfed188ffd195fd8363fb29a3a119a705dd87f8eb56382bcd",
+      "source_mode": "100755",
+      "size": 3278
+    },
+    {
+      "source_path": "scripts/macos_preflight.sh",
+      "destination_path": "desktop/scripts/macos_preflight.sh",
+      "source_blob": "b722e17e068aea030424f5c7636b9c84b1fe45b0",
+      "source_sha256": "f390c4a1374f757dbe73356cc685d53f75f0db5c1899335e71b7b0b623695a8b",
+      "source_mode": "100755",
+      "size": 6721
+    },
+    {
+      "source_path": "scripts/macos_sign_and_notarize.sh",
+      "destination_path": "desktop/scripts/macos_sign_and_notarize.sh",
+      "source_blob": "e3cd07d35502165d762400c55ecf23de1e277528",
+      "source_sha256": "945eb6a2622792cca28a8db75bc093700dff008fdf692ce4a915632d8934fc4b",
+      "source_mode": "100755",
+      "size": 3537
+    },
+    {
+      "source_path": "scripts/run_translator_desktop.sh",
+      "destination_path": "desktop/scripts/run_translator_desktop.sh",
+      "source_blob": "8d697f30b4c6f2513fcd844a8e25ceaad3bd0f93",
+      "source_sha256": "5094a2d3668606ff0216d82faafac698b5eedeb39c5d710813749d7e30449cbc",
+      "source_mode": "100644",
+      "size": 1260
+    }
+  ]
+}

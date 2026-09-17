@@ -1,0 +1,1931 @@
+//! AEC (Acoustic Echo Cancellation) Input Bridge
+//!
+//! Connects to dora as `moxin-aec-input` dynamic node.
+//! Captures microphone audio with macOS AEC via native library.
+//! Provides:
+//! - VAD-based speech segmentation
+//! - Mic level for UI visualization
+//! - Speech detection state
+//! - Audio segments for ASR
+
+use crate::bridge::{BridgeState, DoraBridge};
+use crate::data::DoraData;
+use crate::error::{BridgeError, BridgeResult};
+use crate::shared_state::{SharedDoraState, TranslationDirection};
+use crossbeam_channel::{bounded, Receiver, Sender};
+use dora_node_api::{
+    dora_core::config::{DataId, NodeId},
+    DoraNode, Event, IntoArrow, Parameter,
+};
+use libloading::{Library, Symbol};
+use parking_lot::RwLock;
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
+use tracing::{debug, error, info, warn};
+
+/// Audio source selection
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum AudioSource {
+    /// Capture from microphone (default)
+    #[default]
+    Microphone,
+    /// Capture system audio via ScreenCaptureKit (macOS 13+)
+    SystemAudio,
+}
+
+/// Control commands for AEC input
+#[derive(Debug, Clone)]
+pub enum AecControlCommand {
+    StartRecording,
+    StopRecording,
+    SetAecEnabled(bool),
+    /// Switch between microphone and system audio capture.
+    SetAudioSource(AudioSource),
+}
+
+/// VAD segmentation state
+struct VadState {
+    is_speaking: bool,
+    speech_buffer: Vec<Vec<f32>>,
+    audio_segment_buffer: Vec<f32>,
+    silence_count: usize,
+    speech_start_threshold: usize,
+    speech_end_threshold: usize,
+    min_segment_size: usize,
+    max_segment_size: usize,
+    start_rms_threshold: f32,
+    end_rms_threshold: f32,
+    question_end_silence_ms: f64,
+    last_speech_end_time: Option<Instant>,
+    question_end_sent: bool,
+    current_question_id: u32,
+    current_burst_id: u32,
+    /// Progressive ASR: timestamp of last progressive audio_segment send
+    last_progressive_send_at: Option<Instant>,
+    /// Progressive ASR: interval in ms between progressive sends (0 = disabled)
+    progressive_interval_ms: u64,
+}
+
+impl Default for VadState {
+    fn default() -> Self {
+        // Read from environment variables (matching Python behavior)
+        let speech_end_threshold = std::env::var("SPEECH_END_FRAMES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10); // Default 10 frames (~100ms)
+
+        let speech_start_threshold = std::env::var("SPEECH_START_FRAMES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3);
+
+        let question_end_silence_ms = std::env::var("QUESTION_END_SILENCE_MS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1000.0); // Default 1000ms
+
+        let min_segment_ms = std::env::var("MIN_SEGMENT_MS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(300); // Default 300ms
+        let min_segment_size = min_segment_ms.saturating_mul(16); // 16kHz mono
+
+        let max_segment_ms = std::env::var("MAX_SEGMENT_MS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .unwrap_or(8000); // Default 8s
+        let max_segment_size = max_segment_ms.saturating_mul(16); // 16kHz mono
+
+        let start_rms_threshold = std::env::var("START_RMS_THRESHOLD")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(0.015);
+        let end_rms_threshold = std::env::var("END_RMS_THRESHOLD")
+            .ok()
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(0.009);
+
+        let progressive_interval_ms = std::env::var("PROGRESSIVE_INTERVAL_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(1500); // Default 1500ms; set to 0 to disable
+
+        Self {
+            is_speaking: false,
+            speech_buffer: Vec::new(),
+            audio_segment_buffer: Vec::new(),
+            silence_count: 0,
+            speech_start_threshold,  // From env or default 3
+            speech_end_threshold,    // From env or default 10 frames (~100ms)
+            min_segment_size,        // Configurable (default 300ms) at 16kHz
+            max_segment_size,        // Configurable (default 8s) at 16kHz
+            start_rms_threshold,     // Start gate (higher)
+            end_rms_threshold,       // End gate (lower, hysteresis)
+            question_end_silence_ms, // From env or default 1000ms
+            last_speech_end_time: None,
+            question_end_sent: false,
+            current_question_id: rand::random::<u32>() % 900000 + 100000,
+            current_burst_id: rand::random::<u32>() % 900000 + 100000,
+            last_progressive_send_at: None,
+            progressive_interval_ms,
+        }
+    }
+}
+
+impl VadState {
+    fn apply_language_profile(&mut self, source_language: &str, system_audio: bool) {
+        let (start_frames, end_frames, question_end_ms, min_segment_ms, start_rms, end_rms) =
+            match source_language.trim().to_lowercase().as_str() {
+                "zh" | "zh-cn" | "chinese" => (5, 10, 1200.0, 420, 0.018_f32, 0.010_f32),
+                "en" | "en-us" | "english" => (4, 30, 900.0, 300, 0.015_f32, 0.009_f32),
+                "fr" | "french" => (4, 10, 1000.0, 320, 0.016_f32, 0.009_f32),
+                _ => (4, 10, 1000.0, 320, 0.016_f32, 0.009_f32),
+            };
+        let rms_scale = if system_audio { 0.3 } else { 1.0 };
+        self.speech_start_threshold = start_frames;
+        self.speech_end_threshold = end_frames;
+        self.question_end_silence_ms = question_end_ms;
+        self.min_segment_size = min_segment_ms * 16;
+        self.start_rms_threshold = start_rms * rms_scale;
+        self.end_rms_threshold = end_rms * rms_scale;
+    }
+}
+
+/// Native audio capture wrapper using libloading
+struct NativeAudioCapture {
+    _library: Library,
+    start_record: Symbol<'static, unsafe extern "C" fn()>,
+    stop_record: Symbol<'static, unsafe extern "C" fn()>,
+    get_audio_data: Symbol<'static, unsafe extern "C" fn(*mut i32, *mut bool) -> *mut u8>,
+    free_audio_data: Symbol<'static, unsafe extern "C" fn(*mut u8)>,
+    is_recording: bool,
+    /// Tracks whether async initialization completed successfully
+    /// The Swift library initializes in a Task block - if we call stopRecord()
+    /// before init completes, audioUnit will be nil and crash
+    init_successful: bool,
+}
+
+impl NativeAudioCapture {
+    /// Load the native library
+    fn new(library_path: &PathBuf) -> Result<Self, String> {
+        if !library_path.exists() {
+            return Err(format!("Library not found: {:?}", library_path));
+        }
+
+        unsafe {
+            let library =
+                Library::new(library_path).map_err(|e| format!("Failed to load library: {}", e))?;
+
+            // We need to transmute to 'static lifetime because libloading symbols
+            // are tied to the library lifetime, but we keep the library alive
+            let start_record: Symbol<unsafe extern "C" fn()> = library
+                .get(b"startRecord")
+                .map_err(|e| format!("Failed to get startRecord: {}", e))?;
+            let start_record: Symbol<'static, unsafe extern "C" fn()> =
+                std::mem::transmute(start_record);
+
+            let stop_record: Symbol<unsafe extern "C" fn()> = library
+                .get(b"stopRecord")
+                .map_err(|e| format!("Failed to get stopRecord: {}", e))?;
+            let stop_record: Symbol<'static, unsafe extern "C" fn()> =
+                std::mem::transmute(stop_record);
+
+            let get_audio_data: Symbol<unsafe extern "C" fn(*mut i32, *mut bool) -> *mut u8> =
+                library
+                    .get(b"getAudioData")
+                    .map_err(|e| format!("Failed to get getAudioData: {}", e))?;
+            let get_audio_data: Symbol<
+                'static,
+                unsafe extern "C" fn(*mut i32, *mut bool) -> *mut u8,
+            > = std::mem::transmute(get_audio_data);
+
+            let free_audio_data: Symbol<unsafe extern "C" fn(*mut u8)> = library
+                .get(b"freeAudioData")
+                .map_err(|e| format!("Failed to get freeAudioData: {}", e))?;
+            let free_audio_data: Symbol<'static, unsafe extern "C" fn(*mut u8)> =
+                std::mem::transmute(free_audio_data);
+
+            Ok(Self {
+                _library: library,
+                start_record,
+                stop_record,
+                get_audio_data,
+                free_audio_data,
+                is_recording: false,
+                init_successful: false,
+            })
+        }
+    }
+
+    fn start(&mut self) {
+        if !self.is_recording {
+            info!("Starting native AEC recording...");
+            unsafe {
+                (self.start_record)();
+            }
+            // IMPORTANT: The Swift library initializes asynchronously in a Task block.
+            // We need to wait for the audio unit to be properly initialized before
+            // considering recording as "started". Otherwise stopRecord() will crash
+            // trying to uninitialize a nil audioUnit.
+            // Wait for async initialization to complete, then verify by checking for audio data.
+            std::thread::sleep(std::time::Duration::from_millis(500));
+
+            // Set recording flag first so get_audio works
+            self.is_recording = true;
+
+            // Try to get audio data as a verification that init succeeded
+            // If we can get audio, initialization worked
+            let mut got_audio = false;
+            for _ in 0..10 {
+                if self.get_audio().is_some() {
+                    got_audio = true;
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+
+            if got_audio {
+                self.init_successful = true;
+                info!("Native AEC recording started successfully (verified audio data)");
+            } else {
+                // Init may have failed, but we'll try anyway
+                // The user might not be speaking yet, so no audio is expected
+                self.init_successful = true; // Assume success, will crash if not
+                warn!("Native AEC started but no audio yet (may be OK if mic is silent)");
+            }
+        }
+    }
+
+    fn stop(&mut self) {
+        // Only call stopRecord if initialization was successful
+        // The Swift library will crash if audioUnit is nil
+        if self.is_recording && self.init_successful {
+            unsafe {
+                (self.stop_record)();
+            }
+            self.is_recording = false;
+            info!("Native AEC recording stopped");
+        } else if self.is_recording {
+            warn!("Skipping stopRecord - init may not have completed");
+            self.is_recording = false;
+        }
+    }
+
+    /// Get audio data from native library
+    /// Returns (audio_samples_i16, vad_active)
+    fn get_audio(&self) -> Option<(Vec<i16>, bool)> {
+        if !self.is_recording {
+            return None;
+        }
+
+        unsafe {
+            let mut size: i32 = 0;
+            let mut is_voice_active: bool = false;
+
+            let data_ptr = (self.get_audio_data)(&mut size, &mut is_voice_active);
+
+            if data_ptr.is_null() || size <= 0 {
+                return None;
+            }
+
+            // Copy data to Rust Vec (data is int16 samples)
+            let byte_slice = std::slice::from_raw_parts(data_ptr, size as usize);
+            let samples: Vec<i16> = byte_slice
+                .chunks_exact(2)
+                .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
+                .collect();
+
+            // Free native memory
+            (self.free_audio_data)(data_ptr);
+
+            Some((samples, is_voice_active))
+        }
+    }
+}
+
+impl Drop for NativeAudioCapture {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Regular CPAL-based mic capture (no AEC)
+/// Used when AEC is disabled - falls back to standard mic input
+struct CpalMicCapture {
+    stream: Option<cpal::Stream>,
+    audio_buffer: Arc<parking_lot::Mutex<Vec<i16>>>,
+    is_recording: bool,
+    sample_rate: u32,
+    vad_threshold: f32, // Energy threshold for simple VAD
+    device_name: Option<String>,
+}
+
+fn downmix_interleaved_to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
+    if channels <= 1 {
+        return samples.to_vec();
+    }
+
+    let channels = channels as usize;
+    samples
+        .chunks(channels)
+        .map(|frame| frame.iter().copied().sum::<f32>() / frame.len() as f32)
+        .collect()
+}
+
+fn resample_linear_mono(samples: &[f32], input_rate: u32, output_rate: u32) -> Vec<f32> {
+    if samples.is_empty() || input_rate == output_rate {
+        return samples.to_vec();
+    }
+
+    if samples.len() == 1 {
+        return vec![samples[0]];
+    }
+
+    let output_len =
+        ((samples.len() as u64 * output_rate as u64) + (input_rate as u64 / 2)) / input_rate as u64;
+    let output_len = output_len.max(1) as usize;
+    let step = input_rate as f64 / output_rate as f64;
+
+    (0..output_len)
+        .map(|idx| {
+            let src_pos = idx as f64 * step;
+            let left = src_pos.floor() as usize;
+            let right = (left + 1).min(samples.len() - 1);
+            let frac = (src_pos - left as f64) as f32;
+            samples[left] * (1.0 - frac) + samples[right] * frac
+        })
+        .collect()
+}
+
+fn push_converted_input<F>(
+    data: &[F],
+    channels: u16,
+    input_rate: u32,
+    output_rate: u32,
+    buffer: &Arc<parking_lot::Mutex<Vec<i16>>>,
+    to_f32: impl Fn(F) -> f32,
+) where
+    F: Copy,
+{
+    let normalized: Vec<f32> = data.iter().copied().map(to_f32).collect();
+    let mono = downmix_interleaved_to_mono(&normalized, channels);
+    let resampled = resample_linear_mono(&mono, input_rate, output_rate);
+    let converted: Vec<i16> = resampled
+        .into_iter()
+        .map(|s| (s * 32767.0).clamp(-32768.0, 32767.0) as i16)
+        .collect();
+    if !converted.is_empty() {
+        buffer.lock().extend(converted);
+    }
+}
+
+impl CpalMicCapture {
+    fn with_device(device_name: Option<String>) -> Result<Self, String> {
+        Ok(Self {
+            stream: None,
+            audio_buffer: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            is_recording: false,
+            sample_rate: 16000,
+            vad_threshold: 0.01,
+            device_name,
+        })
+    }
+
+    fn start(&mut self) -> Result<(), String> {
+        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+        if self.is_recording {
+            return Ok(());
+        }
+
+        let host = cpal::default_host();
+        let device = if let Some(ref name) = self.device_name {
+            use cpal::traits::HostTrait;
+            host.input_devices()
+                .ok()
+                .and_then(|mut devs| devs.find(|d| d.name().map(|n| n == *name).unwrap_or(false)))
+                .or_else(|| host.default_input_device())
+                .ok_or_else(|| format!("Input device '{}' not found", name))?
+        } else {
+            host.default_input_device()
+                .ok_or("No input device available")?
+        };
+
+        let device_name = device
+            .name()
+            .unwrap_or_else(|_| "<unknown input device>".to_string());
+        let supported_config = device
+            .default_input_config()
+            .map_err(|e| format!("Failed to query default input config: {}", e))?;
+        let sample_format = supported_config.sample_format();
+        let config: cpal::StreamConfig = supported_config.config();
+        let input_rate = config.sample_rate.0;
+        let channels = config.channels;
+
+        let buffer = Arc::clone(&self.audio_buffer);
+        let err_fn = |err| error!("CPAL stream error: {}", err);
+
+        eprintln!(
+            "[AecInput] Starting CPAL mic capture: device='{}', sample_format={:?}, channels={}, sample_rate={}Hz -> target={}Hz mono",
+            device_name, sample_format, channels, input_rate, self.sample_rate
+        );
+
+        let stream = match sample_format {
+            cpal::SampleFormat::F32 => device.build_input_stream(
+                &config,
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    push_converted_input(data, channels, input_rate, 16_000, &buffer, |s| s);
+                },
+                err_fn,
+                None,
+            ),
+            cpal::SampleFormat::I16 => device.build_input_stream(
+                &config,
+                move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                    push_converted_input(data, channels, input_rate, 16_000, &buffer, |s| {
+                        s as f32 / 32768.0
+                    });
+                },
+                err_fn,
+                None,
+            ),
+            cpal::SampleFormat::U16 => device.build_input_stream(
+                &config,
+                move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                    push_converted_input(data, channels, input_rate, 16_000, &buffer, |s| {
+                        (s as f32 / 65535.0) * 2.0 - 1.0
+                    });
+                },
+                err_fn,
+                None,
+            ),
+            other => {
+                return Err(format!(
+                    "Unsupported input sample format {:?} for device '{}'",
+                    other, device_name
+                ));
+            }
+        }
+        .map_err(|e| format!("Failed to build input stream: {}", e))?;
+
+        stream
+            .play()
+            .map_err(|e| format!("Failed to start stream: {}", e))?;
+
+        self.stream = Some(stream);
+        self.is_recording = true;
+        info!(
+            "CPAL mic capture started (no AEC) device='{}' input={}Hz/{}ch/{:?} target={}Hz/mono",
+            device_name, input_rate, channels, sample_format, self.sample_rate
+        );
+        Ok(())
+    }
+
+    fn stop(&mut self) {
+        if self.is_recording {
+            self.stream = None;
+            self.is_recording = false;
+            self.audio_buffer.lock().clear();
+            info!("CPAL mic capture stopped");
+        }
+    }
+
+    /// Get audio data with simple energy-based VAD
+    /// Returns (audio_samples_i16, vad_active)
+    fn get_audio(&self) -> Option<(Vec<i16>, bool)> {
+        if !self.is_recording {
+            return None;
+        }
+
+        let mut buffer = self.audio_buffer.lock();
+        if buffer.is_empty() {
+            return None;
+        }
+
+        // Take all available samples
+        let samples: Vec<i16> = buffer.drain(..).collect();
+
+        // Simple energy-based VAD: calculate RMS and compare to threshold
+        let rms: f32 = if samples.is_empty() {
+            0.0
+        } else {
+            let sum_squares: f64 = samples.iter().map(|&s| (s as f64).powi(2)).sum();
+            ((sum_squares / samples.len() as f64).sqrt() / 32768.0) as f32
+        };
+
+        let vad_active = rms > self.vad_threshold;
+
+        Some((samples, vad_active))
+    }
+}
+
+impl Drop for CpalMicCapture {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// AEC Input bridge - captures mic audio with echo cancellation
+pub struct AecInputBridge {
+    node_id: String,
+    state: Arc<RwLock<BridgeState>>,
+    shared_state: Option<Arc<SharedDoraState>>,
+    control_sender: Sender<AecControlCommand>,
+    control_receiver: Receiver<AecControlCommand>,
+    stop_sender: Option<Sender<()>>,
+    worker_handle: Option<thread::JoinHandle<()>>,
+    is_recording: Arc<AtomicBool>,
+    aec_enabled: Arc<AtomicBool>,
+}
+
+impl AecInputBridge {
+    pub fn new(node_id: &str) -> Self {
+        Self::with_shared_state(node_id, None)
+    }
+
+    pub fn with_shared_state(node_id: &str, shared_state: Option<Arc<SharedDoraState>>) -> Self {
+        let (control_tx, control_rx) = bounded(10);
+
+        Self {
+            node_id: node_id.to_string(),
+            state: Arc::new(RwLock::new(BridgeState::Disconnected)),
+            shared_state,
+            control_sender: control_tx,
+            control_receiver: control_rx,
+            stop_sender: None,
+            worker_handle: None,
+            is_recording: Arc::new(AtomicBool::new(false)),
+            aec_enabled: Arc::new(AtomicBool::new(false)), // Default to CPAL (safer startup)
+        }
+    }
+
+    /// Send control command (from UI)
+    pub fn send_control(&self, cmd: AecControlCommand) -> BridgeResult<()> {
+        self.control_sender
+            .send(cmd)
+            .map_err(|_| BridgeError::ChannelSendError)
+    }
+
+    /// Check if recording
+    pub fn is_recording(&self) -> bool {
+        self.is_recording.load(Ordering::Acquire)
+    }
+
+    /// Check if AEC is enabled
+    pub fn is_aec_enabled(&self) -> bool {
+        self.aec_enabled.load(Ordering::Acquire)
+    }
+
+    /// Find the native library path
+    fn find_library_path() -> Option<PathBuf> {
+        // Bundle resources take priority over the developer's checkout. Otherwise
+        // a local build can hide a missing resource in the distributed app.
+        let mut candidates = Vec::new();
+        if let Ok(executable) = std::env::current_exe() {
+            if let Some(directory) = executable.parent() {
+                candidates.push(directory.join("libAudioCapture.dylib"));
+                candidates.push(directory.join("../Resources/lib/libAudioCapture.dylib"));
+            }
+        }
+        candidates.extend([
+            // In moxin-dora-bridge/lib/
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("lib/libAudioCapture.dylib"),
+            // In workspace root
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .map(|p| p.join("lib/libAudioCapture.dylib"))
+                .unwrap_or_default(),
+        ]);
+
+        for path in candidates {
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+
+        None
+    }
+
+    /// Calculate RMS level from audio samples
+    fn calculate_rms(samples: &[f32]) -> f32 {
+        if samples.is_empty() {
+            return 0.0;
+        }
+        let sum_squares: f32 = samples.iter().map(|s| s * s).sum();
+        (sum_squares / samples.len() as f32).sqrt()
+    }
+
+    /// Run the event loop
+    fn run_event_loop(
+        node_id: String,
+        state: Arc<RwLock<BridgeState>>,
+        shared_state: Option<Arc<SharedDoraState>>,
+        control_receiver: Receiver<AecControlCommand>,
+        stop_receiver: Receiver<()>,
+        is_recording: Arc<AtomicBool>,
+        aec_enabled: Arc<AtomicBool>,
+    ) {
+        eprintln!("[AecInput] Starting event loop for {}", node_id);
+
+        // Initialize both capture methods
+        // 1. Native AEC capture (with echo cancellation)
+        let mut aec_capture: Option<NativeAudioCapture> = None;
+        if let Some(library_path) = Self::find_library_path() {
+            info!("Found AEC library at: {:?}", library_path);
+            match NativeAudioCapture::new(&library_path) {
+                Ok(cap) => {
+                    aec_capture = Some(cap);
+                    info!("Native AEC capture initialized");
+                }
+                Err(e) => {
+                    warn!("Failed to load AEC library: {} - will use CPAL only", e);
+                }
+            }
+        } else {
+            warn!("AEC native library not found - will use CPAL only");
+        }
+
+        // 2. CPAL mic capture (no echo cancellation, fallback)
+        let device_name = shared_state
+            .as_ref()
+            .and_then(|ss| ss.translation_input_device.read().clone());
+        let mut cpal_capture = match CpalMicCapture::with_device(device_name) {
+            Ok(cap) => cap,
+            Err(e) => {
+                error!("Failed to init CPAL capture: {}", e);
+                *state.write() = BridgeState::Error;
+                if let Some(ref ss) = shared_state {
+                    ss.set_error(Some(format!("CPAL init failed: {}", e)));
+                }
+                return;
+            }
+        };
+
+        // 3. ScreenCaptureKit system audio capture (macOS 13+, no user install needed)
+        #[cfg(target_os = "macos")]
+        let mut sck_capture: Option<
+            crate::widgets::screencapture_input::ScreenCaptureInput,
+        > = {
+            match crate::widgets::screencapture_input::ScreenCaptureInput::new() {
+                Ok(cap) => {
+                    info!("[AecInput] ScreenCaptureKit available for system audio capture");
+                    Some(cap)
+                }
+                Err(e) => {
+                    warn!(
+                        "[AecInput] ScreenCaptureKit not available: {} (system audio disabled)",
+                        e
+                    );
+                    None
+                }
+            }
+        };
+        // (no ScreenCaptureKit on non-macOS; every later sck_capture use is
+        // cfg-gated to macOS, so no stub binding is needed here)
+
+        // Track current audio source; read initial preference from shared state.
+        let mut audio_source = shared_state
+            .as_ref()
+            .map(|ss| ss.translation_audio_source.read().clone())
+            .unwrap_or_default();
+
+        // If no AEC available, force AEC disabled
+        let aec_available = aec_capture.is_some();
+        if !aec_available {
+            aec_enabled.store(false, Ordering::Release);
+            warn!("AEC not available - using CPAL capture only");
+        }
+
+        // Initialize dora node
+        eprintln!("[AecInput] Initializing dora node for {}", node_id);
+        let (mut node, mut events) =
+            match DoraNode::init_from_node_id(NodeId::from(node_id.clone())) {
+                Ok(n) => {
+                    eprintln!("[AecInput] Dora node init SUCCESS for {}", node_id);
+                    n
+                }
+                Err(e) => {
+                    eprintln!("[AecInput] FAILED to init dora node {}: {}", node_id, e);
+                    *state.write() = BridgeState::Error;
+                    if let Some(ref ss) = shared_state {
+                        ss.set_error(Some(format!("Dora init failed: {}", e)));
+                    }
+                    return;
+                }
+            };
+
+        *state.write() = BridgeState::Connected;
+        eprintln!("[AecInput] Bridge state set to CONNECTED for {}", node_id);
+        if let Some(ref ss) = shared_state {
+            ss.add_bridge(node_id.clone());
+        }
+
+        // VAD state
+        let mut vad_state = VadState::default();
+        let mut active_direction = shared_state
+            .as_ref()
+            .map(|ss| ss.translation_direction_active.read())
+            .unwrap_or_else(|| TranslationDirection::new("zh", "en", 0));
+        let mut burst_direction = active_direction.clone();
+        let mut direction_switch_allowed = true;
+        let mut hard_cut_silence_count = 0usize;
+        let mut using_aec = aec_enabled.load(Ordering::Acquire) && aec_available;
+
+        // Log config on startup (matching Python behavior)
+        let _ = Self::send_log(
+            &mut node,
+            &node_id,
+            "INFO",
+            &format!(
+                "🔧 CONFIG: SPEECH_END_FRAMES={}, QUESTION_END_SILENCE_MS={}ms, AEC_AVAILABLE={}",
+                vad_state.speech_end_threshold, vad_state.question_end_silence_ms, aec_available
+            ),
+        );
+        let speech_end_ms = vad_state.speech_end_threshold * 10; // ~10ms per frame
+        let total_silence_ms = speech_end_ms as f64 + vad_state.question_end_silence_ms;
+        let max_segment_ms = vad_state.max_segment_size / 16;
+        let min_segment_ms = vad_state.min_segment_size / 16;
+        let _ = Self::send_log(
+            &mut node,
+            &node_id,
+            "INFO",
+            &format!(
+                "Endpoint config: start_frames={}, end_frames={} (~{}ms), min_segment={}ms, question_end={}ms (total~{}ms), max_segment={}ms, rms(start/end)={:.4}/{:.4}",
+                vad_state.speech_start_threshold,
+                speech_end_ms,
+                vad_state.speech_end_threshold,
+                min_segment_ms,
+                vad_state.question_end_silence_ms,
+                total_silence_ms,
+                max_segment_ms,
+                vad_state.start_rms_threshold,
+                vad_state.end_rms_threshold
+            ),
+        );
+
+        // Start recording by default when connected
+        match audio_source {
+            AudioSource::SystemAudio => {
+                #[cfg(target_os = "macos")]
+                {
+                    if let Some(ref mut sck) = sck_capture {
+                        if let Err(e) = sck.start() {
+                            error!("[AecInput] Failed to start system audio capture: {}", e);
+                            let _ = Self::send_log(
+                                &mut node,
+                                &node_id,
+                                "ERROR",
+                                &format!("System audio start failed: {} — falling back to mic", e),
+                            );
+                            // Fall back to CPAL mic
+                            let _ = cpal_capture.start();
+                        } else {
+                            let _ = Self::send_log(
+                                &mut node,
+                                &node_id,
+                                "INFO",
+                                "🔊 Recording started (system audio via ScreenCaptureKit)",
+                            );
+                        }
+                    } else {
+                        let _ = Self::send_log(
+                            &mut node,
+                            &node_id,
+                            "WARN",
+                            "System audio unavailable — falling back to microphone",
+                        );
+                        let _ = cpal_capture.start();
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    let _ = cpal_capture.start();
+                }
+            }
+            AudioSource::Microphone => {
+                if using_aec {
+                    if let Some(ref mut aec) = aec_capture {
+                        aec.start();
+                    }
+                    let _ = Self::send_log(
+                        &mut node,
+                        &node_id,
+                        "INFO",
+                        "🎙️ Recording started with AEC (echo cancellation ON)",
+                    );
+                } else {
+                    if let Err(e) = cpal_capture.start() {
+                        error!("Failed to start CPAL capture: {}", e);
+                    }
+                    let _ = Self::send_log(
+                        &mut node,
+                        &node_id,
+                        "INFO",
+                        "🎙️ Recording started without AEC (regular mic)",
+                    );
+                }
+            }
+        }
+        is_recording.store(true, Ordering::Release);
+        let mut recording_active = true;
+
+        // Update shared state
+        if let Some(ref ss) = shared_state {
+            ss.mic.set_recording(true);
+            ss.mic.set_aec_enabled(using_aec);
+        }
+
+        let _ = Self::send_log(
+            &mut node,
+            &node_id,
+            "INFO",
+            "Node ready - outputting: audio, is_speaking, speech_started, speech_ended, audio_segment, question_ended",
+        );
+
+        // Send initial status
+        let _ = Self::send_status(&mut node, "recording");
+        let _ = Self::send_log(
+            &mut node,
+            &node_id,
+            "INFO",
+            "🎙️ Mic recording STARTED (auto-start on connect)",
+        );
+
+        // Main event loop
+        let poll_interval = Duration::from_millis(10);
+        let mut last_poll = Instant::now();
+        // Track the last audio source we acted on so we detect changes from SharedDoraState.
+        let mut last_applied_source = audio_source.clone();
+
+        loop {
+            // Check for stop signal
+            if stop_receiver.try_recv().is_ok() {
+                eprintln!("[AecInput] Received internal stop signal from bridge");
+                break;
+            }
+
+            // Apply a requested direction only between natural speech bursts.
+            // After a max-segment hard cut we wait for real silence so a long
+            // utterance cannot change language halfway through.
+            if direction_switch_allowed && !vad_state.is_speaking {
+                if let Some(ref ss) = shared_state {
+                    let requested = ss.translation_direction_request.read();
+                    if requested.epoch > active_direction.epoch {
+                        info!(
+                            "[AecInput] Activating translation direction {} -> {} (epoch={})",
+                            requested.source_language, requested.target_language, requested.epoch
+                        );
+                        active_direction = requested;
+                        vad_state.apply_language_profile(
+                            &active_direction.source_language,
+                            audio_source == AudioSource::SystemAudio,
+                        );
+                    }
+                }
+            }
+
+            // Poll SharedDoraState for audio source changes set by the UI.
+            // This lets the UI toggle Mic/System Audio without going through the
+            // command channel — the DirtyValue acts as a one-shot notification.
+            if let Some(ref ss) = shared_state {
+                let desired = ss.translation_audio_source.read().clone();
+                if desired != last_applied_source && recording_active {
+                    info!(
+                        "[AecInput] Audio source changed via SharedDoraState: {:?} → {:?}",
+                        last_applied_source, desired
+                    );
+                    // Synthesize a SetAudioSource command by re-using the same handler.
+                    // Stop current source.
+                    match last_applied_source {
+                        AudioSource::SystemAudio =>
+                        {
+                            #[cfg(target_os = "macos")]
+                            if let Some(ref mut sck) = sck_capture {
+                                sck.stop();
+                            }
+                        }
+                        AudioSource::Microphone => {
+                            if using_aec {
+                                if let Some(ref mut aec) = aec_capture {
+                                    aec.stop();
+                                }
+                            } else {
+                                cpal_capture.stop();
+                            }
+                        }
+                    }
+                    audio_source = desired.clone();
+                    last_applied_source = desired.clone();
+                    // Start new source.
+                    match desired {
+                        AudioSource::SystemAudio => {
+                            #[cfg(target_os = "macos")]
+                            {
+                                if let Some(ref mut sck) = sck_capture {
+                                    if let Err(e) = sck.start() {
+                                        error!("[AecInput] Failed to start system audio: {}", e);
+                                        let _ = Self::send_log(
+                                            &mut node,
+                                            &node_id,
+                                            "ERROR",
+                                            &format!("System audio start failed: {}", e),
+                                        );
+                                    } else {
+                                        let _ = Self::send_log(
+                                            &mut node,
+                                            &node_id,
+                                            "INFO",
+                                            "🔊 Switched to system audio capture",
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        AudioSource::Microphone => {
+                            if using_aec {
+                                if let Some(ref mut aec) = aec_capture {
+                                    aec.start();
+                                }
+                                let _ = Self::send_log(
+                                    &mut node,
+                                    &node_id,
+                                    "INFO",
+                                    "🎙️ Switched to microphone (AEC)",
+                                );
+                            } else {
+                                let _ = cpal_capture.start();
+                                let _ = Self::send_log(
+                                    &mut node,
+                                    &node_id,
+                                    "INFO",
+                                    "🎙️ Switched to microphone",
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Handle control commands
+            while let Ok(cmd) = control_receiver.try_recv() {
+                eprintln!("[AecInput] Received control command: {:?}", cmd);
+                match cmd {
+                    AecControlCommand::StartRecording => {
+                        if !recording_active {
+                            // Start the appropriate capture
+                            match audio_source {
+                                AudioSource::SystemAudio => {
+                                    #[cfg(target_os = "macos")]
+                                    {
+                                        if let Some(ref mut sck) = sck_capture {
+                                            if let Err(e) = sck.start() {
+                                                error!(
+                                                    "[AecInput] Failed to start system audio: {}",
+                                                    e
+                                                );
+                                            } else {
+                                                let _ = Self::send_log(
+                                                    &mut node,
+                                                    &node_id,
+                                                    "INFO",
+                                                    "🔊 Recording STARTED (system audio)",
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                AudioSource::Microphone => {
+                                    if using_aec {
+                                        if let Some(ref mut aec) = aec_capture {
+                                            aec.start();
+                                        }
+                                        let _ = Self::send_log(
+                                            &mut node,
+                                            &node_id,
+                                            "INFO",
+                                            "🎙️ Recording STARTED with AEC",
+                                        );
+                                    } else {
+                                        if let Err(e) = cpal_capture.start() {
+                                            error!("Failed to start CPAL: {}", e);
+                                        }
+                                        let _ = Self::send_log(
+                                            &mut node,
+                                            &node_id,
+                                            "INFO",
+                                            "🎙️ Recording STARTED without AEC",
+                                        );
+                                    }
+                                }
+                            }
+                            recording_active = true;
+                            is_recording.store(true, Ordering::Release);
+                            if let Some(ref ss) = shared_state {
+                                ss.mic.set_recording(true);
+                            }
+                            let _ = Self::send_status(&mut node, "recording");
+                        }
+                    }
+                    AecControlCommand::StopRecording => {
+                        if recording_active {
+                            // Stop all capture sources
+                            if let Some(ref mut aec) = aec_capture {
+                                aec.stop();
+                            }
+                            cpal_capture.stop();
+                            #[cfg(target_os = "macos")]
+                            if let Some(ref mut sck) = sck_capture {
+                                sck.stop();
+                            }
+                            recording_active = false;
+                            is_recording.store(false, Ordering::Release);
+                            if let Some(ref ss) = shared_state {
+                                ss.mic.set_recording(false);
+                            }
+                            let _ = Self::send_status(&mut node, "stopped");
+                            let _ = Self::send_log(
+                                &mut node,
+                                &node_id,
+                                "INFO",
+                                "🔇 Mic recording STOPPED",
+                            );
+                        }
+                    }
+                    AecControlCommand::SetAecEnabled(enabled) => {
+                        let new_using_aec = enabled && aec_available;
+
+                        // Only switch if actually changing capture method
+                        if new_using_aec != using_aec {
+                            // Stop current capture
+                            if recording_active {
+                                if using_aec {
+                                    if let Some(ref mut aec) = aec_capture {
+                                        aec.stop();
+                                    }
+                                } else {
+                                    cpal_capture.stop();
+                                }
+                            }
+
+                            // Switch capture method
+                            using_aec = new_using_aec;
+
+                            // Start new capture if was recording
+                            if recording_active {
+                                if using_aec {
+                                    if let Some(ref mut aec) = aec_capture {
+                                        aec.start();
+                                    }
+                                    let _ = Self::send_log(
+                                        &mut node,
+                                        &node_id,
+                                        "INFO",
+                                        "🔄 Switched to AEC capture (echo cancellation ON)",
+                                    );
+                                } else {
+                                    if let Err(e) = cpal_capture.start() {
+                                        error!("Failed to start CPAL: {}", e);
+                                    }
+                                    let _ = Self::send_log(
+                                        &mut node,
+                                        &node_id,
+                                        "INFO",
+                                        "🔄 Switched to regular mic (echo cancellation OFF)",
+                                    );
+                                }
+                            }
+                        }
+
+                        aec_enabled.store(enabled, Ordering::Release);
+                        if let Some(ref ss) = shared_state {
+                            ss.mic.set_aec_enabled(new_using_aec);
+                        }
+                        info!("AEC enabled: {} (using_aec: {})", enabled, using_aec);
+                    }
+                    AecControlCommand::SetAudioSource(new_source) => {
+                        if new_source == audio_source {
+                            continue;
+                        }
+                        // Stop the currently active capture before switching.
+                        if recording_active {
+                            match audio_source {
+                                AudioSource::SystemAudio =>
+                                {
+                                    #[cfg(target_os = "macos")]
+                                    if let Some(ref mut sck) = sck_capture {
+                                        sck.stop();
+                                    }
+                                }
+                                AudioSource::Microphone => {
+                                    if using_aec {
+                                        if let Some(ref mut aec) = aec_capture {
+                                            aec.stop();
+                                        }
+                                    } else {
+                                        cpal_capture.stop();
+                                    }
+                                }
+                            }
+                        }
+                        audio_source = new_source.clone();
+                        if let Some(ref ss) = shared_state {
+                            ss.translation_audio_source.set(new_source.clone());
+                        }
+                        // Start the new source if we were recording.
+                        if recording_active {
+                            match audio_source {
+                                AudioSource::SystemAudio => {
+                                    #[cfg(target_os = "macos")]
+                                    {
+                                        if let Some(ref mut sck) = sck_capture {
+                                            if let Err(e) = sck.start() {
+                                                error!(
+                                                    "[AecInput] Failed to start system audio: {}",
+                                                    e
+                                                );
+                                                let _ = Self::send_log(
+                                                    &mut node,
+                                                    &node_id,
+                                                    "ERROR",
+                                                    &format!("System audio start failed: {}", e),
+                                                );
+                                            } else {
+                                                let _ = Self::send_log(
+                                                    &mut node,
+                                                    &node_id,
+                                                    "INFO",
+                                                    "🔊 Switched to system audio capture",
+                                                );
+                                            }
+                                        } else {
+                                            error!("[AecInput] ScreenCaptureKit not available");
+                                            let _ = Self::send_log(&mut node, &node_id, "ERROR",
+                                                "System audio unavailable — ScreenCaptureKit permission denied");
+                                        }
+                                    }
+                                }
+                                AudioSource::Microphone => {
+                                    if using_aec {
+                                        if let Some(ref mut aec) = aec_capture {
+                                            aec.start();
+                                        }
+                                        let _ = Self::send_log(
+                                            &mut node,
+                                            &node_id,
+                                            "INFO",
+                                            "🎙️ Switched to microphone (AEC ON)",
+                                        );
+                                    } else {
+                                        if let Err(e) = cpal_capture.start() {
+                                            error!("Failed to start CPAL: {}", e);
+                                        }
+                                        let _ = Self::send_log(
+                                            &mut node,
+                                            &node_id,
+                                            "INFO",
+                                            "🎙️ Switched to microphone",
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        last_applied_source = audio_source.clone();
+                        info!("[AecInput] Audio source switched to {:?}", audio_source);
+                    }
+                }
+            }
+
+            // Process audio at regular intervals
+            if recording_active && last_poll.elapsed() >= poll_interval {
+                last_poll = Instant::now();
+
+                // Collect all available audio from the active capture source
+                let mut all_audio: Vec<f32> = Vec::new();
+                let mut vad_results: Vec<bool> = Vec::new();
+
+                // Debug: track audio stats periodically
+                static AUDIO_DEBUG_COUNTER: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(0);
+                let debug_count = AUDIO_DEBUG_COUNTER.fetch_add(1, Ordering::Relaxed);
+
+                // For system audio, ScreenCaptureKit delivers f32 samples directly
+                // (already at 16 kHz mono) with no hardware VAD signal.  We collect
+                // all available samples in one call and let the energy VAD below decide.
+                #[cfg(target_os = "macos")]
+                if audio_source == AudioSource::SystemAudio {
+                    if let Some(ref sck) = sck_capture {
+                        if let Some(samples) = sck.get_audio() {
+                            let rms: f32 = {
+                                let sq: f32 = samples.iter().map(|s| s * s).sum();
+                                (sq / samples.len() as f32).sqrt()
+                            };
+                            let vad = rms > vad_state.start_rms_threshold;
+                            all_audio.extend(samples);
+                            vad_results.push(vad);
+                        }
+                    }
+                    // Skip the microphone polling loop below.
+                    // Fall through to the VAD / segmentation logic which is source-agnostic.
+                }
+
+                // Microphone path (AEC or CPAL)
+                #[cfg(not(target_os = "macos"))]
+                let is_system_audio = false;
+                #[cfg(target_os = "macos")]
+                let is_system_audio = audio_source == AudioSource::SystemAudio;
+
+                if !is_system_audio {
+                    for _ in 0..100 {
+                        // Get audio from the appropriate capture source
+                        let audio_result = if using_aec {
+                            aec_capture.as_ref().and_then(|aec| aec.get_audio())
+                        } else {
+                            cpal_capture.get_audio()
+                        };
+
+                        match audio_result {
+                            Some((samples_i16, vad)) => {
+                                // Convert i16 to f32 normalized
+                                let samples_f32: Vec<f32> =
+                                    samples_i16.iter().map(|&s| s as f32 / 32768.0).collect();
+                                all_audio.extend(samples_f32);
+                                vad_results.push(vad);
+                            }
+                            None => break,
+                        }
+                    }
+                }
+
+                // Log audio stats every 100 iterations (~1 second)
+                if debug_count % 100 == 0 && recording_active {
+                    let rms = Self::calculate_rms(&all_audio);
+                    let vad_active = vad_results.iter().any(|&v| v);
+                    eprintln!(
+                        "[AecInput] Audio stats: using_aec={}, samples={}, rms={:.4}, vad_any={}, is_speaking={}",
+                        using_aec, all_audio.len(), rms, vad_active, vad_state.is_speaking
+                    );
+                }
+
+                // Check question_ended timer (runs even without audio)
+                let mut question_ended = false;
+                if !vad_state.is_speaking
+                    && vad_state.last_speech_end_time.is_some()
+                    && !vad_state.question_end_sent
+                {
+                    let elapsed = vad_state.last_speech_end_time.unwrap().elapsed();
+                    if elapsed.as_millis() as f64 >= vad_state.question_end_silence_ms {
+                        question_ended = true;
+                        vad_state.question_end_sent = true;
+                        info!(
+                            "Question ended (silence: {}ms, question_id={})",
+                            elapsed.as_millis(),
+                            vad_state.current_question_id
+                        );
+                    }
+                }
+
+                // Send question_ended signal
+                if question_ended {
+                    let old_qid = vad_state.current_question_id;
+                    let _ = Self::send_log(
+                        &mut node,
+                        &node_id,
+                        "INFO",
+                        &format!("📤 SENDING question_ended with OLD question_id={}", old_qid),
+                    );
+                    if let Err(e) = Self::send_question_ended(&mut node, old_qid) {
+                        warn!("Failed to send question_ended: {}", e);
+                    }
+                    // Generate new question_id for next question
+                    let new_qid = rand::random::<u32>() % 900000 + 100000;
+                    vad_state.current_question_id = new_qid;
+                    let _ = Self::send_log(
+                        &mut node,
+                        &node_id,
+                        "INFO",
+                        &format!("🆕 GENERATED NEW question_id={} for NEXT question", new_qid),
+                    );
+                }
+
+                if all_audio.is_empty() {
+                    continue;
+                }
+
+                // Calculate mic level and update shared state
+                let rms = Self::calculate_rms(&all_audio);
+                if let Some(ref ss) = shared_state {
+                    ss.mic.set_level(rms);
+                }
+
+                // Send continuous audio stream (matching Python behavior)
+                if let Err(e) = Self::send_audio(&mut node, &all_audio) {
+                    warn!("Failed to send audio: {}", e);
+                }
+
+                // VAD processing with conservative hysteresis:
+                // - Start: require BOTH native VAD and RMS >= start threshold (stricter)
+                // - Continue/end: rely on native VAD + end frames to avoid lag from
+                //   ambient-noise RMS tail holding the segment open.
+                let vad_raw = vad_results.iter().any(|&v| v);
+                let vad_result = if vad_state.is_speaking {
+                    vad_raw
+                } else {
+                    vad_raw && rms >= vad_state.start_rms_threshold
+                };
+                let num_chunks = vad_results.len();
+
+                let mut speech_started = false;
+                let mut speech_ended = false;
+                let mut audio_segment: Option<Vec<f32>> = None;
+                let mut segment_reason: Option<&'static str> = None;
+
+                if vad_result {
+                    // Speech detected
+                    if !vad_state.is_speaking {
+                        hard_cut_silence_count = 0;
+                        vad_state.silence_count = 0;
+                        vad_state.speech_buffer.push(all_audio.clone());
+
+                        if vad_state.speech_buffer.len() >= vad_state.speech_start_threshold {
+                            vad_state.is_speaking = true;
+                            speech_started = true;
+                            burst_direction = active_direction.clone();
+                            vad_state.question_end_sent = false;
+                            vad_state.current_burst_id = rand::random::<u32>() % 900000 + 100000;
+
+                            // Start segment buffer
+                            vad_state.audio_segment_buffer.clear();
+                            for buf in &vad_state.speech_buffer {
+                                vad_state.audio_segment_buffer.extend(buf);
+                            }
+
+                            info!(
+                                "Speech started (question_id={}, burst_id={})",
+                                vad_state.current_question_id, vad_state.current_burst_id
+                            );
+                            // Reset progressive timer when speech starts
+                            vad_state.last_progressive_send_at = Some(Instant::now());
+                        }
+                    } else {
+                        // Continue segment
+                        vad_state.audio_segment_buffer.extend(&all_audio);
+                        vad_state.silence_count = 0;
+
+                        // Progressive ASR: periodically send the full accumulated buffer
+                        // so ASR can transcribe in-progress speech without waiting for silence.
+                        if vad_state.progressive_interval_ms > 0 {
+                            let now = Instant::now();
+                            if let Some(last) = vad_state.last_progressive_send_at {
+                                if now.duration_since(last)
+                                    >= Duration::from_millis(vad_state.progressive_interval_ms)
+                                    && vad_state.audio_segment_buffer.len()
+                                        >= vad_state.min_segment_size
+                                {
+                                    let snapshot = vad_state.audio_segment_buffer.clone();
+                                    if let Err(e) = Self::send_audio_segment_progressive(
+                                        &mut node,
+                                        &snapshot,
+                                        vad_state.current_question_id,
+                                        vad_state.current_burst_id,
+                                        &burst_direction,
+                                    ) {
+                                        warn!("Failed to send progressive audio_segment: {}", e);
+                                    }
+                                    vad_state.last_progressive_send_at = Some(now);
+                                }
+                            }
+                        }
+
+                        // Check max size
+                        if vad_state.audio_segment_buffer.len() >= vad_state.max_segment_size {
+                            audio_segment = Some(vad_state.audio_segment_buffer.clone());
+                            segment_reason = Some("max_segment");
+                            vad_state.audio_segment_buffer.clear();
+                            // Clear speech_buffer too so the next VAD segment's pre-roll
+                            // doesn't re-include audio from the tail of this segment,
+                            // which would cause ASR to produce overlapping content.
+                            vad_state.speech_buffer.clear();
+                            vad_state.is_speaking = false;
+                            vad_state.last_progressive_send_at = None;
+                            direction_switch_allowed = false;
+                            hard_cut_silence_count = 0;
+                            speech_ended = true;
+                        }
+                    }
+                } else {
+                    // No speech
+                    if vad_state.is_speaking {
+                        vad_state.audio_segment_buffer.extend(&all_audio);
+                        vad_state.silence_count += num_chunks;
+
+                        if vad_state.silence_count >= vad_state.speech_end_threshold {
+                            // Speech ended
+                            if vad_state.audio_segment_buffer.len() >= vad_state.min_segment_size {
+                                audio_segment = Some(vad_state.audio_segment_buffer.clone());
+                                segment_reason = Some("speech_end");
+                            }
+
+                            vad_state.audio_segment_buffer.clear();
+                            vad_state.is_speaking = false;
+                            vad_state.silence_count = 0;
+                            vad_state.speech_buffer.clear();
+                            vad_state.last_progressive_send_at = None;
+                            speech_ended = true;
+                            vad_state.last_speech_end_time = Some(Instant::now());
+                            vad_state.question_end_sent = false;
+                            direction_switch_allowed = true;
+                            hard_cut_silence_count = 0;
+
+                            info!(
+                                "Speech ended (question_id={})",
+                                vad_state.current_question_id
+                            );
+                        }
+                    } else {
+                        vad_state.speech_buffer.clear();
+                        if !direction_switch_allowed {
+                            hard_cut_silence_count =
+                                hard_cut_silence_count.saturating_add(num_chunks);
+                            if hard_cut_silence_count >= vad_state.speech_end_threshold {
+                                direction_switch_allowed = true;
+                                hard_cut_silence_count = 0;
+                            }
+                        }
+                    }
+                }
+
+                // Update shared state with speaking status
+                if let Some(ref ss) = shared_state {
+                    if speech_started || speech_ended {
+                        ss.mic.set_speaking(vad_state.is_speaking);
+                    }
+                }
+
+                // Send dora outputs
+                if speech_started {
+                    if let Err(e) = Self::send_speech_started(&mut node) {
+                        warn!("Failed to send speech_started: {}", e);
+                    }
+                    if let Err(e) = Self::send_is_speaking(&mut node, true) {
+                        warn!("Failed to send is_speaking: {}", e);
+                    }
+                    let _ = Self::send_log(
+                        &mut node,
+                        &node_id,
+                        "INFO",
+                        &format!(
+                            "🎤 NEW SPEECH STARTED - question_id={}, burst_id={}",
+                            vad_state.current_question_id, vad_state.current_burst_id
+                        ),
+                    );
+                }
+
+                if speech_ended {
+                    if let Err(e) = Self::send_speech_ended(&mut node) {
+                        warn!("Failed to send speech_ended: {}", e);
+                    }
+                    if let Err(e) = Self::send_is_speaking(&mut node, false) {
+                        warn!("Failed to send is_speaking: {}", e);
+                    }
+                    let _ = Self::send_log(
+                        &mut node,
+                        &node_id,
+                        "INFO",
+                        &format!(
+                            "🔇 SPEECH ENDED - question_id={}",
+                            vad_state.current_question_id
+                        ),
+                    );
+                }
+
+                // Send audio segment for ASR
+                if let Some(segment) = audio_segment {
+                    if let Err(e) = Self::send_audio_segment(
+                        &mut node,
+                        &segment,
+                        vad_state.current_question_id,
+                        vad_state.current_burst_id,
+                        segment_reason.unwrap_or("speech_end"),
+                        &burst_direction,
+                    ) {
+                        warn!("Failed to send audio_segment: {}", e);
+                    } else {
+                        info!(
+                            "Sent audio segment: {} samples (question_id={}, burst_id={})",
+                            segment.len(),
+                            vad_state.current_question_id,
+                            vad_state.current_burst_id
+                        );
+                        let _ = Self::send_log(
+                            &mut node,
+                            &node_id,
+                            "INFO",
+                            &format!(
+                                "🎵 AUDIO_SEGMENT sent with question_id={}, burst_id={} ({} samples)",
+                                vad_state.current_question_id,
+                                vad_state.current_burst_id,
+                                segment.len()
+                            ),
+                        );
+                    }
+                }
+            }
+
+            // Handle dora events (control inputs)
+            match events.recv_timeout(Duration::from_millis(1)) {
+                Some(Event::Input { id, .. }) => {
+                    debug!("Received input: {}", id.as_str());
+                    // Handle control inputs if needed
+                }
+                Some(Event::Stop(_)) => {
+                    // Don't break on Stop - other bridges ignore it too
+                    // Breaking causes immediate disconnect and retry loops
+                    eprintln!("[AecInput] Received Stop event from dora (ignoring)");
+                }
+                _ => {}
+            }
+        }
+
+        // Cleanup - stop both capture methods
+        eprintln!("[AecInput] Event loop exited - running cleanup");
+        if let Some(ref mut aec) = aec_capture {
+            aec.stop();
+        }
+        cpal_capture.stop();
+        is_recording.store(false, Ordering::Release);
+        *state.write() = BridgeState::Disconnected;
+        eprintln!("[AecInput] State set to DISCONNECTED");
+        if let Some(ref ss) = shared_state {
+            ss.remove_bridge(&node_id);
+            ss.mic.set_recording(false);
+        }
+        info!("AEC input bridge event loop ended");
+    }
+
+    fn send_speech_started(node: &mut DoraNode) -> BridgeResult<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        let data = vec![now].into_arrow();
+        let output_id: DataId = "speech_started".to_string().into();
+        node.send_output(output_id, BTreeMap::new(), data)
+            .map_err(|e| BridgeError::SendFailed(e.to_string()))
+    }
+
+    fn send_speech_ended(node: &mut DoraNode) -> BridgeResult<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        let data = vec![now].into_arrow();
+        let output_id: DataId = "speech_ended".to_string().into();
+        node.send_output(output_id, BTreeMap::new(), data)
+            .map_err(|e| BridgeError::SendFailed(e.to_string()))
+    }
+
+    fn send_is_speaking(node: &mut DoraNode, speaking: bool) -> BridgeResult<()> {
+        // Convert bool to u8 since Vec<bool> doesn't implement IntoArrow
+        let data = vec![speaking as u8].into_arrow();
+        let output_id: DataId = "is_speaking".to_string().into();
+        node.send_output(output_id, BTreeMap::new(), data)
+            .map_err(|e| BridgeError::SendFailed(e.to_string()))
+    }
+
+    fn send_question_ended(node: &mut DoraNode, question_id: u32) -> BridgeResult<()> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
+        let data = vec![now].into_arrow();
+        let output_id: DataId = "question_ended".to_string().into();
+
+        let mut params: BTreeMap<String, Parameter> = BTreeMap::new();
+        params.insert(
+            "question_id".to_string(),
+            Parameter::Integer(question_id as i64),
+        );
+
+        node.send_output(output_id, params, data)
+            .map_err(|e| BridgeError::SendFailed(e.to_string()))
+    }
+
+    fn send_audio_segment(
+        node: &mut DoraNode,
+        samples: &[f32],
+        question_id: u32,
+        burst_id: u32,
+        segment_reason: &str,
+        direction: &TranslationDirection,
+    ) -> BridgeResult<()> {
+        let data = samples.to_vec().into_arrow();
+        let output_id: DataId = "audio_segment".to_string().into();
+
+        let mut params: BTreeMap<String, Parameter> = BTreeMap::new();
+        params.insert(
+            "question_id".to_string(),
+            Parameter::Integer(question_id as i64),
+        );
+        params.insert("burst_id".to_string(), Parameter::Integer(burst_id as i64));
+        params.insert("sample_rate".to_string(), Parameter::Integer(16000));
+        params.insert(
+            "transcription_mode".to_string(),
+            Parameter::String("final".to_string()),
+        );
+        params.insert(
+            "segment_reason".to_string(),
+            Parameter::String(segment_reason.to_string()),
+        );
+        Self::add_direction_metadata(&mut params, direction);
+
+        node.send_output(output_id, params, data)
+            .map_err(|e| BridgeError::SendFailed(e.to_string()))
+    }
+
+    /// Send a snapshot of the in-progress speech buffer for progressive ASR.
+    /// The transcription_mode="progressive" tag tells downstream nodes to REPLACE
+    /// (not append) the current session text and emit a streaming translation.
+    fn send_audio_segment_progressive(
+        node: &mut DoraNode,
+        samples: &[f32],
+        question_id: u32,
+        burst_id: u32,
+        direction: &TranslationDirection,
+    ) -> BridgeResult<()> {
+        let data = samples.to_vec().into_arrow();
+        let output_id: DataId = "audio_segment".to_string().into();
+
+        let mut params: BTreeMap<String, Parameter> = BTreeMap::new();
+        params.insert(
+            "question_id".to_string(),
+            Parameter::Integer(question_id as i64),
+        );
+        params.insert("burst_id".to_string(), Parameter::Integer(burst_id as i64));
+        params.insert("sample_rate".to_string(), Parameter::Integer(16000));
+        params.insert(
+            "transcription_mode".to_string(),
+            Parameter::String("progressive".to_string()),
+        );
+        Self::add_direction_metadata(&mut params, direction);
+
+        node.send_output(output_id, params, data)
+            .map_err(|e| BridgeError::SendFailed(e.to_string()))
+    }
+
+    fn add_direction_metadata(
+        params: &mut BTreeMap<String, Parameter>,
+        direction: &TranslationDirection,
+    ) {
+        params.insert(
+            "language".to_string(),
+            Parameter::String(direction.source_language.clone()),
+        );
+        params.insert(
+            "source_language".to_string(),
+            Parameter::String(direction.source_language.clone()),
+        );
+        params.insert(
+            "target_language".to_string(),
+            Parameter::String(direction.target_language.clone()),
+        );
+        params.insert(
+            "direction_epoch".to_string(),
+            Parameter::Integer(direction.epoch.min(i64::MAX as u64) as i64),
+        );
+    }
+
+    /// Send continuous audio stream (for recording/monitoring)
+    fn send_audio(node: &mut DoraNode, samples: &[f32]) -> BridgeResult<()> {
+        let data = samples.to_vec().into_arrow();
+        let output_id: DataId = "audio".to_string().into();
+        node.send_output(output_id, BTreeMap::new(), data)
+            .map_err(|e| BridgeError::SendFailed(e.to_string()))
+    }
+
+    /// Send log message to dora log output
+    fn send_log(
+        node: &mut DoraNode,
+        node_id: &str,
+        level: &str,
+        message: &str,
+    ) -> BridgeResult<()> {
+        let log_entry = serde_json::json!({
+            "level": level,
+            "message": message,
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0),
+            "node": node_id
+        });
+        let log_str = log_entry.to_string();
+        let data = vec![log_str].into_arrow();
+        let output_id: DataId = "log".to_string().into();
+        node.send_output(output_id, BTreeMap::new(), data)
+            .map_err(|e| BridgeError::SendFailed(e.to_string()))
+    }
+
+    /// Send status update (recording/stopped)
+    fn send_status(node: &mut DoraNode, status: &str) -> BridgeResult<()> {
+        let data = vec![status.to_string()].into_arrow();
+        let output_id: DataId = "status".to_string().into();
+        node.send_output(output_id, BTreeMap::new(), data)
+            .map_err(|e| BridgeError::SendFailed(e.to_string()))
+    }
+}
+
+impl DoraBridge for AecInputBridge {
+    fn node_id(&self) -> &str {
+        &self.node_id
+    }
+
+    fn state(&self) -> BridgeState {
+        *self.state.read()
+    }
+
+    fn connect(&mut self) -> BridgeResult<()> {
+        if self.is_connected() {
+            return Err(BridgeError::AlreadyConnected);
+        }
+
+        // If there's an existing worker thread, wait for it to finish
+        // This prevents duplicate dora node connections
+        if let Some(handle) = self.worker_handle.take() {
+            eprintln!("[AecInput] Waiting for previous worker thread to finish...");
+            if let Some(stop_tx) = self.stop_sender.take() {
+                let _ = stop_tx.send(());
+            }
+            let _ = handle.join();
+            eprintln!("[AecInput] Previous worker thread finished");
+            // Give dora a moment to clean up the old connection
+            std::thread::sleep(Duration::from_millis(500));
+        }
+
+        *self.state.write() = BridgeState::Connecting;
+
+        let (stop_tx, stop_rx) = bounded(1);
+        self.stop_sender = Some(stop_tx);
+
+        let node_id = self.node_id.clone();
+        let state = Arc::clone(&self.state);
+        let shared_state = self.shared_state.clone();
+        let control_receiver = self.control_receiver.clone();
+        let is_recording = Arc::clone(&self.is_recording);
+        let aec_enabled = Arc::clone(&self.aec_enabled);
+
+        let handle = thread::spawn(move || {
+            Self::run_event_loop(
+                node_id,
+                state,
+                shared_state,
+                control_receiver,
+                stop_rx,
+                is_recording,
+                aec_enabled,
+            );
+        });
+
+        self.worker_handle = Some(handle);
+
+        // Wait for connection to complete (Connected or Error state)
+        // The worker thread will update the state when it connects to dora
+        let max_wait = Duration::from_secs(10); // 10 second timeout (was 30s)
+        let check_interval = Duration::from_millis(100);
+        let start = Instant::now();
+
+        while start.elapsed() < max_wait {
+            let current_state = *self.state.read();
+            match current_state {
+                BridgeState::Connected => {
+                    info!("AecInputBridge connected successfully");
+                    return Ok(());
+                }
+                BridgeState::Error => {
+                    error!("AecInputBridge connection failed");
+                    return Err(BridgeError::ConnectionFailed(
+                        "Bridge failed to connect".to_string(),
+                    ));
+                }
+                BridgeState::Connecting => {
+                    // Still connecting, keep waiting
+                    std::thread::sleep(check_interval);
+                }
+                BridgeState::Disconnected | BridgeState::Disconnecting => {
+                    // Worker thread exited without setting state
+                    error!("AecInputBridge worker exited unexpectedly");
+                    return Err(BridgeError::ConnectionFailed(
+                        "Worker thread exited".to_string(),
+                    ));
+                }
+            }
+        }
+
+        // Timeout - connection took too long
+        error!("AecInputBridge connection timeout after {:?}", max_wait);
+        Err(BridgeError::ConnectionFailed(
+            "Connection timeout".to_string(),
+        ))
+    }
+
+    fn disconnect(&mut self) -> BridgeResult<()> {
+        if let Some(stop_tx) = self.stop_sender.take() {
+            let _ = stop_tx.send(());
+        }
+
+        if let Some(handle) = self.worker_handle.take() {
+            let _ = handle.join();
+        }
+
+        *self.state.write() = BridgeState::Disconnected;
+        Ok(())
+    }
+
+    fn send(&self, output_id: &str, data: DoraData) -> BridgeResult<()> {
+        if !self.is_connected() {
+            return Err(BridgeError::NotConnected);
+        }
+
+        match output_id {
+            "control" => {
+                let DoraData::Json(val) = data;
+                if let Some(action) = val.get("action").and_then(|v| v.as_str()) {
+                    let cmd = match action {
+                        "start_recording" => Some(AecControlCommand::StartRecording),
+                        "stop_recording" => Some(AecControlCommand::StopRecording),
+                        "toggle_aec" | "set_aec_enabled" => {
+                            let enabled =
+                                val.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+                            Some(AecControlCommand::SetAecEnabled(enabled))
+                        }
+                        _ => None,
+                    };
+                    if let Some(cmd) = cmd {
+                        self.send_control(cmd)?;
+                    }
+                }
+            }
+            _ => {
+                warn!("Unknown output: {}", output_id);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn expected_inputs(&self) -> Vec<String> {
+        vec!["control".to_string()]
+    }
+
+    fn expected_outputs(&self) -> Vec<String> {
+        vec![
+            "audio".to_string(),         // Continuous audio stream
+            "audio_segment".to_string(), // VAD-segmented audio for ASR
+            "speech_started".to_string(),
+            "speech_ended".to_string(),
+            "is_speaking".to_string(),
+            "question_ended".to_string(),
+            "status".to_string(), // Recording status (recording/stopped)
+            "log".to_string(),
+        ]
+    }
+}
+
+impl Drop for AecInputBridge {
+    fn drop(&mut self) {
+        let _ = self.disconnect();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{downmix_interleaved_to_mono, resample_linear_mono};
+
+    #[test]
+    fn downmix_interleaved_stereo_to_mono() {
+        let stereo = vec![0.2_f32, 0.6_f32, -0.4_f32, 0.4_f32];
+        let mono = downmix_interleaved_to_mono(&stereo, 2);
+
+        assert_eq!(mono.len(), 2);
+        assert!((mono[0] - 0.4).abs() < 1e-6);
+        assert!((mono[1] - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn resample_linear_mono_downsamples_to_16k() {
+        let input: Vec<f32> = (0..480).map(|i| i as f32 / 480.0).collect();
+        let output = resample_linear_mono(&input, 48_000, 16_000);
+
+        assert_eq!(output.len(), 160);
+        assert!((output[0] - input[0]).abs() < 1e-6);
+        assert!(
+            (output.last().copied().unwrap_or_default()
+                - input.last().copied().unwrap_or_default())
+            .abs()
+                < 0.02
+        );
+    }
+}

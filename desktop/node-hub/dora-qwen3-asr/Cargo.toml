@@ -1,0 +1,34 @@
+[package]
+name = "dora-qwen3-asr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ASR Dora node for Hen Local Translator (macOS: Qwen3-ASR MLX; Windows: SenseVoice via sherpa-onnx)"
+
+# Shared deps: the Dora event loop and message contract are platform-independent.
+[dependencies]
+dora-node-api = "0.4.0"
+arrow = { version = "54.2.1", default-features = false, features = ["ipc"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "5.0"
+
+# macOS / Apple Silicon: original MLX backend.
+[target.'cfg(target_os = "macos")'.dependencies]
+qwen3-asr-mlx = { git = "https://github.com/OminiX-ai/OminiX-MLX.git", rev = "6aac996db8b71fb7dae7a2409c46b4f2ade93092", package = "qwen3-asr-mlx" }
+mlx-sys = { git = "https://github.com/OminiX-ai/OminiX-MLX.git", rev = "6aac996db8b71fb7dae7a2409c46b4f2ade93092", package = "mlx-sys" }
+
+# Windows: SenseVoice-small via sherpa-onnx (prebuilt native libs, no cmake needed).
+[target.'cfg(windows)'.dependencies]
+sherpa-onnx = "1.13.6"
+
+[dev-dependencies]
+hound = "3.5"
+eyre = "0.6"
+
+[[bin]]
+name = "dora-qwen3-asr"
+path = "src/main.rs"

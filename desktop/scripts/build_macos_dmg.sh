@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "This script only supports macOS."
+  exit 1
+fi
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP_NAME="AI Vision Forum"
+APP_PATH="$ROOT_DIR/dist/${APP_NAME}.app"
+OUT_DIR="$ROOT_DIR/dist"
+VERSION=""
+VOL_NAME=""
+DMG_NAME=""
+
+read_workspace_version() {
+  sed -n '/^\[workspace.package\]/,/^\[/{s/^version = "\(.*\)"/\1/p;}' "$ROOT_DIR/Cargo.toml" | head -n 1
+}
+
+read_app_version() {
+  local plist="$APP_PATH/Contents/Info.plist"
+  if [[ -f "$plist" ]] && command -v /usr/libexec/PlistBuddy >/dev/null 2>&1; then
+    /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$plist" 2>/dev/null || true
+  fi
+}
+
+usage() {
+  cat <<EOF
+Usage:
+  $(basename "$0") [options]
+
+Options:
+  --app-path <path>   Path to .app bundle (default: $APP_PATH)
+  --out-dir <dir>     Output directory (default: $OUT_DIR)
+  --version <version> Version used for default DMG naming (default: app bundle version)
+  --vol-name <name>   DMG volume name (default: "$APP_NAME <version> Installer")
+  --dmg-name <name>   DMG file name (default: AI-Vision-Forum-v<version>.dmg)
+  -h, --help          Show this help
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --app-path)
+      APP_PATH="$2"
+      shift 2
+      ;;
+    --out-dir)
+      OUT_DIR="$2"
+      shift 2
+      ;;
+    --version)
+      VERSION="$2"
+      shift 2
+      ;;
+    --vol-name)
+      VOL_NAME="$2"
+      shift 2
+      ;;
+    --dmg-name)
+      DMG_NAME="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1"
+      usage
+      exit 1
+      ;;
+  esac
+done
+
+if [[ ! -d "$APP_PATH" ]]; then
+  echo "App bundle not found: $APP_PATH"
+  echo "Build it first with scripts/build_macos_app.sh"
+  exit 1
+fi
+
+WORKSPACE_VERSION="$(read_workspace_version)"
+WORKSPACE_MARKETING_VERSION="${WORKSPACE_VERSION%%[-+]*}"
+APP_VERSION="$(read_app_version)"
+if [[ -z "$WORKSPACE_VERSION" ]]; then
+  echo "Failed to determine the workspace version from Cargo.toml"
+  exit 1
+fi
+if [[ -z "$APP_VERSION" ]]; then
+  echo "Failed to determine the app bundle version"
+  exit 1
+fi
+if [[ "$APP_VERSION" != "$WORKSPACE_MARKETING_VERSION" ]]; then
+  echo "App bundle version $APP_VERSION does not match the workspace marketing version $WORKSPACE_MARKETING_VERSION"
+  echo "Synchronize workspace, product, Tauri and UI versions, then rebuild the app."
+  exit 1
+fi
+if [[ -n "$VERSION" && "$VERSION" != "$WORKSPACE_VERSION" ]]; then
+  echo "DMG version $VERSION does not match the workspace version $WORKSPACE_VERSION"
+  echo "Synchronize workspace, product, Tauri and UI versions before changing the DMG version."
+  exit 1
+fi
+VERSION="$WORKSPACE_VERSION"
+if [[ -z "$VOL_NAME" ]]; then
+  VOL_NAME="$APP_NAME $VERSION Installer"
+fi
+if [[ -z "$DMG_NAME" ]]; then
+  DMG_NAME="AI-Vision-Forum-v${VERSION}.dmg"
+fi
+
+mkdir -p "$OUT_DIR"
+DMG_PATH="$OUT_DIR/$DMG_NAME"
+STAGING_DIR="$(mktemp -d)"
+
+cp -R "$APP_PATH" "$STAGING_DIR/"
+ln -s /Applications "$STAGING_DIR/Applications"
+
+rm -f "$DMG_PATH"
+hdiutil create \
+  -volname "$VOL_NAME" \
+  -srcfolder "$STAGING_DIR" \
+  -ov \
+  -format UDZO \
+  "$DMG_PATH"
+
+rm -rf "$STAGING_DIR"
+
+echo "DMG created:"
+echo "  $DMG_PATH"
