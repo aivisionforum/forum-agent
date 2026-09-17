@@ -2,6 +2,239 @@
 // UTF-8 offsets are bytes, never JavaScript string indices. Validate wire data before use.
 export const SCHEMA_VERSION = 1 as const;
 
+export type AnalysisCheckpoint = {
+  "attempt": number;
+  "effective_config_hash": string;
+  "input_sha256": string;
+  "job_id": string;
+  "result": unknown;
+  "result_sha256": string;
+  "snapshot_sha256": string;
+  "step_index": number;
+};
+
+export type AnalysisClaim = {
+  "assignee"?: string | null;
+  "claim_id": string;
+  "due"?: string | null;
+  "evidence": Array<AnalysisEvidence>;
+  "grounding": GroundingStatus;
+  "kind": ClaimKind;
+  "text": string;
+};
+
+export type AnalysisConfig = {
+  "effective_config_hash": string;
+  "generation": unknown;
+  "model_manifest_id": string;
+  "model_profile": string;
+  "profile_id": string;
+  "profile_sha256": string;
+  "profile_version": string;
+  "projection_policy_hash": string;
+  "prompt_sha256": string;
+  "prompt_version": string;
+};
+
+export type AnalysisCoverage = {
+  "units": Array<CoverageUnit>;
+};
+
+export type AnalysisEvidence = {
+  "kind": "source";
+  "session_id": string;
+  "span": SourceSpan;
+} | {
+  "artifact_id": string;
+  "end_utf8": number;
+  "kind": "artifact";
+  "quote": string;
+  "revision": Revision;
+  "start_utf8": number;
+};
+
+export type AnalysisEvidenceView = {
+  "current": boolean;
+  "quote": string;
+  "text": string;
+};
+
+export type AnalysisJob = {
+  "attempt": number;
+  "automatic": boolean;
+  "budget_ms": number;
+  "config": AnalysisConfig;
+  "created_at_ms": number;
+  "deadline_at_ms": number;
+  "error"?: string | null;
+  "event_id": string;
+  "job_id": string;
+  "kind": AnalysisKind;
+  "max_attempts": number;
+  "progress": AnalysisProgress;
+  "request_id": string;
+  "result"?: ArtifactRef | null;
+  "session_ids": Array<string>;
+  "snapshot_id": string;
+  "snapshot_sha256": string;
+  "started_at_ms"?: number | null;
+  "state": AnalysisJobState;
+};
+
+export type AnalysisJobPage = {
+  "cursor": number;
+  "items": Array<AnalysisJob>;
+  "next_after"?: AnalysisPageKey | null;
+};
+
+export type AnalysisJobState = "queued" | "waiting" | "running" | "cancel_requested" | "cancelled" | "succeeded" | "succeeded_partial" | "failed" | "interrupted";
+
+export type AnalysisKind = "insight" | "minutes" | "event_report" | "suggested_questions" | "redaction_review" | "closing_brief";
+
+export type AnalysisPageKey = {
+  "created_at_ms": number;
+  "cursor": number;
+  "id": string;
+};
+
+export type AnalysisProgress = {
+  "completed_units": number;
+  "phase": string;
+  "total_units": number;
+  "wait_reason"?: string | null;
+};
+
+export type AnalysisPublishedInput = {
+  "artifact_id": string;
+  "kind": AnalysisKind;
+  "revision": Revision;
+  "session_ids": Array<string>;
+  "text": string;
+  "title": string;
+};
+
+export type AnalysisResult = {
+  "attempt": number;
+  "content": ArtifactContent;
+  "coverage": AnalysisCoverage;
+  "effective_config_hash": string;
+  "job_id": string;
+  "schema_version": number;
+  "snapshot_id": string;
+  "snapshot_sha256": string;
+};
+
+export type AnalysisSection = {
+  "claims": Array<AnalysisClaim>;
+  "heading": string;
+};
+
+export type AnalysisSnapshot = {
+  "effective_config_hash": string;
+  "event_id": string;
+  "input_complete": boolean;
+  "input_cursor": number;
+  "kind": AnalysisKind;
+  "published_artifacts": Array<AnalysisPublishedInput>;
+  "schema_version": number;
+  "segments": Array<AnalysisSource>;
+  "session_ids": Array<string>;
+  "snapshot_id": string;
+};
+
+export type AnalysisSnapshotData = {
+  "compact_json": string;
+  "sha256": string;
+  "snapshot": AnalysisSnapshot;
+};
+
+export type AnalysisSource = {
+  "audio": AudioRange;
+  "revision"?: Revision | null;
+  "segment_id": string;
+  "session_id": string;
+  "speaker_id"?: string | null;
+  "status"?: TranscriptStatus | null;
+  "text": string;
+};
+
+export type ArtifactContent = {
+  "sections": Array<AnalysisSection>;
+  "title": string;
+};
+
+export type ArtifactEdit = {
+  "artifact_id": string;
+  "content": ArtifactContent;
+  "expected_revision": Revision;
+  "operator_id": string;
+  "reason": string;
+};
+
+export type ArtifactPage = {
+  "cursor": number;
+  "items": Array<ArtifactRecord>;
+  "next_after"?: AnalysisPageKey | null;
+};
+
+export type ArtifactPublication = "private" | "published" | "hidden" | "withdrawn";
+
+export type ArtifactPublishCommand = {
+  "artifact_id": string;
+  "evidence": Array<PublicEvidenceInput>;
+  "expected_revision": Revision;
+  "operator_id": string;
+  "policy_hash": string;
+  "reason": string;
+  "reviewed_text": string;
+  "reviewed_title": string;
+};
+
+export type ArtifactRecord = {
+  "artifact_id": string;
+  "config": AnalysisConfig;
+  "content": ArtifactContent;
+  "coverage": AnalysisCoverage;
+  "coverage_complete": boolean;
+  "created_at_ms": number;
+  "event_id": string;
+  "job_id": string;
+  "kind": AnalysisKind;
+  "operator_id"?: string | null;
+  "publication": ArtifactPublication;
+  "reason"?: string | null;
+  "review": ArtifactReview;
+  "revision": Revision;
+  "session_ids": Array<string>;
+  "snapshot_id": string;
+  "validation": ArtifactValidation;
+};
+
+export type ArtifactRef = {
+  "artifact_id": string;
+  "revision": Revision;
+};
+
+export type ArtifactReview = "draft" | "approved" | "rejected";
+
+export type ArtifactReviewCommand = {
+  "artifact_id": string;
+  "expected_revision": Revision;
+  "operator_id": string;
+  "reason": string;
+  "review": ArtifactReview;
+};
+
+export type ArtifactValidation = "valid" | "needs_review" | "invalid" | "stale";
+
+export type ArtifactVisibilityCommand = {
+  "artifact_id": string;
+  "expected_revision": Revision;
+  "operator_id": string;
+  "publication": ArtifactPublication;
+  "reason": string;
+};
+
 export type AudioGap = {
   "audio": AudioRange;
   "gap_id": string;
@@ -63,6 +296,8 @@ export type CaptureStoppedEvent = {
   "type": "session.capture_stopped";
 };
 
+export type ClaimKind = "fact" | "decision" | "action" | "risk" | "question" | "uncertainty";
+
 export type CoverageIntent = {
   "direction_epoch": number;
   "end_utf8": number;
@@ -71,6 +306,36 @@ export type CoverageIntent = {
   "start_utf8": number;
   "state": string;
   "target_language": string;
+};
+
+export type CoverageStatus = "processed" | "failed" | "ignored_empty";
+
+export type CoverageTarget = {
+  "kind": "source";
+  "segment_id": string;
+  "segment_revision"?: Revision | null;
+} | {
+  "artifact_id": string;
+  "kind": "artifact";
+  "revision": Revision;
+};
+
+export type CoverageUnit = {
+  "end_utf8": number;
+  "reason"?: string | null;
+  "start_utf8": number;
+  "status": CoverageStatus;
+  "target": CoverageTarget;
+};
+
+export type CreateAnalysisJob = {
+  "automatic": boolean;
+  "budget_ms": number;
+  "config": AnalysisConfig;
+  "kind": AnalysisKind;
+  "max_attempts": number;
+  "request_id": string;
+  "session_ids": Array<string>;
 };
 
 export type DirectionBoundary = {
@@ -100,6 +365,8 @@ export type DirectionChangedEvent = {
 export type EventType = "session.changed" | "audio.gap" | "session.capture_stopped" | "session.producer_sealed" | "session.producer_reconciled" | "session.transcript_sealed" | "translation.requested" | "translation.final" | "translation.failed" | "translation.direction_changed" | "audio.segment_closed" | "transcript.final" | "transcript.revised";
 
 export type ForumEvent = CaptureSegmentClosedEvent | TranscriptFinalEvent | TranscriptRevisionEvent | SessionTransitionEvent | AudioGapEvent | CaptureStoppedEvent | ProducerSealEvent | ProducerReconciledEvent | TranscriptSealEvent | DirectionChangedEvent | TranslationRequestedEvent | TranslationFinalEvent | TranslationFailedEvent;
+
+export type GroundingStatus = "cited" | "unsupported";
 
 export type IncompleteSegment = {
   "audio": AudioRange;
@@ -171,6 +438,39 @@ export type ProducerSealEvent = {
   "type": "session.producer_sealed";
 };
 
+export type PublicArtifact = {
+  "evidence": Array<PublicEvidence>;
+  "kind": AnalysisKind;
+  "public_id": string;
+  "publication_seq": number;
+  "revision": Revision;
+  "text": string;
+  "title": string;
+};
+
+export type PublicEvidence = {
+  "public_evidence_id": string;
+  "revision": Revision;
+  "text": string;
+};
+
+export type PublicEvidenceInput = {
+  "evidence": AnalysisEvidence;
+  "reviewed_text": string;
+};
+
+export type PublicSnapshot = {
+  "artifacts": Array<PublicArtifact>;
+  "cursor": number;
+};
+
+export type PublicationChange = {
+  "artifact"?: PublicArtifact | null;
+  "public_id": string;
+  "publication_seq": number;
+  "withdrawn": boolean;
+};
+
 export type Receipt = {
   "duplicate": boolean;
   "message_id": string;
@@ -197,6 +497,11 @@ export type Revision = number;
 
 export type RevisionOrigin = {
   "kind": "asr";
+} | {
+  "file_sha256": string;
+  "kind": "legacy_import";
+  "line": number;
+  "speaker_label"?: string | null;
 } | {
   "base_revision": Revision;
   "kind": "human";
@@ -289,7 +594,7 @@ export type SourceSpan = {
   "start_utf8": number;
 };
 
-export type TrackKind = "mic" | "system" | "room_mix" | "replay";
+export type TrackKind = "mic" | "system" | "room_mix" | "replay" | "legacy_import";
 
 export type TrackSeal = {
   "final_sample": number;

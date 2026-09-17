@@ -1,5 +1,1105 @@
 {
   "$defs": {
+    "AnalysisCheckpoint": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "effective_config_hash": {
+          "type": "string"
+        },
+        "input_sha256": {
+          "type": "string"
+        },
+        "job_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "result": true,
+        "result_sha256": {
+          "type": "string"
+        },
+        "snapshot_sha256": {
+          "type": "string"
+        },
+        "step_index": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "job_id",
+        "attempt",
+        "step_index",
+        "snapshot_sha256",
+        "input_sha256",
+        "effective_config_hash",
+        "result_sha256",
+        "result"
+      ],
+      "type": "object"
+    },
+    "AnalysisClaim": {
+      "additionalProperties": false,
+      "properties": {
+        "assignee": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "claim_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "due": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/AnalysisEvidence"
+          },
+          "type": "array"
+        },
+        "grounding": {
+          "$ref": "#/$defs/GroundingStatus"
+        },
+        "kind": {
+          "$ref": "#/$defs/ClaimKind"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "claim_id",
+        "kind",
+        "text",
+        "evidence",
+        "grounding"
+      ],
+      "type": "object"
+    },
+    "AnalysisConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "effective_config_hash": {
+          "type": "string"
+        },
+        "generation": true,
+        "model_manifest_id": {
+          "type": "string"
+        },
+        "model_profile": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "profile_sha256": {
+          "type": "string"
+        },
+        "profile_version": {
+          "type": "string"
+        },
+        "projection_policy_hash": {
+          "type": "string"
+        },
+        "prompt_sha256": {
+          "type": "string"
+        },
+        "prompt_version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "model_profile",
+        "model_manifest_id",
+        "prompt_version",
+        "prompt_sha256",
+        "profile_id",
+        "profile_version",
+        "profile_sha256",
+        "effective_config_hash",
+        "projection_policy_hash",
+        "generation"
+      ],
+      "type": "object"
+    },
+    "AnalysisCoverage": {
+      "additionalProperties": false,
+      "properties": {
+        "units": {
+          "items": {
+            "$ref": "#/$defs/CoverageUnit"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "units"
+      ],
+      "type": "object"
+    },
+    "AnalysisEvidence": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "source",
+              "type": "string"
+            },
+            "session_id": {
+              "format": "uuid",
+              "not": {
+                "const": "00000000-0000-0000-0000-000000000000"
+              },
+              "type": "string"
+            },
+            "span": {
+              "$ref": "#/$defs/SourceSpan"
+            }
+          },
+          "required": [
+            "kind",
+            "session_id",
+            "span"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_id": {
+              "format": "uuid",
+              "not": {
+                "const": "00000000-0000-0000-0000-000000000000"
+              },
+              "type": "string"
+            },
+            "end_utf8": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "kind": {
+              "const": "artifact",
+              "type": "string"
+            },
+            "quote": {
+              "type": "string"
+            },
+            "revision": {
+              "$ref": "#/$defs/Revision"
+            },
+            "start_utf8": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "kind",
+            "artifact_id",
+            "revision",
+            "start_utf8",
+            "end_utf8",
+            "quote"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AnalysisEvidenceView": {
+      "additionalProperties": false,
+      "properties": {
+        "current": {
+          "type": "boolean"
+        },
+        "quote": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "quote",
+        "current"
+      ],
+      "type": "object"
+    },
+    "AnalysisJob": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "automatic": {
+          "type": "boolean"
+        },
+        "budget_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "config": {
+          "$ref": "#/$defs/AnalysisConfig"
+        },
+        "created_at_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "deadline_at_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "job_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/AnalysisKind"
+        },
+        "max_attempts": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "progress": {
+          "$ref": "#/$defs/AnalysisProgress"
+        },
+        "request_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session_ids": {
+          "items": {
+            "format": "uuid",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            },
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "snapshot_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "snapshot_sha256": {
+          "type": "string"
+        },
+        "started_at_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "state": {
+          "$ref": "#/$defs/AnalysisJobState"
+        }
+      },
+      "required": [
+        "job_id",
+        "request_id",
+        "kind",
+        "event_id",
+        "session_ids",
+        "state",
+        "attempt",
+        "max_attempts",
+        "budget_ms",
+        "created_at_ms",
+        "deadline_at_ms",
+        "snapshot_id",
+        "snapshot_sha256",
+        "config",
+        "automatic",
+        "progress"
+      ],
+      "type": "object"
+    },
+    "AnalysisJobPage": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/AnalysisJob"
+          },
+          "type": "array"
+        },
+        "next_after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnalysisPageKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "cursor",
+        "items"
+      ],
+      "type": "object"
+    },
+    "AnalysisJobState": {
+      "enum": [
+        "queued",
+        "waiting",
+        "running",
+        "cancel_requested",
+        "cancelled",
+        "succeeded",
+        "succeeded_partial",
+        "failed",
+        "interrupted"
+      ],
+      "type": "string"
+    },
+    "AnalysisKind": {
+      "enum": [
+        "insight",
+        "minutes",
+        "event_report",
+        "suggested_questions",
+        "redaction_review",
+        "closing_brief"
+      ],
+      "type": "string"
+    },
+    "AnalysisPageKey": {
+      "additionalProperties": false,
+      "properties": {
+        "created_at_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "cursor",
+        "created_at_ms",
+        "id"
+      ],
+      "type": "object"
+    },
+    "AnalysisProgress": {
+      "additionalProperties": false,
+      "properties": {
+        "completed_units": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "total_units": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "wait_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "phase",
+        "completed_units",
+        "total_units"
+      ],
+      "type": "object"
+    },
+    "AnalysisPublishedInput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/AnalysisKind"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "session_ids": {
+          "items": {
+            "format": "uuid",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            },
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "text": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "revision",
+        "session_ids",
+        "kind",
+        "title",
+        "text"
+      ],
+      "type": "object"
+    },
+    "AnalysisResult": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "content": {
+          "$ref": "#/$defs/ArtifactContent"
+        },
+        "coverage": {
+          "$ref": "#/$defs/AnalysisCoverage"
+        },
+        "effective_config_hash": {
+          "type": "string"
+        },
+        "job_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "snapshot_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "snapshot_sha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "job_id",
+        "attempt",
+        "snapshot_id",
+        "snapshot_sha256",
+        "effective_config_hash",
+        "content",
+        "coverage"
+      ],
+      "type": "object"
+    },
+    "AnalysisSection": {
+      "additionalProperties": false,
+      "properties": {
+        "claims": {
+          "items": {
+            "$ref": "#/$defs/AnalysisClaim"
+          },
+          "type": "array"
+        },
+        "heading": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "heading",
+        "claims"
+      ],
+      "type": "object"
+    },
+    "AnalysisSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "effective_config_hash": {
+          "type": "string"
+        },
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "input_complete": {
+          "type": "boolean"
+        },
+        "input_cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "$ref": "#/$defs/AnalysisKind"
+        },
+        "published_artifacts": {
+          "items": {
+            "$ref": "#/$defs/AnalysisPublishedInput"
+          },
+          "type": "array"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "segments": {
+          "items": {
+            "$ref": "#/$defs/AnalysisSource"
+          },
+          "type": "array"
+        },
+        "session_ids": {
+          "items": {
+            "format": "uuid",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            },
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "snapshot_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "snapshot_id",
+        "event_id",
+        "session_ids",
+        "input_cursor",
+        "kind",
+        "effective_config_hash",
+        "segments",
+        "published_artifacts",
+        "input_complete"
+      ],
+      "type": "object"
+    },
+    "AnalysisSnapshotData": {
+      "additionalProperties": false,
+      "properties": {
+        "compact_json": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": "string"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/AnalysisSnapshot"
+        }
+      },
+      "required": [
+        "snapshot",
+        "compact_json",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "AnalysisSource": {
+      "additionalProperties": false,
+      "properties": {
+        "audio": {
+          "$ref": "#/$defs/AudioRange"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Revision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "segment_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "speaker_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TranscriptStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "segment_id",
+        "text",
+        "audio"
+      ],
+      "type": "object"
+    },
+    "ArtifactContent": {
+      "additionalProperties": false,
+      "properties": {
+        "sections": {
+          "items": {
+            "$ref": "#/$defs/AnalysisSection"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "sections"
+      ],
+      "type": "object"
+    },
+    "ArtifactEdit": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "content": {
+          "$ref": "#/$defs/ArtifactContent"
+        },
+        "expected_revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "operator_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "expected_revision",
+        "content",
+        "operator_id",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ArtifactPage": {
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/ArtifactRecord"
+          },
+          "type": "array"
+        },
+        "next_after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnalysisPageKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "cursor",
+        "items"
+      ],
+      "type": "object"
+    },
+    "ArtifactPublication": {
+      "enum": [
+        "private",
+        "published",
+        "hidden",
+        "withdrawn"
+      ],
+      "type": "string"
+    },
+    "ArtifactPublishCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/PublicEvidenceInput"
+          },
+          "type": "array"
+        },
+        "expected_revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "operator_id": {
+          "type": "string"
+        },
+        "policy_hash": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "reviewed_text": {
+          "type": "string"
+        },
+        "reviewed_title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "expected_revision",
+        "operator_id",
+        "reason",
+        "policy_hash",
+        "reviewed_title",
+        "reviewed_text",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "ArtifactRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "config": {
+          "$ref": "#/$defs/AnalysisConfig"
+        },
+        "content": {
+          "$ref": "#/$defs/ArtifactContent"
+        },
+        "coverage": {
+          "$ref": "#/$defs/AnalysisCoverage"
+        },
+        "coverage_complete": {
+          "type": "boolean"
+        },
+        "created_at_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "job_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/AnalysisKind"
+        },
+        "operator_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "publication": {
+          "$ref": "#/$defs/ArtifactPublication"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "review": {
+          "$ref": "#/$defs/ArtifactReview"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "session_ids": {
+          "items": {
+            "format": "uuid",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            },
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "snapshot_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "validation": {
+          "$ref": "#/$defs/ArtifactValidation"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "revision",
+        "kind",
+        "event_id",
+        "session_ids",
+        "job_id",
+        "snapshot_id",
+        "content",
+        "coverage",
+        "coverage_complete",
+        "validation",
+        "review",
+        "publication",
+        "config",
+        "created_at_ms"
+      ],
+      "type": "object"
+    },
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "ArtifactReview": {
+      "enum": [
+        "draft",
+        "approved",
+        "rejected"
+      ],
+      "type": "string"
+    },
+    "ArtifactReviewCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "expected_revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "operator_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "review": {
+          "$ref": "#/$defs/ArtifactReview"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "expected_revision",
+        "review",
+        "operator_id",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ArtifactValidation": {
+      "enum": [
+        "valid",
+        "needs_review",
+        "invalid",
+        "stale"
+      ],
+      "type": "string"
+    },
+    "ArtifactVisibilityCommand": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "expected_revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "operator_id": {
+          "type": "string"
+        },
+        "publication": {
+          "$ref": "#/$defs/ArtifactPublication"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "expected_revision",
+        "publication",
+        "operator_id",
+        "reason"
+      ],
+      "type": "object"
+    },
     "AudioGap": {
       "additionalProperties": false,
       "properties": {
@@ -302,6 +1402,17 @@
       ],
       "type": "object"
     },
+    "ClaimKind": {
+      "enum": [
+        "fact",
+        "decision",
+        "action",
+        "risk",
+        "question",
+        "uncertainty"
+      ],
+      "type": "string"
+    },
     "CoverageIntent": {
       "properties": {
         "direction_epoch": {
@@ -344,6 +1455,159 @@
         "start_utf8",
         "end_utf8",
         "state"
+      ],
+      "type": "object"
+    },
+    "CoverageStatus": {
+      "enum": [
+        "processed",
+        "failed",
+        "ignored_empty"
+      ],
+      "type": "string"
+    },
+    "CoverageTarget": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "source",
+              "type": "string"
+            },
+            "segment_id": {
+              "format": "uuid",
+              "not": {
+                "const": "00000000-0000-0000-0000-000000000000"
+              },
+              "type": "string"
+            },
+            "segment_revision": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Revision"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "segment_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "artifact_id": {
+              "format": "uuid",
+              "not": {
+                "const": "00000000-0000-0000-0000-000000000000"
+              },
+              "type": "string"
+            },
+            "kind": {
+              "const": "artifact",
+              "type": "string"
+            },
+            "revision": {
+              "$ref": "#/$defs/Revision"
+            }
+          },
+          "required": [
+            "kind",
+            "artifact_id",
+            "revision"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CoverageUnit": {
+      "additionalProperties": false,
+      "properties": {
+        "end_utf8": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "start_utf8": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "status": {
+          "$ref": "#/$defs/CoverageStatus"
+        },
+        "target": {
+          "$ref": "#/$defs/CoverageTarget"
+        }
+      },
+      "required": [
+        "target",
+        "start_utf8",
+        "end_utf8",
+        "status"
+      ],
+      "type": "object"
+    },
+    "CreateAnalysisJob": {
+      "additionalProperties": false,
+      "properties": {
+        "automatic": {
+          "type": "boolean"
+        },
+        "budget_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "config": {
+          "$ref": "#/$defs/AnalysisConfig"
+        },
+        "kind": {
+          "$ref": "#/$defs/AnalysisKind"
+        },
+        "max_attempts": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "request_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "session_ids": {
+          "items": {
+            "format": "uuid",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            },
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "request_id",
+        "session_ids",
+        "kind",
+        "config",
+        "budget_ms",
+        "max_attempts",
+        "automatic"
       ],
       "type": "object"
     },
@@ -529,6 +1793,13 @@
           "$ref": "#/$defs/TranslationFailedEvent"
         }
       ]
+    },
+    "GroundingStatus": {
+      "enum": [
+        "cited",
+        "unsupported"
+      ],
+      "type": "string"
     },
     "IncompleteSegment": {
       "properties": {
@@ -873,6 +2144,148 @@
       ],
       "type": "object"
     },
+    "PublicArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/PublicEvidence"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/AnalysisKind"
+        },
+        "public_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "publication_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "text": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "public_id",
+        "revision",
+        "kind",
+        "title",
+        "text",
+        "evidence",
+        "publication_seq"
+      ],
+      "type": "object"
+    },
+    "PublicEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "public_evidence_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "public_evidence_id",
+        "revision",
+        "text"
+      ],
+      "type": "object"
+    },
+    "PublicEvidenceInput": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "$ref": "#/$defs/AnalysisEvidence"
+        },
+        "reviewed_text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "evidence",
+        "reviewed_text"
+      ],
+      "type": "object"
+    },
+    "PublicSnapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "items": {
+            "$ref": "#/$defs/PublicArtifact"
+          },
+          "type": "array"
+        },
+        "cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "cursor",
+        "artifacts"
+      ],
+      "type": "object"
+    },
+    "PublicationChange": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PublicArtifact"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "public_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "publication_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "withdrawn": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "publication_seq",
+        "public_id",
+        "withdrawn"
+      ],
+      "type": "object"
+    },
     "Receipt": {
       "properties": {
         "duplicate": {
@@ -996,6 +2409,34 @@
           },
           "required": [
             "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "file_sha256": {
+              "type": "string"
+            },
+            "kind": {
+              "const": "legacy_import",
+              "type": "string"
+            },
+            "line": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "speaker_label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "file_sha256",
+            "line"
           ],
           "type": "object"
         },
@@ -1429,13 +2870,22 @@
       "type": "object"
     },
     "TrackKind": {
-      "enum": [
-        "mic",
-        "system",
-        "room_mix",
-        "replay"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "mic",
+            "system",
+            "room_mix",
+            "replay"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "legacy_import",
+          "description": "Transcript-only import; sample coordinates are milliseconds, not recorded PCM.",
+          "type": "string"
+        }
+      ]
     },
     "TrackSeal": {
       "additionalProperties": false,

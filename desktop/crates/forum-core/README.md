@@ -1,4 +1,4 @@
-# forum-core：F02/F04 数据核心
+# forum-core：会议、翻译与分析数据核心
 
 本库提供 SQLite 单写 Store、有界 CoreHandle actor、会议生命周期、逐字稿修订、翻译 coverage、采音封存及恢复对账。这里没有模型、麦克风、Dora、网络或 UI；真实设备与节点接线由相邻组件实现。不能仅凭本库单测宣布 F02–F04 整体现场验收完成。
 
@@ -61,7 +61,7 @@ core.shutdown()?;
 
 ## 迁移与检查
 
-当前 DB version 为 4。版本 1→2 增加状态/coverage，3 增加 producer 恢复和译文历史，4 固定 capture 语向及采样边界。已有数据库升级前 `VACUUM INTO` 唯一备份文件并 fsync；未来版本拒绝、不降级。升级之前不存在的译文历史不能编造，游标早于历史保留起点返回 `RESET_REQUIRED`。尚未做历史压缩。
+当前 DB version 为 5。版本 1→2 增加状态/coverage，3 增加 producer 恢复和译文历史，4 固定 capture 语向及采样边界，5 增加分析任务/快照/产物/审核/公开投影/旧数据导入。已有数据库升级前 `VACUUM INTO` 唯一备份文件并 fsync；未来版本拒绝、不降级。升级之前不存在的译文历史不能编造，游标早于历史保留起点返回 `RESET_REQUIRED`。尚未做历史压缩。
 
 ```bash
 # repo 根目录执行，不下载模型。
@@ -70,6 +70,45 @@ CARGO_TARGET_DIR=/tmp/aivf-core-f02-target cargo +stable run --offline --locked 
 CARGO_TARGET_DIR=/tmp/aivf-core-f02-target cargo +stable run --offline --locked --manifest-path desktop/Cargo.toml -p forum-core --example core_smoke
 ```
 
-41 core + 3 contracts 单测通过：真实 SQLite 事务/触发器故障回滚、重开/丢 ACK、独立子进程锁、有界队列与超时、UTF-8、旧 ASR 恢复、异常 producer 对账、采音清单、源/译文快照分页、跨版本/attempt/epoch late fence、多来源释放、1002 段恢复、真实语向边界与重开。
+62 core + 4 contracts 单测通过：真实 SQLite 事务/触发器故障回滚、重开/丢 ACK、独立子进程锁、有界队列与超时、UTF-8、旧 ASR 恢复、异常 producer 对账、采音清单、源/译文快照分页、跨版本/attempt/epoch late fence、多来源释放、1002 段恢复、真实语向边界与重开。
 
-未在这里实现：模型质量或硬件验收、producer 音频落盘策略、consumer ACK/压缩、F05 分析调度、审核发布与匿名网关。内部 source/outbox 有完整私有文本，公开页面只能消费独立授权投影。
+未在这里实现：模型质量或硬件验收、producer 音频落盘策略、consumer ACK/压缩、实际模型进程调度和 HTTP 网关。内部 source/outbox 有完整私有文本，公开页面只能消费独立授权投影。
+
+
+## F05–F08 分析与审核事务
+
+所有入口均为 `Store` 方法，可通过 `CoreHandle::call` 使用。模型生成、文件读写和进程退出等待在 actor 外进行。
+
+| API | 边界 |
+|---|---|
+| `create_analysis_job(&CreateAnalysisJob)` | 显式会话选择、同活动范围、配置SHA与有限预算；request_id/body幂等；自动任务相同快照去重，洞察新快照合并旧pending |
+| `analysis_job`, `analysis_snapshot`, `next_analysis_jobs` | 单任务、精确compact JSON+SHA、全局待调度队列 |
+| `claim_analysis_job(id,attempt)` | 同时仅一个 Running/CancelRequested；排队时间计入deadline，过期返回持久Failed |
+| `wait_analysis_job`, `update_analysis_progress` | 有版本检查的等待原因和进度 |
+| `cancel_analysis_job(id,expected_attempt)`, `complete_analysis_cancel` | 迟到UI不能取消新attempt；运行任务先CancelRequested，宿主确认进程退出才释放占用 |
+| `interrupt_analysis_job`, `interrupt_running_analysis_jobs` | 宿主确认退出/启动恢复；保留原预算，不偷偷续时 |
+| `retry_analysis_job(id,expected_attempt)` | 用户明确重试才新可见预算；最多3次、原输入与配置仍须current |
+| `confirm_analysis_checkpoint`, `analysis_checkpoints` | 只有当前Running attempt能确认步骤，核对snapshot/config/result SHA；重启保留 |
+| `reusable_analysis_checkpoints` | 同event/session集合/kind/config已确认块，最多1000条/16MiB；worker按当前块input SHA精确匹配并重校验证据，不直接复制旧artifact |
+| `finish_analysis_job` | 同事务重检attempt/取消/deadline/snapshot/原文版本/公开依赖/音频gap、UTF-8引用和全部输入覆盖；已提交相同result重发幂等 |
+| `list_analysis_jobs`, `list_artifacts` | 最近优先的created_at_ms/UUID keyset，after携带不可变analysis cursor；1–100条 |
+| `artifact`, `artifact_revision`, `resolve_analysis_evidence` | 当前/历史版本与精确引用定位；引用匹配不等于模型陈述已被事实证明 |
+| `edit_artifact`, `review_artifact` | expected_revision、操作者与理由；编辑新revision、回到Draft，自动结果不会覆盖人工批准的另一产物 |
+| `publish_artifact`, `set_artifact_visibility` | Valid+Approved+complete+current+policy才可发布；公开标题、正文、证据均显式人工审阅，来源变更递归撤回 |
+| `public_snapshot`, `public_changes` | 单独publication cursor；仅不含内部ID的PublicArtifact。旧cursor重放已经隐藏/撤回正文时也只返回tombstone |
+| `export_artifact(id,revision,format)` | 内部JSON/Markdown/转义HTML导出；含状态与证据，不可直接作为LAN公开接口 |
+| `list_sessions_page` | rowid DESC真实会议目录分页，新会议不会挤掉后页旧会议 |
+| `import_legacy_transcript(spec,content)` | 16MiB/10000行、整份严格解析后单事务；按event+原文件SHA幂等，不读取外部路径 |
+
+洞察选择尾部900秒相交的完整段；纪要选择整场source快照。未封存纪要、缺ASR、录音gap、未覆盖尾字节都保留partial。跨场报告只用所选每一场已有的已批准且公开产物；任何一场没有此类输入会拒绝，没有退回私有草稿或原文的路径。新生成的产物永远从Draft/Private开始。引用必须精确匹配版本和UTF-8字节；无支持的claim是NeedsReview，不能直接批准发布。此检查不替代人工判断语义是否得到引用支持。
+
+公开表述和公开证据在同artifact revision内冻结。改变匿名表述先edit形成新revision，再审核发布，保证 `(artifact_id,revision)` 的引用正文唯一。隐藏/撤回/原文修订以及晚到gap的失效和publication tombstone都与数据变更在一个SQLite事务提交。内部审核命令存在publication_reviews，公开DTO不带内部引用或路径。
+
+`canonical_json` 明确递归按key排序，不依赖serde_json preserve_order；模型配置、snapshot精确bytes、结果/步骤SHA采用该序列化。当前数值参数使用宿主固定展开值；跨语言不要擅自改写数字类型或重排精确snapshot文件。
+
+旧JSONL要求每行有秒单位t_start/t_end、speaker_id、lang、text。TrackKind/RevisionOrigin明确为LegacyImport，1000Hz只是原时间戳的毫秒坐标，recording_ref为空，没有伪造capture或producer seal。原行、文件hash和speaker标签保留。由于文件不能证明录音/会议完整，导入会话incomplete、分析input_complete=false；可生成部分草稿，不能冒充完整纪要直接公开。
+
+新增21项测试覆盖取消/attempt、同快照去重、排队预算、重启与确认cache、不同scope/config的cache隔离、原文人工和ASR修订、音频gap迟到、事务故障、精确UTF-8、尾段coverage、私有/隐藏泄漏、审核不被覆盖、公开表述版本、分页与原子导入。额外以 `--features serde_json/preserve_order` 跑完整核心测试，验证桌面依赖合并后的哈希行为。
+
+
+自动会后纪要另有无模型依赖的持久停止记录：可信runtime仅在实际Stopped回调中调用`record_analysis_stop_intent(session_id)`。`pending_analysis_stop_intents(limit)`按marker升序返回`Vec<(Uuid,u64)>`，限制1–1000条；manager先创建或去重持久job，再调用`ack_analysis_stop_intent(session_id,marker)`。同场恢复后再次Stop采用事务DELETE+INSERT取得严格递增marker；旧ACK或重复ACK不会删除新Stop。退出或缺少模型配置时不需要构造job，记录仍可重启消费。三项新增测试验证无模型/无job重启保留、旧ACK与跨session隔离、真实SQLite插入失败回滚后仍保留旧记录。

@@ -395,6 +395,7 @@ impl Store {
         )?;
         require_capture_state(&tx, event.session_id)?;
         tx.execute("INSERT INTO audio_gaps(gap_id,session_id,track_id,payload_json,created_seq) VALUES(?1,?2,?3,?4,?5)",params![event.payload.gap_id.to_string(),event.session_id.to_string(),event.payload.track_id.to_string(),serde_json::to_string(&event.payload)?,receipt.store_seq])?;
+        analysis::invalidate_analysis_gap(&tx, event.session_id)?;
         tx.execute(
             "UPDATE sessions SET incomplete=1 WHERE id=?1",
             [event.session_id.to_string()],

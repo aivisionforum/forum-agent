@@ -12,6 +12,9 @@ use std::{
 };
 use thiserror::Error;
 mod actor;
+mod analysis;
+mod legacy;
+
 mod direction;
 use direction::*;
 mod reliable;
@@ -20,7 +23,7 @@ pub use actor::*;
 pub use reliable::*;
 pub use translation::*;
 
-pub const DATABASE_VERSION: u32 = 4;
+pub const DATABASE_VERSION: u32 = 5;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -81,6 +84,11 @@ pub struct Receipt {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RevisionOrigin {
     Asr,
+    LegacyImport {
+        file_sha256: String,
+        line: u32,
+        speaker_label: Option<String>,
+    },
     Human {
         operator_id: String,
         reason: String,
@@ -190,6 +198,7 @@ impl Store {
         let mut store =
             Self::from_connection(Connection::open(&path)?, Some(&path), Some(ownership))?;
         store.recover_interrupted_sessions()?;
+        store.recover_analysis_jobs()?;
         Ok(store)
     }
 
@@ -238,6 +247,11 @@ impl Store {
         if version < 4 {
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             tx.execute_batch(include_str!("../migrations/004_direction_boundaries.sql"))?;
+            tx.commit()?;
+        }
+        if version < 5 {
+            let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(include_str!("../migrations/005_analysis.sql"))?;
             tx.commit()?;
         }
         Ok(Self {
@@ -436,6 +450,7 @@ impl Store {
             created_seq: receipt.store_seq,
         };
         insert_revision(&tx, &record)?;
+        analysis::invalidate_analysis_source(&tx, record.payload.segment_id)?;
         tx.execute(
             "UPDATE capture_segments SET result_seq=?1 WHERE segment_id=?2",
             params![receipt.store_seq, p.segment_id.to_string()],
@@ -478,6 +493,7 @@ impl Store {
         };
         record.created_seq = receipt.store_seq;
         insert_revision(&tx, &record)?;
+        analysis::invalidate_analysis_source(&tx, record.payload.segment_id)?;
         tx.execute("UPDATE translation_coverage SET state='stale' WHERE segment_id=?1 AND segment_revision=?2",
             params![p.segment_id.to_string(), p.expected_revision.get()])?;
         invalidate_source_translations(

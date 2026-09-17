@@ -3,6 +3,8 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+mod analysis;
+pub use analysis::*;
 mod reliable;
 pub use reliable::*;
 use std::collections::HashSet;
@@ -110,6 +112,8 @@ pub enum TrackKind {
     System,
     RoomMix,
     Replay,
+    /// Transcript-only import; sample coordinates are milliseconds, not recorded PCM.
+    LegacyImport,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

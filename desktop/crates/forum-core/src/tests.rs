@@ -599,3 +599,6 @@ fn event_payload_type_schema_and_unknown_wire_fields_are_checked() {
 
 #[path = "reliable_tests.rs"]
 mod reliable_tests;
+
+#[path = "analysis_tests.rs"]
+mod analysis_tests;
