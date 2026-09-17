@@ -1,4 +1,4 @@
-"""Strict, bounded NDJSON transport and the F01 lifecycle contract.
+"""Strict, bounded NDJSON control transport for host-granted analysis attempts.
 
 This module performs no model loading, network requests, or database writes.
 Only the host may choose job paths and later grant model capabilities.
@@ -16,6 +16,7 @@ from typing import BinaryIO, Iterator
 from uuid import UUID
 
 from . import __version__
+from .job_io import KINDS
 
 PROTOCOL_VERSION = 1
 MAX_FRAME_BYTES = 1024 * 1024  # Bytes before LF, including any CR.
@@ -93,12 +94,15 @@ def _valid_id(value: object) -> bool:
 
 
 class Protocol:
-    """One initialized host connection, with no analysis work queue yet."""
+    """One initialized host connection; native inference runs outside the reader."""
 
-    def __init__(self, *, allow_model_probe: bool = False) -> None:
+    def __init__(self, *, allow_model_probe: bool = False, allow_test_models: bool = False, emit=None) -> None:
         self.configuration: dict | None = None
         self.stopping = False
         self.allow_model_probe = allow_model_probe
+        self.allow_test_models = allow_test_models
+        from .jobs import Jobs
+        self.jobs = Jobs(emit or (lambda response: None), allow_fake=allow_test_models)
 
     def handle(self, frame: bytes) -> dict | None:
         try:
@@ -122,6 +126,8 @@ class Protocol:
         ):
             return error(None, -32600, "INVALID_REQUEST", "Invalid JSON-RPC request.")
 
+        if request["method"] == "jobs.run" and "id" not in request:
+            return None  # An asynchronous attempt requires a response ID.
         response = self._dispatch(request_id, request["method"], request.get("params", {}))
         # JSON-RPC notifications have no responses, including method errors.
         return response if "id" in request else None
@@ -133,7 +139,7 @@ class Protocol:
         def success(result: dict) -> dict:
             return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
-        known = {"initialize", "health.ping", "shutdown", "jobs.run", "jobs.cancel"}
+        known = {"initialize", "health.ping", "shutdown", "jobs.run", "jobs.cancel", "jobs.checkpoint_ack"}
         if self.allow_model_probe:
             known.add("diagnostics.model_probe")
         if method not in known:
@@ -144,7 +150,7 @@ class Protocol:
             if not isinstance(params, dict):
                 return fail(-32602, "INVALID_PARAMS", "Initialize requires named parameters.")
             required = {"protocol_version", "instance_id", "job_root", "profile_id", "profile_version"}
-            if set(params) != required or type(params["protocol_version"]) is not int:
+            if not required <= set(params) or set(params) - required - {"model_grants"} or type(params["protocol_version"]) is not int:
                 return fail(-32602, "INVALID_PARAMS", "Invalid initialize fields.")
             if params["protocol_version"] != PROTOCOL_VERSION:
                 return fail(-32001, "UNSUPPORTED_PROTOCOL", "Only protocol version 1 is supported.")
@@ -162,18 +168,36 @@ class Protocol:
                         raise ValueError
             except (ValueError, OSError):
                 return fail(-32602, "INVALID_PARAMS", "Invalid host identity, existing job directory, or profile.")
+            from .job_io import JobError, validate_grants
+            try:
+                validate_grants(params.get("model_grants", []), self.allow_test_models)
+            except JobError as exc:
+                return fail(-32602, exc.code, str(exc))
             self.configuration = dict(params)
             return success({
                 "protocol_version": PROTOCOL_VERSION,
                 "build_version": __version__,
                 "instance_id": params["instance_id"],
-                "capabilities": {"health": True, "task_types": [], "model_clients": []},
+                "capabilities": {"health": True, "task_types": list(KINDS), "model_clients": ["local-mlx"]},
             })
 
         if self.configuration is None:
             return fail(-32002, "NOT_INITIALIZED", "Initialize the connection first.")
-        if method in {"jobs.run", "jobs.cancel"}:
-            return fail(-32601, "CAPABILITY_UNAVAILABLE", "Analysis jobs are not implemented in this build.")
+        if method in {"jobs.run", "jobs.cancel", "jobs.checkpoint_ack"}:
+            from .job_io import JobError, require, uuid, integer, sha
+            try:
+                if method == "jobs.run":
+                    self.jobs.start(request_id, params, self.configuration)
+                    return None
+                if method == "jobs.cancel":
+                    return success(self.jobs.cancel(params))
+                require(isinstance(params, dict) and set(params) == {"job_id", "attempt", "step_index", "result_sha256"}, "Invalid checkpoint acknowledgement.")
+                uuid(params["job_id"]); integer(params["attempt"], 1, 1000)
+                integer(params["step_index"], 0, 4095); sha(params["result_sha256"])
+                require(self.jobs.identity == (params["job_id"], params["attempt"]), "Checkpoint ack identifies another attempt.")
+                return success({"status": "acknowledged"})
+            except JobError as exc:
+                return fail(-32602, exc.code, str(exc))
         if method == "diagnostics.model_probe":
             # Imports are lazy: normal lifecycle connections never import MLX.
             from .model_probe import ProbeError, model_probe

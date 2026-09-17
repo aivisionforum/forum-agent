@@ -62,8 +62,9 @@ class ModelProbeBoundaryTests(unittest.TestCase):
         for enabled in (False, True):
             protocol = Protocol(allow_model_probe=enabled)
             reply = protocol.handle(json.dumps(init).encode())
-            self.assertEqual(reply["result"]["capabilities"]["task_types"], [])
-            for method, expected in (("jobs.run", "CAPABILITY_UNAVAILABLE"),
+            self.assertIn("minutes", reply["result"]["capabilities"]["task_types"])
+            self.assertNotIn("model_grants", protocol.configuration)
+            for method, expected in (("jobs.run", "INVALID_PARAMS"),
                                      ("diagnostics.model_probe", "INVALID_PARAMS" if enabled else "METHOD_NOT_FOUND")):
                 reply = protocol.handle(json.dumps({"jsonrpc": "2.0", "id": 2, "method": method, "params": {}}).encode())
                 self.assertEqual(reply["error"]["data"]["code"], expected)

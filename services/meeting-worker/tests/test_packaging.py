@@ -60,6 +60,32 @@ class PackagingBoundaryTests(unittest.TestCase):
         self._check_lock(packager.LOCK)
         self._check_lock(packager.REPO / "services/asr-worker/runtime-macos-arm64.lock.json")
 
+    def test_installed_prompt_manifest_matches_six_source_resources(self):
+        directory = self.root / packager.PROMPT_DIRECTORY
+        directory.mkdir(parents=True)
+        source_hashes = {}
+        for kind in packager.ANALYSIS_TASK_TYPES:
+            path = directory / f'{kind}.txt'
+            content = (packager.WORKER / f'src/forum_meeting_worker/prompts/v1/{kind}.txt').read_bytes()
+            path.write_bytes(content)
+            source_hashes[f'src/forum_meeting_worker/prompts/v1/{kind}.txt'] = hashlib.sha256(content).hexdigest()
+        actual = packager.analysis_prompt_manifest(self.root, source_hashes)
+        self.assertEqual(set(actual), set(packager.ANALYSIS_TASK_TYPES))
+        for kind, record in actual.items():
+            self.assertEqual(record['prompt_version'], kind + '-v1')
+            self.assertEqual(record['sha256'], source_hashes[f'src/forum_meeting_worker/prompts/v1/{kind}.txt'])
+        path = directory / 'minutes.txt'
+        before = path.read_bytes()
+        path.write_bytes(before + b'changed after source copy')
+        with self.assertRaisesRegex(ValueError, 'differs from the packaged source'):
+            packager.analysis_prompt_manifest(self.root, source_hashes)
+        path.unlink()
+        with self.assertRaises(ValueError):
+            packager.analysis_prompt_manifest(self.root, source_hashes)
+        path.symlink_to(directory / 'insight.txt')
+        with self.assertRaisesRegex(ValueError, 'regular files'):
+            packager.analysis_prompt_manifest(self.root, source_hashes)
+
     def _check_lock(self, path):
         lock = json.loads(path.read_text())
         for artifact in [lock["python"], *lock["wheels"]]:

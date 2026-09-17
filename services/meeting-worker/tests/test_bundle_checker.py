@@ -1,8 +1,12 @@
 """Synthetic Mach-O records exercise the clean-Mac checker without a GPU."""
 
 import importlib.util
+import hashlib
+import json
 from pathlib import Path
+import subprocess
 import struct
+import sys
 import tempfile
 import unittest
 
@@ -64,6 +68,7 @@ class MachOTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 checker.check_native_dependencies(self.root)
 
+
     def test_system_path_traversal_is_not_accepted_as_a_system_dependency(self):
         (self.root / "python/bin").mkdir(parents=True)
         executable = self.root / "python/bin/python3.12"
@@ -94,6 +99,102 @@ class MachOTests(unittest.TestCase):
                 with self.assertRaises(ValueError): checker.check_native_dependencies(self.root)
             else:
                 checker.check_native_dependencies(self.root)
+
+
+class AnalysisBundleContractTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.directory = self.root / checker.PROMPT_DIRECTORY
+        self.directory.mkdir(parents=True)
+        prompts, source_hashes = {}, {}
+        source = Path(__file__).resolve().parents[1] / 'src/forum_meeting_worker/prompts/v1'
+        for kind in checker.ANALYSIS_TASK_TYPES:
+            data = (source / f'{kind}.txt').read_bytes()
+            (self.directory / f'{kind}.txt').write_bytes(data)
+            sha = hashlib.sha256(data).hexdigest()
+            prompts[kind] = {'prompt_version': f'{kind}-v1', 'relative_path': str(checker.PROMPT_DIRECTORY / f'{kind}.txt'),
+                             'sha256': sha, 'size_bytes': len(data)}
+            source_hashes[f'src/forum_meeting_worker/prompts/v1/{kind}.txt'] = sha
+        self.manifest = {'owner': checker.OWNER, 'analysis_task_types': checker.ANALYSIS_TASK_TYPES,
+                         'formal_product_acceptance': 'not_evaluated', 'analysis_prompts': prompts,
+                         'source_sha256': source_hashes}
+        self.save()
+
+    def save(self):
+        (self.root / 'runtime-manifest.json').write_text(json.dumps(self.manifest))
+
+    def test_six_prompt_resources_are_hashed_without_claiming_product_acceptance(self):
+        actual = checker.check_paths(self.root)
+        self.assertEqual(actual['analysis_task_types'], checker.ANALYSIS_TASK_TYPES)
+        self.assertEqual(actual['formal_product_acceptance'], 'not_evaluated')
+        self.assertNotIn('formal_job_capabilities', actual)
+
+    def test_stale_f01_capabilities_or_product_pass_claim_are_rejected(self):
+        self.manifest['formal_job_capabilities'] = []
+        self.save()
+        with self.assertRaises(ValueError):
+            checker.check_paths(self.root)
+        self.manifest.pop('formal_job_capabilities')
+        self.manifest['formal_product_acceptance'] = 'passed'
+        self.save()
+        with self.assertRaises(ValueError):
+            checker.check_paths(self.root)
+
+    def test_missing_changed_extra_or_symlink_prompt_is_rejected(self):
+        target = self.directory / 'minutes.txt'
+        original = target.read_bytes()
+        target.write_bytes(original + b'changed')
+        with self.assertRaisesRegex(ValueError, 'hash/size/source'):
+            checker.check_paths(self.root)
+        target.unlink()
+        with self.assertRaises(ValueError):
+            checker.check_paths(self.root)
+        target.symlink_to(self.directory / 'insight.txt')
+        with self.assertRaises(ValueError):
+            checker.check_paths(self.root)
+        target.unlink(); target.write_bytes(original)
+        (self.directory / 'unexpected.txt').write_text('extra prompt')
+        with self.assertRaises(ValueError):
+            checker.check_paths(self.root)
+
+    def test_path_traversal_and_source_digest_mismatch_are_rejected(self):
+        self.manifest['analysis_prompts']['minutes']['relative_path'] = '../outside.txt'
+        self.save()
+        with self.assertRaises(ValueError):
+            checker.check_paths(self.root)
+        self.manifest['analysis_prompts']['minutes']['relative_path'] = str(checker.PROMPT_DIRECTORY / 'minutes.txt')
+        self.manifest['source_sha256']['src/forum_meeting_worker/prompts/v1/minutes.txt'] = '0' * 64
+        self.save()
+        with self.assertRaises(ValueError):
+            checker.check_paths(self.root)
+
+    def test_actual_worker_rejects_bad_and_ungranted_jobs_without_loading(self):
+        requests = checker.lifecycle_requests(self.root, self.manifest)
+        requests.append(checker.rpc('shutdown', 'shutdown'))
+        source = str(Path(__file__).resolve().parents[1] / 'src')
+        # Isolated interpreter + trusted source path, no package installation,
+        # no granted model, no CPU/GPU model or imported legacy application.
+        code = f'import sys; sys.path.insert(0,{source!r}); from forum_meeting_worker.main import main; raise SystemExit(main())'
+        before = sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*'))
+        result = subprocess.run([sys.executable, '-I', '-B', '-c', code],
+            input=''.join(json.dumps(r) + '\n' for r in requests), text=True,
+            capture_output=True, timeout=5, env=checker.isolated_environment(self.root), cwd=self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        replies = [json.loads(line) for line in result.stdout.splitlines()]
+        self.assertEqual(checker.validate_lifecycle_replies(requests, replies),
+                         {'malformed': 'INVALID_PARAMS', 'ungranted': 'MODEL_UNAVAILABLE'})
+        self.assertEqual(before, sorted(str(p.relative_to(self.root)) for p in self.root.rglob('*')))
+        stale = json.loads(json.dumps(replies))
+        stale[0]['result']['capabilities']['task_types'] = []
+        with self.assertRaises(ValueError):
+            checker.validate_lifecycle_replies(requests, stale)
+        wrong_rejection = json.loads(json.dumps(replies))
+        wrong_rejection[3] = {'jsonrpc': '2.0', 'id': 'ungranted', 'result': {'status': 'succeeded'}}
+        with self.assertRaises(ValueError):
+            checker.validate_lifecycle_replies(requests, wrong_rejection)
+
 
 
 if __name__ == "__main__":

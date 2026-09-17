@@ -59,13 +59,13 @@ class WorkerProtocolTests(unittest.TestCase):
         self.assertEqual(initialized["protocol_version"], 1)
         self.assertEqual(initialized["build_version"], "0.1.0")
         self.assertEqual(initialized["capabilities"], {
-            "health": True, "task_types": [], "model_clients": [],
+            "health": True, "task_types": ["insight", "minutes", "event_report", "suggested_questions", "redaction_review", "closing_brief"], "model_clients": ["local-mlx"],
         })
         self.assertEqual(messages[1]["result"]["status"], "ok")
-        self.assertEqual(messages[2]["error"]["data"]["code"], "CAPABILITY_UNAVAILABLE")
-        self.assertEqual(messages[3]["error"]["data"]["code"], "CAPABILITY_UNAVAILABLE")
+        self.assertEqual(messages[2]["error"]["data"]["code"], "INVALID_PARAMS")
+        self.assertEqual(messages[3]["error"]["data"]["code"], "INVALID_PARAMS")
         self.assertEqual(messages[4]["result"]["status"], "shutting_down")
-        self.assertIn(b"analysis capabilities unavailable", result.stderr)
+        self.assertIn(b"local snapshot analysis control ready", result.stderr)
         self.assertEqual(list(Path(self.directory.name).iterdir()), [])
 
     def test_methods_require_initialize_and_failed_init_can_retry(self) -> None:

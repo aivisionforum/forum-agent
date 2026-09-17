@@ -21,6 +21,9 @@ import tempfile
 import uuid
 
 OWNER = "ai-vision-forum-meeting-worker-v1"
+ANALYSIS_TASK_TYPES = ["insight", "minutes", "event_report", "suggested_questions",
+                       "redaction_review", "closing_brief"]
+PROMPT_DIRECTORY = Path("python/lib/python3.12/site-packages/forum_meeting_worker/prompts/v1")
 DEFAULT_PROMPT = "请用一句中文概括：今天的圆桌讨论决定先完成实时翻译，再验证会议摘要。"
 RUNTIME_INFO = """
 import importlib.metadata as m, json, platform, ssl, sys
@@ -77,15 +80,100 @@ def isolated_environment(directory: Path) -> dict[str, str]:
 
 def check_paths(root: Path) -> dict:
     manifest = json.loads((root / "runtime-manifest.json").read_text())
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("source_sha256"), dict):
+        raise ValueError("Invalid runtime manifest or source digest map.")
     schema_hash = manifest.get("contract_schema_sha256")
     if schema_hash and hashlib.sha256((root / "contracts/forum.schema.json").read_bytes()).hexdigest() != schema_hash:
         raise ValueError("Bundled contract schema hash mismatch.")
-    if manifest.get("owner") != OWNER or manifest.get("formal_job_capabilities") != []:
-        raise ValueError("Not an F01 worker candidate with unavailable formal jobs.")
+    if (manifest.get("owner") != OWNER
+            or manifest.get("analysis_task_types") != ANALYSIS_TASK_TYPES
+            or manifest.get("formal_product_acceptance") != "not_evaluated"
+            or "formal_job_capabilities" in manifest):
+        raise ValueError("Manifest must distinguish six implemented analysis tasks from product acceptance not evaluated.")
     for path in root.rglob("*"):
         if path.is_symlink() and not path.resolve().is_relative_to(root):
             raise ValueError(f"Bundle symlink escapes its resource directory: {path.relative_to(root)}")
+    prompts = manifest.get("analysis_prompts")
+    if not isinstance(prompts, dict) or set(prompts) != set(ANALYSIS_TASK_TYPES):
+        raise ValueError("Manifest must identify exactly six analysis prompts.")
+    directory = root / PROMPT_DIRECTORY
+    if directory.is_symlink() or not directory.is_dir() or {p.name for p in directory.iterdir()} != {f"{k}.txt" for k in ANALYSIS_TASK_TYPES}:
+        raise ValueError("Bundle must contain exactly six v1 analysis prompt resources.")
+    for kind in ANALYSIS_TASK_TYPES:
+        item = prompts[kind]
+        relative = PROMPT_DIRECTORY / f"{kind}.txt"
+        if (not isinstance(item, dict) or set(item) != {"prompt_version", "relative_path", "sha256", "size_bytes"}
+                or item["relative_path"] != str(relative) or item["prompt_version"] != f"{kind}-v1"):
+            raise ValueError("Invalid analysis prompt resource identity.")
+        path = root / relative
+        if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= 64 * 1024:
+            raise ValueError("Analysis prompt is not a bounded regular file.")
+        data = path.read_bytes()
+        data.decode("utf-8")
+        actual_hash = hashlib.sha256(data).hexdigest()
+        source_key = f"src/forum_meeting_worker/prompts/v1/{kind}.txt"
+        if (type(item["size_bytes"]) is not int or len(data) != item["size_bytes"]
+                or actual_hash != item["sha256"]
+                or manifest.get("source_sha256", {}).get(source_key) != actual_hash):
+            raise ValueError("Bundled analysis prompt hash/size/source mismatch.")
     return manifest
+
+
+def lifecycle_requests(scratch: Path, manifest: dict) -> list[dict]:
+    """No grants or input files: both negative job checks must refuse early."""
+    profile_version = "bundle-interface-check-v1"
+    snapshot_id, session_id, job_id = (str(uuid.uuid4()) for _ in range(3))
+    config = {"model_profile": "meeting-8b-v1", "model_manifest_id": "sha256:" + "0" * 64,
+              "prompt_version": "minutes-v1", "prompt_sha256": manifest["analysis_prompts"]["minutes"]["sha256"],
+              "profile_id": "ai-vision-forum", "profile_version": profile_version,
+              "profile_sha256": hashlib.sha256(b"synthetic bundle check profile").hexdigest(),
+              "projection_policy_hash": hashlib.sha256(b"synthetic bundle check policy").hexdigest(),
+              "generation": {"temperature": 0.0, "max_output_tokens": 1024, "safety_tokens": 128,
+                             "max_retries": 1, "context_limit": 8192}}
+    config["effective_config_hash"] = hashlib.sha256(json.dumps(config, sort_keys=True, ensure_ascii=False,
+                                                               separators=(",", ":")).encode()).hexdigest()
+    ungranted = {"job_id": job_id, "attempt": 1, "kind": "minutes", "session_ids": [session_id],
+                 "snapshot": {"id": snapshot_id, "relative_path": "input.json", "sha256": "0" * 64, "input_cursor": 0},
+                 "model_profile": "meeting-8b-v1", "prompt_version": "minutes-v1", "remaining_budget_ms": 1000,
+                 "config": config, "confirmed_checkpoints": {"relative_path": "checkpoints.json", "sha256": "0" * 64}}
+    return [rpc("initialize", "init", {"protocol_version": 1, "instance_id": str(uuid.uuid4()),
+             "job_root": str(scratch), "profile_id": "ai-vision-forum", "profile_version": profile_version}),
+            rpc("health.ping", "ping"), rpc("jobs.run", "malformed", {"kind": "minutes"}),
+            rpc("jobs.run", "ungranted", ungranted)]
+
+
+def validate_lifecycle_replies(requests: list[dict], replies: list[dict]) -> dict:
+    if len(replies) != len(requests) or any(
+        not isinstance(reply, dict) or reply.get("jsonrpc") != "2.0" or reply.get("id") != req["id"]
+        for req, reply in zip(requests, replies)
+    ):
+        raise ValueError("Worker response framing or request IDs do not match.")
+    for reply in replies:
+        if ("result" in reply) == ("error" in reply):
+            raise ValueError("Worker response must contain exactly one result or error.")
+        if "result" in reply and not isinstance(reply["result"], dict):
+            raise ValueError("Worker lifecycle result must be an object.")
+        if "error" in reply and (not isinstance(reply["error"], dict)
+                                 or not isinstance(reply["error"].get("data"), dict)):
+            raise ValueError("Worker lifecycle error must contain an object business code.")
+    by_id = {reply["id"]: reply for reply in replies}
+    if by_id["init"].get("result", {}).get("capabilities") != {
+            "health": True, "task_types": ANALYSIS_TASK_TYPES, "model_clients": ["local-mlx"]}:
+        raise ValueError("Worker must advertise its six implemented task types and local-mlx client.")
+    if by_id["ping"].get("result", {}).get("status") != "ok":
+        raise ValueError("Worker health check failed.")
+    actual_errors = {}
+    for name, expected in (("malformed", "INVALID_PARAMS"), ("ungranted", "MODEL_UNAVAILABLE")):
+        failure = by_id[name].get("error", {})
+        actual = failure.get("data", {}).get("code")
+        if (actual != expected or "result" in by_id[name]
+                or type(failure.get("code")) is not int or failure["code"] >= 0
+                or not isinstance(failure.get("message"), str)):
+            raise ValueError(f"Worker did not safely reject {name} job: expected {expected}, got {actual!r}.")
+        actual_errors[name] = actual
+    if by_id["shutdown"].get("result", {}).get("status") != "shutting_down":
+        raise ValueError("Worker shutdown failed.")
+    return actual_errors
 
 
 def macho_arm64(path: Path) -> dict:
@@ -237,10 +325,7 @@ def check(root: Path, model: Path | None, timeout: float, max_tokens: int) -> di
             if checked.returncode != 0:
                 raise ValueError(f"Automatic ASR dependency import failed: {checked.stderr[-2000:]}")
             asr = json.loads(checked.stdout)
-        requests = [rpc("initialize", "init", {
-            "protocol_version": 1, "instance_id": str(uuid.uuid4()), "job_root": str(scratch),
-            "profile_id": "ai-vision-forum", "profile_version": "f01-bundle-check",
-        }), rpc("health.ping", "ping"), rpc("jobs.run", "unsupported", {"kind": "insights"})]
+        requests = lifecycle_requests(scratch, manifest)
         args = [str(root / "bin/meeting-worker")]
         if model is not None:
             if not model.is_absolute() or not model.is_dir():
@@ -258,21 +343,12 @@ def check(root: Path, model: Path | None, timeout: float, max_tokens: int) -> di
             replies = [json.loads(line) for line in completed.stdout.splitlines()]
         except json.JSONDecodeError:
             raise ValueError("Worker stdout contains non-protocol output.") from None
-        if len(replies) != len(requests) or any(
-            not isinstance(reply, dict) or reply.get("jsonrpc") != "2.0" or reply.get("id") != req["id"]
-            for req, reply in zip(requests, replies)
-        ):
-            raise ValueError("Worker response framing or request IDs do not match.")
-        if replies[0].get("result", {}).get("capabilities") != {"health": True, "task_types": [], "model_clients": []}:
-            raise ValueError("Worker advertised unexpected formal capabilities.")
-        if replies[1].get("result", {}).get("status") != "ok":
-            raise ValueError("Worker health check failed.")
-        if replies[2].get("error", {}).get("data", {}).get("code") != "CAPABILITY_UNAVAILABLE":
-            raise ValueError("Worker must reject unimplemented formal jobs.")
+        job_rejections = validate_lifecycle_replies(requests, replies)
         if model is not None:
-            probe = replies[3].get("result", {})
+            probe_reply = next(reply for reply in replies if reply["id"] == "probe")
+            probe = probe_reply.get("result", {})
             if not probe.get("diagnostic_only") or not probe.get("text", "").strip():
-                raise ValueError(f"Model diagnostic did not produce text: {json.dumps(replies[3])}; {completed.stderr[-2000:]}")
+                raise ValueError(f"Model diagnostic did not produce text: {json.dumps(probe_reply)}; {completed.stderr[-2000:]}")
         if replies[-1].get("result", {}).get("status") != "shutting_down":
             raise ValueError("Worker shutdown failed.")
         return {
@@ -284,6 +360,9 @@ def check(root: Path, model: Path | None, timeout: float, max_tokens: int) -> di
             "metal_matrix_check": metal,
             "asr_adapter": asr,
             "protocol_stdout_only": True, "model_probe_requested": model is not None,
+            "analysis_task_types": replies[0]["result"]["capabilities"]["task_types"],
+            "formal_product_acceptance": "not_evaluated",
+            "analysis_prompts": manifest["analysis_prompts"], "job_rejections": job_rejections,
             "responses": replies, "stderr": completed.stderr,
         }
 

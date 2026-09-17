@@ -28,7 +28,7 @@ class ProbeError(Exception):
         self.number = number
 
 
-def validate_probe(params: object) -> tuple[Path, str, int]:
+def validate_probe(params: object, *, allowed_model_types=("qwen3",)) -> tuple[Path, str, int]:
     if not isinstance(params, dict) or set(params) != {"model_path", "prompt", "max_tokens"}:
         raise ProbeError("INVALID_PARAMS", "Probe requires model_path, prompt and max_tokens.")
     prompt, limit = params["prompt"], params["max_tokens"]
@@ -47,7 +47,7 @@ def validate_probe(params: object) -> tuple[Path, str, int]:
             if not (path / name).is_file() or (path / name).stat().st_size == 0:
                 raise ValueError("Missing local model metadata.")
         config = json.loads((path / "config.json").read_text())
-        if config.get("model_type") != "qwen3" or "model_file" in config or "auto_map" in config:
+        if config.get("model_type") not in allowed_model_types or "model_file" in config or "auto_map" in config:
             raise ValueError("Only built-in Qwen3 architecture is allowed.")
         tokenizer = json.loads((path / "tokenizer_config.json").read_text())
         if "auto_map" in tokenizer:

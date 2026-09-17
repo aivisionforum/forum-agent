@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the F01 macOS arm64 sidecar from hash-pinned upstream artifacts.
+"""Build the macOS arm64 sidecar from hash-pinned upstream artifacts.
 
 The bootstrap interpreter only needs Python 3.12+ stdlib. The final runtime is
 the pinned standalone CPython archive, never the bootstrap interpreter/venv.
@@ -29,6 +29,30 @@ REPO = Path(__file__).resolve().parents[2]
 WORKER = REPO / "services/meeting-worker"
 LOCK = WORKER / "packaging/runtime-macos-arm64.lock.json"
 OWNER = "ai-vision-forum-meeting-worker-v1"
+ANALYSIS_TASK_TYPES = ["insight", "minutes", "event_report", "suggested_questions",
+                       "redaction_review", "closing_brief"]
+PROMPT_DIRECTORY = Path("python/lib/python3.12/site-packages/forum_meeting_worker/prompts/v1")
+
+
+def analysis_prompt_manifest(staged: Path, source_hashes: dict[str, str]) -> dict:
+    """Verify the wheel installed the same six complete prompts we packaged."""
+    directory = staged / PROMPT_DIRECTORY
+    expected = {f"{kind}.txt" for kind in ANALYSIS_TASK_TYPES}
+    if directory.is_symlink() or not directory.is_dir() or {p.name for p in directory.iterdir()} != expected:
+        raise ValueError("Worker wheel must contain exactly six v1 analysis prompt resources.")
+    result = {}
+    for kind in ANALYSIS_TASK_TYPES:
+        path = directory / f"{kind}.txt"
+        if path.is_symlink() or not path.is_file() or not 0 < path.stat().st_size <= 64 * 1024:
+            raise ValueError("Analysis prompts must be bounded regular files.")
+        path.read_text(encoding="utf-8")
+        actual_hash = sha256(path)
+        source_key = f"src/forum_meeting_worker/prompts/v1/{kind}.txt"
+        if source_hashes.get(source_key) != actual_hash:
+            raise ValueError("Installed analysis prompt differs from the packaged source.")
+        result[kind] = {"prompt_version": f"{kind}-v1", "relative_path": str(PROMPT_DIRECTORY / path.name),
+                        "sha256": actual_hash, "size_bytes": path.stat().st_size}
+    return result
 
 
 def sha256(path: Path) -> str:
@@ -204,7 +228,9 @@ def package(output: Path, cache: Path, offline: bool = False, with_asr: bool = F
         source = scratch / "source"
         source.mkdir()
         source_hashes = {}
-        for original in [WORKER / "pyproject.toml", WORKER / "README.md", *sorted((WORKER / "src").rglob("*.py"))]:
+        sources = sorted((WORKER / "src").rglob("*.py"))
+        sources += sorted((WORKER / "src/forum_meeting_worker/prompts").rglob("*.txt"))
+        for original in [WORKER / "pyproject.toml", WORKER / "README.md", *sources]:
             if original.is_symlink():
                 raise ValueError("Worker source files must not be symlinks.")
             relative = original.relative_to(WORKER)
@@ -319,6 +345,7 @@ def package(output: Path, cache: Path, offline: bool = False, with_asr: bool = F
             asr_launcher.chmod(0o755)
             asr_manifest = {"protocol_version": 1, "entrypoint": "bin/asr-worker",
                             "script_sha256": sha256(asr_source), "model_weights_included": False}
+        analysis_prompts = analysis_prompt_manifest(staged, source_hashes)
         manifest = {
             "owner": OWNER, "schema_version": 1, "target": lock["target"],
             "minimum_macos": lock["minimum_macos"], "python": lock["python"],
@@ -330,7 +357,8 @@ def package(output: Path, cache: Path, offline: bool = False, with_asr: bool = F
             "python_license_files": [Path(name).name for name in license_names],
             "check_script_sha256": sha256(check_source),
             "packaging_script_sha256": sha256(Path(__file__)),
-            "entrypoint": "bin/meeting-worker", "formal_job_capabilities": [],
+            "entrypoint": "bin/meeting-worker", "analysis_task_types": ANALYSIS_TASK_TYPES,
+            "formal_product_acceptance": "not_evaluated", "analysis_prompts": analysis_prompts,
             "probe": "--allow-model-probe / diagnostics.model_probe (F01 only)",
             "asr_adapter": asr_manifest, "contract_schema_sha256": schema_hash,
             "native_relocations": native_relocations,

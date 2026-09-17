@@ -1,67 +1,98 @@
-# Forum Meeting Worker — F01 协议入口
+# Forum Meeting Worker — F05/F08 本地分析
 
-这是可安装的 Python 3.12 worker，正式接口仅实现进程握手和健康检查。
-另有需要显式启用的 F01 本地 MLX 打包探针。
-**尚未实现洞察、纪要、报告或任务队列。** `jobs.run` 和
-`jobs.cancel` 返回 `CAPABILITY_UNAVAILABLE`，不会制造分析成功结果。
+这是由桌面 Rust 宿主管理的 Python 3.12 文本计算进程，支持
+`insight`、`minutes`、`event_report`、`suggested_questions`、
+`redaction_review`、`closing_brief` 六种单场任务。它不导入旧 Forum
+server/session 全局变量，不采集音频、不启动 Dora、不写会议数据库，也不发布内容。
+所有内容先作为带引用、等待审核的草稿返回，由 core 校验和存储。
 
-## 安装和运行
+## 进程和协议
 
-在本目录使用独立 Python 3.12 环境安装：
-
-```bash
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python .
-.venv/bin/forum-meeting-worker
-```
-
-默认协议运行没有第三方依赖；构建使用 setuptools。不要使用旧 Forum 应用的
-`server.py` 启动这个 worker。模块入口为 `python -m forum_meeting_worker`；
-安装入口为 `forum-meeting-worker`。宿主应持有 stdin/stdout 管道，不通过
-shell 拼接会议内容或命令。
-
-源码测试无需安装包、下载模型或加载旧应用。在本目录执行：
-
-```bash
-python3.12 -m unittest discover -s tests -v
-```
-
-测试使用当前 Python 解释器启动真实 worker 子进程，将 `src` 放入子进程
-模块路径；不依赖运行目录。已经安装的 wheel 可从任意目录启动模块入口。
-
-## 已实现协议
-
-协议版本 `1`，一行一个 JSON-RPC 2.0 对象，UTF-8 编码，以 LF 结束；允许
-CRLF。stdout 只输出 JSON-RPC，诊断写 stderr，错误不会回显输入正文。
-不支持 JSON-RPC batch；通知不响应。请求 ID 支持字符串、数字和 null，
-不接受布尔值。
-
-首先发送 `initialize`，参数必须包含：
+UTF-8 NDJSON JSON-RPC 2.0，单行最大 1 MiB，stdout 仅协议，stderr 仅诊断。
+`initialize` 不加载模型、不创建目录。宿主提供原有 protocol_version、instance_id、
+job_root、profile_id、profile_version，并可提供：
 
 ```json
-{"jsonrpc":"2.0","id":"init-1","method":"initialize","params":{"protocol_version":1,"instance_id":"90000000-0000-4000-8000-000000000001","job_root":"/ABSOLUTE_EXISTING_JOB_DIRECTORY","profile_id":"ai-vision-forum","profile_version":"v1"}}
+{"model_grants":[{"profile":"meeting-8b-v1","model_path":"/ABS/LOCAL/SNAPSHOT","model_manifest_id":"sha256:ACTUAL_DIGEST","context_limit":8192,"max_output_tokens":1024}]}
 ```
 
-`job_root` 必须由宿主提前创建，worker 不创建目录或修改数据库。
-握手返回实际 build version，以及：
+默认模型为本机已有 Qwen3 8B；可选 `meeting-32b-v1` 支持内置 Qwen2/Qwen3
+架构，仅在宿主授予相应本机路径和资源后使用。worker 不下载权重、不解析模型 URL、
+不执行 custom model/tokenizer code。模型只在任务计算子进程中加载；实际文件指纹必须
+与 host grant 一致。指纹算法与 Rust forum-runtime 相同，包含权重、tokenizer/config、
+chat_template.jinja 等输入，流式只读，允许 Hugging Face 文件软链接。
+这是内容指纹验证，不是完整模型注册中心。
+
+控制进程与计算子进程分离，运行中仍可 `health.ping`、`jobs.cancel`。
+计算子进程继承宿主的进程组，不调用 setsid。每个 worker 只接受一个不可变 job/attempt；
+下一次尝试启动新 worker。取消通知后计算必须退出，才返回 jobs.run 的取消错误。
+shutdown 的响应只是已接受退出请求，宿主仍必须确认整个自有进程组退出；超过宿主
+2 秒宽限由其回收进程组。Python 自身也会有界取消/terminate/kill 自己持有的计算 child。
 
 ```json
-{"health":true,"task_types":[],"model_clients":[]}
+{"jsonrpc":"2.0","id":"run-1","method":"jobs.run","params":{"job_id":"UUID","attempt":1,"kind":"minutes","session_ids":["UUID"],"snapshot":{"id":"UUID","relative_path":"input.json","sha256":"RAW_SHA256","input_cursor":42},"model_profile":"meeting-8b-v1","prompt_version":"minutes-v1","remaining_budget_ms":90000,"config":{"model_profile":"meeting-8b-v1","model_manifest_id":"sha256:ACTUAL_DIGEST","prompt_version":"minutes-v1","prompt_sha256":"RAW_SHA256","profile_id":"ai-vision-forum","profile_version":"v1","profile_sha256":"RAW_SHA256","projection_policy_hash":"RAW_SHA256","effective_config_hash":"RAW_SHA256","generation":{"temperature":0.0,"max_output_tokens":1024,"safety_tokens":128,"max_retries":1,"context_limit":8192}},"confirmed_checkpoints":{"relative_path":"checkpoints.json","sha256":"RAW_SHA256"}}}
 ```
 
-初始化后可发 `health.ping` 和 `shutdown`，均无参数或使用空对象参数。
-shutdown 写出响应后退出；EOF 也正常退出。未初始化的已知方法返回
-`NOT_INITIALIZED`；重复初始化返回 `ALREADY_INITIALIZED`，保留原身份。
-无效初始化不会污染状态，宿主可以重新发送正确初始化。
+宿主预先创建 `job_root/<job_id>/<attempt>/`，attempt 为当前用户拥有的 0700 目录。
+input.json 是 core AnalysisSnapshot，checkpoints.json 是 core 已确认的
+AnalysisCheckpoint[]，没有确认结果时写 `[]`。两者最大 32 MiB，只允许目录内文件名；
+读取通过 dirfd + O_NOFOLLOW，拒绝软链接输入/attempt、越界、非普通文件及 hash 变化。
+worker 固定读取快照字节，创建 result.json/checkpoint-N.json 时 0600、fsync、create-only，
+不会覆盖旧 attempt 结果。它不扫描其他会议目录，也不在空选择时回退到全部会议。
 
-每帧上限为 LF 前 1 MiB。收到过长帧、EOF 前不完整帧或不完整帧超时，
-返回有业务错误码的协议错误并退出，防止把残留字节解释为新命令。
-`--frame-timeout-seconds` 默认 `10`，从首字节开始计时；空闲连接不超时。
-JSON 解析失败和普通方法错误不关闭连接。协议错误使用标准整数 code，
-详细业务码放在 `error.data.code`。
+`jobs.run` 延迟返回最终响应，期间发送 `jobs.progress` 和 `jobs.checkpoint` 通知。
+后者包含完整 AnalysisCheckpoint，host 确认入库后可发 `jobs.checkpoint_ack`
+`{job_id,attempt,step_index,result_sha256}`。仅下一次 run 的 host-confirmed 文件能授权
+复用，磁盘上自行发现的 checkpoint 不会被信任。host 只查询同 event、明确 session 集合、
+kind 和完整 effective config 的 core 已确认缓存。worker 按完整输入块 SHA + effective config SHA
+复用，输入 hash 包含 source ID/revision、session、UTF-8 范围和实际文本。可跨新 job/snapshot
+复用已满前块，追加尾句后旧尾块重算；源版本变化使对应块失效。旧 checkpoint 身份仅为来源记录，
+所有引用都在当前块重新逐字校验，claim ID、coverage 和最终身份按当前 job/snapshot 重建。
+最终响应包含 status、snapshot_id/sha256、result_ref 和 result_sha256。
 
-退出码：`0` 正常 shutdown/EOF，`2` 参数或帧错误，`1` stdio 断开，
-`130` 中断。当前读管道实现针对 macOS/POSIX；未声明 Windows 兼容。
+## 分块与结果边界
+
+真实 MLX tokenizer 对完整 chat template、系统提示、JSON 输出契约和本块输入计数。
+generation.context_limit 必须等于宿主 grant，并纳入完整配置 hash。
+预算扣除 max_output_tokens 和 safety_tokens；完整段优先，单段超长时按 Unicode
+字符边界切分并保留原文 UTF-8 全局字节位置。输入最多 100000 单位、最多 4096 块；
+达到限制显式失败，不截掉尾段。总预算从 jobs.run 开始，包含路径校验、指纹、加载、
+分块和全部重试；每块最多 max_retries 次额外生成（0–2）。
+
+模型只能返回结构化 claims 和 unit_id/逐字 quote；不接受 Markdown 修复或宽松 JSON。
+worker 将引用映射成 core SourceSpan/ArtifactEvidence，要求 quote 在该块中唯一且字节精确，
+要求姓名/日期归属出现在引文中，拒绝伪造来源。`cited` 仅表示有合法引用，**不表示模型
+概括在语义上正确**。无引用的问题/不确定项为 unsupported，仍需审核。
+
+每一输入字节都有 processed/failed/ignored_empty 覆盖记录；缺少 ASR、失败片段或
+snapshot.input_complete=false 会保持部分结果。部分块有效、部分块失败会返回
+succeeded_partial；全部计算块失败返回错误。拼接保留各块已验证条目，包括最后短块，
+不把全会议再次塞进一个超长 prompt。当前是确定性分块组合，尚未承诺全场去重和高质量
+综合概括；它们需要真实会议质量评估。redaction_review 只提供建议，不自动改原文；
+closing_brief 只处理本场，不实现跨场宣传或自动发布。
+
+## 验证
+
+无模型测试包含真实管道 ping/cancel/总 deadline、路径/哈希、变更模型、完整尾段覆盖、
+UTF-8 引用、已确认 checkpoint 恢复、未知配置拒绝及部分结果。`--allow-test-models`
+只用于测试，启用 reserved `test-fake-v1`；生产宿主不得传该参数，fake tokenizer 不作为
+真实 token 数量证据。运行：
+
+```bash
+python3.12 -m unittest discover -s services/meeting-worker/tests -v
+```
+
+手动真实 8B 合成文本探针（路径均为已有本机资源；output 必须不存在）：
+
+```bash
+python3.12 services/meeting-worker/tests/run_local_analysis_probe.py \
+  --python /ABS/BUNDLE/python/bin/python3.12 \
+  --model /ABS/EXISTING/Qwen3-8B/SNAPSHOT \
+  --output /ABS/NEW/PROBE_DIRECTORY
+```
+
+探针记录完整配置、prompt/model SHA、实际结果、进程退出、缓存前后 size/mtime 和
+诊断耗时，不开启麦克风，也不证明真实会议质量、实时性能或 32B 本机验收。
 
 ## macOS arm64 独立运行时
 
@@ -180,11 +211,11 @@ Metal 矩阵乘法、`mx.eval` 和 GPU synchronize，校验真实 GPU 设备与�
 诊断计算同步阻塞该专用进程，检查器在超时后终止进程。这不是正式任务调度，
 没有任务级取消、恢复、事件引用、会议摘要或 JSON 质量保证，也不会改变
 initialize 的正式 capabilities。不要将探针作为生产 `jobs.run` 的替代品。
-完整分析任务和资源调度等待后续阶段授权；当前停在 F00–F01。
+正式任务请使用前述 F05/F08 jobs.run；资源准入与整个进程组的实际退出由 Rust 宿主管理。
 
 ## 验证范围
 
-24 个无模型测试覆盖原协议生命周期/帧边界，以及探针默认关闭、输入范围、
+最初 F01 的无模型测试覆盖原协议生命周期/帧边界，以及探针默认关闭、输入范围、
 拒绝自定义代码和缺权重、原生 stdout 保护、输出目录保护、缓存哈希/符号链接。
 Mach-O 合成样本另验证 thin/FAT arm64、截断数据、外部开发库路径和系统下限。
 真实本机包探针已从临时 `.app` 资源目录运行已有 Qwen3-8B-4bit；证据说明见

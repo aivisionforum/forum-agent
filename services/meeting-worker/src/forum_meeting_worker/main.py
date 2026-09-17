@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import sys
+import threading
 
 from . import __version__
 from .protocol import Protocol, TransportError, error, frames
@@ -19,10 +20,13 @@ def _positive_seconds(value: str) -> float:
     return number
 
 
+_WRITE_LOCK = threading.Lock()
+
 def _write(message: dict) -> None:
     data = json.dumps(message, ensure_ascii=True, allow_nan=False, separators=(",", ":"))
-    sys.stdout.buffer.write(data.encode("utf-8") + b"\n")
-    sys.stdout.buffer.flush()
+    with _WRITE_LOCK:
+        sys.stdout.buffer.write(data.encode("utf-8") + b"\n")
+        sys.stdout.buffer.flush()
 
 
 def main() -> int:
@@ -31,10 +35,11 @@ def main() -> int:
                         help="deadline for an incomplete stdin frame (default: 10)")
     parser.add_argument("--allow-model-probe", action="store_true",
                         help="enable the bounded F01 diagnostics.model_probe; not a jobs API")
+    parser.add_argument("--allow-test-models", action="store_true", help="test-only fake model profile; never enable in the app")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s", stream=sys.stderr)
-    protocol = Protocol(allow_model_probe=args.allow_model_probe)
-    LOG.info("starting build %s; analysis capabilities unavailable", __version__)
+    protocol = Protocol(allow_model_probe=args.allow_model_probe, allow_test_models=args.allow_test_models, emit=_write)
+    LOG.info("starting build %s; local snapshot analysis control ready", __version__)
     try:
         for frame in frames(sys.stdin.buffer, args.frame_timeout_seconds):
             response = protocol.handle(frame)
@@ -52,4 +57,6 @@ def main() -> int:
     except KeyboardInterrupt:
         LOG.info("interrupted")
         return 130
+    finally:
+        protocol.jobs.close()
     return 0

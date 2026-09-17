@@ -4,6 +4,8 @@ pub mod ipc;
 pub mod outbox;
 pub mod process_io;
 pub mod recording;
+pub mod worker;
+pub mod resource_budget;
 pub use ipc::{Endpoint, RpcError, RpcRequest, RpcResult, RuntimeClient, UdsServer};
 pub use outbox::{DurableProducer, DurableReceipt, PendingEvent, RunRecord, RuntimeConfig};
 
