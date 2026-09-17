@@ -1,5 +1,7 @@
 # forum-agent
 
+Engineering plan (设计文档，尚未实现)：[AI Vision Forum 整合产品工程方案](docs/engineering/VISION_FORUM_ENGINEERING_PLAN_ZH.md) · [数据与协议](docs/engineering/DATA_AND_PROTOCOL_ZH.md) · [实施任务与验收](docs/engineering/IMPLEMENTATION_TASKS_ZH.md)。先在本仓库完成 Forum 版，再派生 Hen Local Minutes；以下运行说明仍描述现有 Python 版本。
+
 An open-source AI participant for any conference, forum, or working
 meeting, with first-class bilingual (中文/English) support. It listens to
 room audio and produces a diarized,
