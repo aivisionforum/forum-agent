@@ -1,10 +1,10 @@
 # AI Vision Forum 整合产品工程方案
 
-版本：v1.0，2026-09-16。状态：实施设计，尚未实现。执行分支：`codex/vision-forum-integration`。
+版本：v1.1，2026-09-16。状态：已开始实施；F00 完成，F01 进行中，F02 部分完成。执行分支：`codex/vision-forum-integration`。实际交付与验证见[实施进度](PROGRESS_ZH.md)。
 
-本轮用户决策：**先在当前 Forum Agent 仓库完成 AI Vision Forum 版，再从完成的产品派生独立 Hen Local Minutes。** 本文及配套协议、任务表是后续实施依据；之前评估中“立即新建 Minutes 仓库”的建议不再执行。本次仅创建分支和工程文档，不搬入 Hen 源码、不启动录音、不提交或发布应用。
+本轮用户决策：**先在当前 Forum Agent 仓库完成 AI Vision Forum 版，再从完成的产品派生独立 Hen Local Minutes。** 本文及配套协议、任务表是实施依据；之前评估中“立即新建 Minutes 仓库”的建议不再执行。用户已授权按任务顺序实施；源码现已受控导入，后续每个阶段以实际证据更新状态。
 
-阅读顺序：本文说明产品、架构和实现决策；[数据与协议](DATA_AND_PROTOCOL_ZH.md)定义接口、数据库及一致性；[实施任务与验收](IMPLEMENTATION_TASKS_ZH.md)给出依赖顺序、文件修改和通过条件。所有标为“拟新增”的路径、类型、命令和配置均是实施目标，不代表已经存在。
+阅读顺序：本文说明产品、架构和实现决策；[数据与协议](DATA_AND_PROTOCOL_ZH.md)定义接口、数据库及一致性；[实施任务与验收](IMPLEMENTATION_TASKS_ZH.md)给出依赖顺序、文件修改和通过条件。架构章节描述目标状态；只有[实施进度](PROGRESS_ZH.md)列明的内容已经实现，不能从设计示例推定完整功能存在。
 
 ## 1. 交付目标与完成范围
 

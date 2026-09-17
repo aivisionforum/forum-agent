@@ -1,6 +1,6 @@
 # Vision Forum 实施任务、依赖与验收
 
-版本：v1.0，2026-09-16。配套：[工程主方案](VISION_FORUM_ENGINEERING_PLAN_ZH.md)、[数据与协议](DATA_AND_PROTOCOL_ZH.md)。以下全部是待实施任务；本轮文档完成不代表任何功能阶段通过。
+版本：v1.1，2026-09-16。配套：[工程主方案](VISION_FORUM_ENGINEERING_PLAN_ZH.md)、[数据与协议](DATA_AND_PROTOCOL_ZH.md)、[实施进度与验证](PROGRESS_ZH.md)。按顺序分为四部分：① F00–F01 整合基础；② F02–F04 可靠字幕；③ F05–F08 单场论坛；④ F09–F12 完整 Forum。具体状态在每个任务标题下更新，设计文档或局部测试通过不等于整个阶段通过。
 
 ## 1. 执行约定
 
@@ -45,9 +45,9 @@ F11 的构建脚手架在 F01 就启动；正式包在 F08–F10 功能完成后
 
 ### F00 — 固定基线、产品配置和验收口径
 
-依赖：无。状态：待实施。
+依赖：无。状态：已完成（配置与验收基线；产品验收尚未执行）。证据：[ADR 0003](../adr/0003-forum-integration-baseline.md)、[配置](acceptance-profile.json)、`scripts/validate_forum_profile.py`。
 
-修改/新增：`docs/engineering/acceptance-profile.json`、`profiles/ai-vision-forum/` 初始配置、`docs/adr/` 决策记录、来源清单。这些文件为后续新增目标，当前不存在。
+修改/新增：`docs/engineering/acceptance-profile.json`、`profiles/ai-vision-forum/` 初始配置、`docs/adr/` 决策记录、来源清单；以上已经落地。
 
 工作：
 
@@ -62,7 +62,7 @@ F11 的构建脚手架在 F01 就启动；正式包在 F08–F10 功能完成后
 
 ### F01 — 源码导入与高风险技术验证
 
-依赖：F00。状态：待实施。
+依赖：F00。状态：进行中。受控导入、基础桌面适配、模型文件 probe、worker 协议测试已完成；隔离/并发/自动语种/干净机器/LAN 门槛仍待验证。详见[实际进度](PROGRESS_ZH.md)。
 
 修改/新增：`desktop/` 的 Hen workspace 基线、`desktop/forum-shell/`、锁文件、构建/资源脚本、`.gitignore`、`THIRD_PARTY_NOTICES.md`；`services/meeting-worker/` 最小握手程序。
 
@@ -80,7 +80,7 @@ F11 的构建脚手架在 F01 就启动；正式包在 F08–F10 功能完成后
 
 ### F02 — 协议、SQLite 与会议状态机
 
-依赖：F01 的构建基线。状态：待实施。
+依赖：F01 的构建基线。状态：部分完成。F02-a 已实现无模型 Rust 契约与 SQLite 事务基础，17 项测试通过；有界 actor、完整状态机、生成 TS/JSON Schema 和应用集成尚未实现。
 
 修改/新增：`desktop/crates/forum-contracts/`、`forum-core/src/{session,store,event,snapshot}.rs`、`forum-core/migrations/`、`packages/contracts/`、无模型测试。
 

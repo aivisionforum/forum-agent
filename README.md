@@ -1,6 +1,6 @@
 # forum-agent
 
-Engineering plan (设计文档，尚未实现)：[AI Vision Forum 整合产品工程方案](docs/engineering/VISION_FORUM_ENGINEERING_PLAN_ZH.md) · [数据与协议](docs/engineering/DATA_AND_PROTOCOL_ZH.md) · [实施任务与验收](docs/engineering/IMPLEMENTATION_TASKS_ZH.md)。先在本仓库完成 Forum 版，再派生 Hen Local Minutes；以下运行说明仍描述现有 Python 版本。
+Forum 整合开发已开始：[工程方案](docs/engineering/VISION_FORUM_ENGINEERING_PLAN_ZH.md) · [数据与协议](docs/engineering/DATA_AND_PROTOCOL_ZH.md) · [分阶段任务](docs/engineering/IMPLEMENTATION_TASKS_ZH.md) · **[实际进度与验证](docs/engineering/PROGRESS_ZH.md)**。当前完成 F00 基线，F01 和 F02 正在实施；新桌面源码位于 `desktop/`，独立分析进程位于 `services/meeting-worker/`。先完成 Forum 版，再派生 Hen Local Minutes。以下状态、截图与运行说明仍描述原 Python 应用，不代表新的整合产品已经通过验收。
 
 An open-source AI participant for any conference, forum, or working
 meeting, with first-class bilingual (中文/English) support. It listens to

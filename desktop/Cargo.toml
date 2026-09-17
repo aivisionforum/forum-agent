@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/forum-contracts",
+    "crates/forum-core",
     "forum-shell",
     "moxin-dora-bridge",
     "hen-local-init",

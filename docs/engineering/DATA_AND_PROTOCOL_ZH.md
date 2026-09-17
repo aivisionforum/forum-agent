@@ -1,6 +1,6 @@
 # Forum 数据模型与进程协议 v1
 
-配套：[主工程方案](VISION_FORUM_ENGINEERING_PLAN_ZH.md)、[实施任务](IMPLEMENTATION_TASKS_ZH.md)。本文定义拟实现的 v1 契约；示例仅使用合成内容，所有接口尚待实现。
+配套：[主工程方案](VISION_FORUM_ENGINEERING_PLAN_ZH.md)、[实施任务](IMPLEMENTATION_TASKS_ZH.md)。本文定义目标 v1 契约；示例仅使用合成内容。当前只实现了[实施进度](PROGRESS_ZH.md)列出的 ingestion/存储子集及 Python 握手，其余接口尚待实现。
 
 ## 1. 数据流与基本不变量
 
