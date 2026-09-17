@@ -125,6 +125,12 @@ impl ModelPaths {
             && translator_ready(&self.translator)
     }
 
+    pub fn ready_for(&self, automatic: bool) -> bool {
+        self.validate_absolute().is_ok()
+            && (automatic || asr_ready(&self.asr, self.asr_may_cache_tokenizer))
+            && translator_ready(&self.translator)
+    }
+
     fn validate_absolute(&self) -> Result<(), String> {
         for (key, path) in [
             (ASR_MODEL_ENV, &self.asr),
@@ -151,6 +157,82 @@ impl ModelPaths {
         })
         .collect()
     }
+}
+
+/// The automatic path has a distinct local model and a separately owned
+/// Python process. Never reinterpret a forced Qwen language hint as detection.
+pub struct AutomaticAsrPaths {
+    pub python: PathBuf,
+    pub script: PathBuf,
+    pub model: PathBuf,
+}
+
+impl AutomaticAsrPaths {
+    pub fn resolve(resource_dir: Option<&Path>) -> Result<Self, String> {
+        let home = dirs::home_dir().ok_or("无法定位本机模型目录")?;
+        let resources = resource_dir
+            .map(Path::to_path_buf)
+            .or_else(|| env::var_os("FORUM_AGENT_APP_RESOURCES").map(PathBuf::from));
+        let packaged = resources.map(|p| p.join("meeting-worker"));
+        let python = env::var_os("FORUM_ASR_PYTHON")
+            .map(PathBuf::from)
+            .or_else(|| packaged.as_ref().map(|p| p.join("python/bin/python3.12")))
+            .ok_or("自动识别需要含 Whisper 运行时的 Forum 安装包")?;
+        let script = env::var_os("FORUM_ASR_SCRIPT")
+            .map(PathBuf::from)
+            .or_else(|| packaged.as_ref().map(|p| p.join("asr/asr_worker.py")))
+            .ok_or("自动识别运行程序尚未安装")?;
+        let owned = ModelPaths::owned(&home)
+            .asr
+            .parent()
+            .unwrap()
+            .join("whisper-large-v3-turbo");
+        let cached = home.join(".cache/huggingface/hub/models--mlx-community--whisper-large-v3-turbo/snapshots/a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb");
+        let model = env::var_os("FORUM_WHISPER_MODEL_PATH")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| if whisper_ready(&owned) { owned } else { cached });
+        let result = Self {
+            python,
+            script,
+            model,
+        };
+        for (name, path) in [
+            ("Python", &result.python),
+            ("ASR adapter", &result.script),
+            ("Whisper", &result.model),
+        ] {
+            if !path.is_absolute() || path.components().any(|p| matches!(p, Component::ParentDir)) {
+                return Err(format!("{name} 需要完整的本地绝对路径"));
+            }
+        }
+        if !nonempty_file(&result.python) || !nonempty_file(&result.script) {
+            return Err("自动识别运行时不完整，请使用新版 Forum 开发包".into());
+        }
+        if !whisper_ready(&result.model) {
+            return Err("尚未准备 Whisper 自动识别模型；可先选择明确的源语言。模型需放入 Forum/models/whisper-large-v3-turbo，或设置 FORUM_WHISPER_MODEL_PATH".into());
+        }
+        Ok(result)
+    }
+
+    pub fn env_vars(&self) -> Result<HashMap<String, String>, String> {
+        [
+            ("FORUM_ASR_PYTHON", &self.python),
+            ("FORUM_ASR_SCRIPT", &self.script),
+            ("FORUM_WHISPER_MODEL_PATH", &self.model),
+        ]
+        .into_iter()
+        .map(|(key, path)| {
+            path.to_str()
+                .map(|p| (key.into(), p.into()))
+                .ok_or_else(|| "自动识别路径不是有效 Unicode".into())
+        })
+        .collect()
+    }
+}
+
+fn whisper_ready(directory: &Path) -> bool {
+    nonempty_file(&directory.join("config.json"))
+        && nonempty_file(&directory.join("weights.safetensors"))
 }
 
 fn has_no_symlink_ancestors(path: &Path) -> bool {

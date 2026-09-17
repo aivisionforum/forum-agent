@@ -181,6 +181,9 @@ impl Default for MicState {
 }
 
 pub struct SharedDoraState {
+    pub capture_context: RwLock<Option<crate::CaptureContext>>,
+    pub capture_stop_requested: AtomicBool,
+    pub capture_progress: DirtyValue<crate::CaptureProgress>,
     /// One dispatcher owns this endpoint. Never inferred from a default port.
     pub dynamic_node_context: RwLock<Option<crate::owned_runtime::DynamicNodeContext>>,
     pub audio: AudioState,
@@ -213,6 +216,9 @@ impl SharedDoraState {
             audio: AudioState::new(100),
             status: DirtyValue::default(),
             mic: MicState::new(),
+            capture_context: RwLock::new(None),
+            capture_stop_requested: AtomicBool::new(false),
+            capture_progress: DirtyValue::default(),
             translation: DirtyValue::default(),
             translation_stream: DirtyValue::default(),
             translation_window_visible: DirtyValue::new(false),

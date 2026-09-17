@@ -1742,6 +1742,8 @@ dependencies = [
  "dirs 5.0.1",
  "dora-node-api",
  "eyre",
+ "forum-contracts",
+ "forum-runtime",
  "hound",
  "mlx-sys",
  "qwen3-asr-mlx",
@@ -1760,6 +1762,9 @@ dependencies = [
  "arrow",
  "dirs 5.0.1",
  "dora-node-api",
+ "forum-contracts",
+ "forum-runtime",
+ "libc",
  "minijinja",
  "minijinja-contrib",
  "mlx-lm-utils",
@@ -1771,6 +1776,7 @@ dependencies = [
  "serde_json",
  "tracing",
  "tracing-subscriber",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -2162,8 +2168,10 @@ dependencies = [
 name = "forum-contracts"
 version = "0.1.0-dev.1"
 dependencies = [
+ "schemars 1.2.1",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 1.0.69",
  "uuid",
 ]
@@ -2174,6 +2182,21 @@ version = "0.1.0-dev.1"
 dependencies = [
  "forum-contracts",
  "rusqlite",
+ "schemars 1.2.1",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
+name = "forum-runtime"
+version = "0.1.0-dev.1"
+dependencies = [
+ "anyhow",
+ "forum-contracts",
+ "libc",
  "serde",
  "serde_json",
  "sha2",
@@ -2192,7 +2215,11 @@ dependencies = [
  "crossbeam-channel",
  "dirs 5.0.1",
  "env_logger",
+ "forum-contracts",
+ "forum-core",
+ "forum-runtime",
  "hound",
+ "libc",
  "log",
  "moxin-dora-bridge",
  "objc2",
@@ -3823,6 +3850,9 @@ dependencies = [
  "crossbeam-channel",
  "dora-message",
  "dora-node-api",
+ "forum-contracts",
+ "forum-core",
+ "forum-runtime",
  "libc",
  "libloading 0.8.9",
  "parking_lot",
@@ -5619,6 +5649,7 @@ dependencies = [
  "schemars_derive 1.2.1",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]

@@ -7,6 +7,7 @@ mod apple_speech;
 mod dataflow;
 mod identity;
 mod models;
+mod meeting;
 mod power_activity;
 mod preferences;
 mod runtime;

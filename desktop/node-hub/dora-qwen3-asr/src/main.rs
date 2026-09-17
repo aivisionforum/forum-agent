@@ -10,6 +10,7 @@
 //!   log           – StringArray (status/debug messages)
 
 mod backend;
+mod reliable;
 
 use anyhow::{anyhow, Result};
 use arrow::array::{Array, Float32Array};
@@ -338,6 +339,9 @@ fn main() -> Result<()> {
         DoraNode::init_from_env().map_err(|e| anyhow!("Failed to init Dora node: {}", e))?;
 
     tracing::info!("Connected to Dora dataflow");
+    if let Some(config)=forum_runtime::RuntimeConfig::from_env()? {
+        return reliable::run(node,events,config);
+    }
 
     // Default language from env (e.g. LANGUAGE=zh or LANGUAGE=Chinese)
     let default_language = std::env::var("LANGUAGE")

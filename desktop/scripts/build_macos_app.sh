@@ -164,7 +164,7 @@ stage_sidecar "$BUILD_TARGET_DIR/$PROFILE_DIR/mlx.metallib" "mlx.metallib"
 # is bootstrap tooling only and is never copied into the app.
 BUILD_PYTHON="${FORUM_AGENT_BUILD_PYTHON:-python3}"
 WORKER_STAGE="$SIDECAR_DIR/meeting-worker"
-WORKER_PACKAGE_ARGS=(--output "$WORKER_STAGE" --cache "${FORUM_AGENT_WORKER_CACHE:-$BUILD_TARGET_DIR/worker-artifacts}")
+WORKER_PACKAGE_ARGS=(--with-asr --output "$WORKER_STAGE" --cache "${FORUM_AGENT_WORKER_CACHE:-$BUILD_TARGET_DIR/worker-artifacts}")
 if [[ "${FORUM_AGENT_BUILD_OFFLINE:-0}" == "1" ]]; then
   WORKER_PACKAGE_ARGS+=(--offline)
 fi

@@ -274,6 +274,12 @@ impl DynamicNodeDispatcher {
         Ok(dataflow_id)
     }
 
+    /// Stop capture only. ASR/translation children stay alive for durable draining.
+    pub fn request_capture_stop(&mut self) {
+        self.shared_state.capture_stop_requested.store(true,std::sync::atomic::Ordering::Release);
+    }
+    pub fn capture_progress(&self)->crate::CaptureProgress {self.shared_state.capture_progress.read()}
+
     /// Shutdown confirmation requires both owned runtime and bridge workers to exit.
     pub fn stop(&mut self) -> BridgeResult<()> {
         self.stop_with_grace_duration(std::time::Duration::from_secs(2))

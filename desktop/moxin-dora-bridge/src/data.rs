@@ -69,6 +69,30 @@ pub struct TranslationUpdate {
     pub history: Vec<SentenceUnit>,
     pub pending_source_text: String,
     pub completed_count: u64,
+    /// Core receipts, independent of the bounded caption history. None is the
+    /// explicit preview/legacy format and retains its old count-based behavior.
+    pub durable_deliveries: Option<DurableTranslationBatch>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DurableTranslationIdentity {
+    pub translation_id: forum_contracts::Uuid,
+    pub revision: u32,
+    pub attempt: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct DurableTranslationDelivery {
+    pub identity: DurableTranslationIdentity,
+    pub source_segment_ids: Vec<forum_contracts::Uuid>,
+    pub target_language: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct DurableTranslationBatch {
+    pub session_id: forum_contracts::Uuid,
+    pub items: Vec<DurableTranslationDelivery>,
 }
 
 #[derive(Debug, Clone, Default)]

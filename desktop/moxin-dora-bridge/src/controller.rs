@@ -483,6 +483,10 @@ impl DataflowController {
     }
 
     /// Only directly spawned node children; useful for bounded lifecycle diagnostics.
+    pub fn owned_node_health(&self)->BridgeResult<Vec<crate::owned_runtime::NodeHealth>> {
+        self.runtime.as_ref().map(OwnedRuntime::node_health).unwrap_or_else(||Ok(Vec::new()))
+    }
+
     pub fn owned_node_pids(&self) -> Vec<u32> {
         self.runtime
             .as_ref()

@@ -1,6 +1,6 @@
 # Vision Forum 实施任务、依赖与验收
 
-版本：v1.2，2026-09-16。配套：[工程主方案](VISION_FORUM_ENGINEERING_PLAN_ZH.md)、[数据与协议](DATA_AND_PROTOCOL_ZH.md)、[实施进度与验证](PROGRESS_ZH.md)。按顺序分为四部分：① F00–F01 整合基础；② F02–F04 可靠字幕；③ F05–F08 单场论坛；④ F09–F12 完整 Forum。具体状态在每个任务标题下更新，设计文档或局部测试通过不等于整个阶段通过。
+版本：v1.3，2026-09-16。配套：[工程主方案](VISION_FORUM_ENGINEERING_PLAN_ZH.md)、[数据与协议](DATA_AND_PROTOCOL_ZH.md)、[实施进度与验证](PROGRESS_ZH.md)。按顺序分为四部分：① F00–F01 整合基础；② F02–F04 可靠字幕；③ F05–F08 单场论坛；④ F09–F12 完整 Forum。具体状态在每个任务标题下更新，设计文档或局部测试通过不等于整个阶段通过。
 
 ## 1. 执行约定
 
@@ -76,11 +76,11 @@ F11 的构建脚手架在 F01 就启动；正式包在 F08–F10 功能完成后
 6. 构建最小 .app：无开发环境机器上启动 Rust + Python worker + 一个实际 MLX 请求；验证原生动态库/Metal 资源路径。固定可分发 Python 方案。
 7. 用两设备验证 LAN peer TLS 身份、手机 HTTPS/二维码访问方案的可行性。此处可用无内容的最小服务，不公开当前旧控制台。
 
-通过：固定语言模式/后端、并发策略、Python 打包、Dora 隔离和 LAN 信任部署的 ADR。高风险项没有通过时，不能先花大量工作重做全部 UI。2026-09-16 用户明确采用逐部分确认：F01 完整验收后汇报，用户确认后才进入第二部分；此前 F02-a 保留，不继续新的数据契约工作。
+通过：固定语言模式/后端、并发策略、Python 打包、Dora 隔离和 LAN 信任部署的 ADR。高风险项没有通过时，不能先花大量工作重做全部 UI。2026-09-16 用户随后明确授权：第一部分暂时无法测试，先开始第二部分开发。因此 F01 跨设备及人工共存验收延期，F02–F04 开始；未验证项仍不标为通过，第二部分完成后仍须用户确认才能进入第三部分。
 
 ### F02 — 协议、SQLite 与会议状态机
 
-依赖：F01 的构建基线。状态：部分完成。F02-a 已实现无模型 Rust 契约与 SQLite 事务基础，17 项测试通过；有界 actor、完整状态机、生成 TS/JSON Schema 和应用集成尚未实现。
+依赖：F01 的构建基线。状态：代码与桌面集成完成，本机核心测试通过；完整 M0 文件回放通过（F01 外机验收延期）。单写 actor、完整状态机、版本 4 迁移、同源契约、分页/导出均已落地，详见 F02_F04_LOCAL_VALIDATION_ZH.md。
 
 修改/新增：`desktop/crates/forum-contracts/`、`forum-core/src/{session,store,event,snapshot}.rs`、`forum-core/migrations/`、`packages/contracts/`、无模型测试。
 
@@ -90,7 +90,7 @@ F11 的构建脚手架在 F01 就启动；正式包在 F08–F10 功能完成后
 
 ### F03 — 采音、ASR 旁路保存与录音恢复
 
-依赖：F02。状态：待实施。
+依赖：F02。状态：采音/录音/ASR/恢复生产路径已接；真实无 Translator 的文件探针通过，完整桌面文件回放通过；真实设备/长会性能待验收。
 
 修改：`desktop/moxin-dora-bridge/src/widgets/aec_input.rs`、ASR `src/main.rs`、`dispatcher.rs`、数据流 YAML；新增 `forum-core/src/ingest.rs`、`forum-runtime/src/{capture,recording,dora_sink}.rs`。
 
@@ -100,7 +100,7 @@ F11 的构建脚手架在 F01 就启动；正式包在 F08–F10 功能完成后
 
 ### F04 — 翻译关联、自动双语与可靠停止
 
-依赖：F03，F01 的语言后端决策。状态：待实施。
+依赖：F03，F01 的语言后端决策。状态：翻译关联、自动双目标、语向边界、恢复与可靠停止已接；完整 M0 文件回放通过；混说仍有术语/指代偏差，正式语言质量/时延/设备门槛尚未通过。
 
 修改：translator `transcript_buffer.rs/main.rs/backend_mlx.rs`、`data.rs`、`translation_listener.rs`；新增 `forum-core/src/translation.rs`、`forum-runtime/src/shutdown.rs`。
 

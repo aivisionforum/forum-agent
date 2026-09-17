@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/forum-contracts",
     "crates/forum-core",
+    "crates/forum-runtime",
     "forum-shell",
     "moxin-dora-bridge",
     "hen-local-init",
@@ -43,3 +44,11 @@ dora-node-api = "0.4.0"
 
 # OminiX-MLX crates are pinned directly in their consuming Cargo.toml files
 # via `{ git = "...", rev = "6aac996db..." }`.
+
+# Fingerprinting local multi-GB model files is part of readiness, even in the
+# desktop development app. Avoid debug SHA loops delaying model startup minutes.
+[profile.dev.package.forum-runtime]
+opt-level = 2
+
+[profile.dev.package.sha2]
+opt-level = 3

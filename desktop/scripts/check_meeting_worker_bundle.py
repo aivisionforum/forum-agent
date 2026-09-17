@@ -8,6 +8,7 @@ This is local isolation evidence, not validation on a second clean Mac.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -76,6 +77,9 @@ def isolated_environment(directory: Path) -> dict[str, str]:
 
 def check_paths(root: Path) -> dict:
     manifest = json.loads((root / "runtime-manifest.json").read_text())
+    schema_hash = manifest.get("contract_schema_sha256")
+    if schema_hash and hashlib.sha256((root / "contracts/forum.schema.json").read_bytes()).hexdigest() != schema_hash:
+        raise ValueError("Bundled contract schema hash mismatch.")
     if manifest.get("owner") != OWNER or manifest.get("formal_job_capabilities") != []:
         raise ValueError("Not an F01 worker candidate with unavailable formal jobs.")
     for path in root.rglob("*"):
@@ -174,8 +178,13 @@ def check_native_dependencies(root: Path) -> dict:
         if native["minimum_macos"] > (14, 0, 0):
             raise ValueError(f"Native dependency requires a newer OS than macOS 14: {path.relative_to(root)}")
         for dependency in [*native["dependencies"], *native["rpaths"]]:
-            if not dependency.startswith(("@rpath/", "@loader_path/", "@executable_path/",
-                                          "/System/Library/", "/usr/lib/")):
+            is_rpath = dependency in native["rpaths"]
+            normalized = os.path.normpath(dependency)
+            system = normalized.startswith(("/System/Library/", "/usr/lib/")) or (
+                is_rpath and normalized in {"/System/Library", "/usr/lib"})
+            relative = dependency.startswith(("@rpath/", "@loader_path/", "@executable_path/"))
+            exact_loader = is_rpath and dependency in {"@loader_path", "@executable_path"}
+            if not (system or relative or exact_loader):
                 raise ValueError(f"Non-portable loader path: {path.relative_to(root)} -> {dependency}")
             for prefix, base in (("@loader_path/", path.parent),
                                  ("@executable_path/", root / "python/bin")):
@@ -217,6 +226,17 @@ def check(root: Path, model: Path | None, timeout: float, max_tokens: int) -> di
         metal = json.loads(metal_process.stdout)
         if metal.get("status") != "passed":
             raise ValueError("MLX Metal matrix check did not pass.")
+        asr = None
+        if manifest.get("asr_adapter"):
+            # Exercise every automatic-ASR import from this candidate, including
+            # native numba/scipy/torch; no model weights or audio are loaded.
+            checked = subprocess.run([str(python), "-I", "-B", "-c",
+                "import mlx_whisper, scipy, numba, torch, tiktoken, json; "
+                "print(json.dumps({'imports': 'passed', 'models_loaded': False}))"],
+                capture_output=True, text=True, env=env, cwd=scratch, timeout=60)
+            if checked.returncode != 0:
+                raise ValueError(f"Automatic ASR dependency import failed: {checked.stderr[-2000:]}")
+            asr = json.loads(checked.stdout)
         requests = [rpc("initialize", "init", {
             "protocol_version": 1, "instance_id": str(uuid.uuid4()), "job_root": str(scratch),
             "profile_id": "ai-vision-forum", "profile_version": "f01-bundle-check",
@@ -262,6 +282,7 @@ def check(root: Path, model: Path | None, timeout: float, max_tokens: int) -> di
             "environment_keys": sorted(env), "cwd": "new temporary directory outside source tree",
             "runtime": runtime, "native_dependency_audit": native,
             "metal_matrix_check": metal,
+            "asr_adapter": asr,
             "protocol_stdout_only": True, "model_probe_requested": model is not None,
             "responses": replies, "stderr": completed.stderr,
         }

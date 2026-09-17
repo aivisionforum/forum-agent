@@ -1,6 +1,7 @@
 //! macOS / Apple Silicon backend: Qwen3.5 translation via OminiX-MLX
 //! (original implementation, unchanged logic — extracted from main.rs).
 
+use crate::generation_control::GenerationControl;
 use crate::{TranslationResponse, TranslationTask, TranslationWorkerEvent};
 use anyhow::{anyhow, Result};
 use minijinja::{context, Environment};
@@ -139,13 +140,16 @@ fn build_prompt_token_ids(
     Ok(prompt_ids)
 }
 
-fn append_streaming_text<F>(full_translation: &mut String, decoded: &str, on_streaming: &mut F)
+fn set_streaming_text<F>(full_translation: &mut String, decoded: &str, on_streaming: &mut F)
 where
     F: FnMut(&str),
 {
     if decoded.is_empty() {
         return;
     }
+    // Decode cumulative token IDs: independent small batches can split a
+    // tokenizer's UTF-8 byte sequence and permanently insert replacement chars.
+    full_translation.clear();
     full_translation.push_str(decoded);
     on_streaming(full_translation.trim_start());
 }
@@ -161,13 +165,14 @@ fn generate_text_completion<F>(
     temperature: f32,
     max_tokens: usize,
     eos_tokens: &HashSet<u32>,
+    control: &GenerationControl,
     mut on_streaming: F,
 ) -> Result<String>
 where
     F: FnMut(&str),
 {
-    const MAX_TRANSLATION_SECS: f32 = 45.0;
     const STREAM_BATCH: usize = 5;
+    control.check()?;
 
     let prompt_ids = build_prompt_token_ids(
         tokenizer,
@@ -187,21 +192,21 @@ where
     );
     let t_start = Instant::now();
 
-    let generator = Generate::new(model, temperature, &prompt_tokens);
+    let mut generator = Generate::new(model, temperature, &prompt_tokens);
 
     let mut token_buf: Vec<mlx_rs::Array> = Vec::new();
+    let mut decoded_ids: Vec<u32> = Vec::new();
     let mut full_translation = String::new();
     let mut generated = 0usize;
+    let mut saw_eos = false;
 
     let token_budget = max_tokens;
-    for token_result in generator {
-        if t_start.elapsed().as_secs_f32() >= MAX_TRANSLATION_SECS {
-            tracing::warn!(
-                "Generation timeout after {:.2}s, forcing finalize",
-                t_start.elapsed().as_secs_f32()
-            );
+    loop {
+        control.check()?;
+        let Some(token_result) = generator.next() else {
             break;
-        }
+        };
+        control.check()?;
 
         let token = match token_result {
             Ok(t) => t,
@@ -212,6 +217,7 @@ where
 
         let token_id = token.item::<u32>();
         if eos_tokens.contains(&token_id) {
+            saw_eos = true;
             break;
         }
 
@@ -219,27 +225,32 @@ where
         generated += 1;
 
         if token_buf.len() >= STREAM_BATCH {
-            if let Err(e) = eval(&token_buf) {
-                tracing::warn!("eval failed: {e}");
-            }
+            eval(&token_buf).map_err(|e| anyhow!("Generation eval failed: {e}"))?;
             let ids: Vec<u32> = token_buf.drain(..).map(|t| t.item::<u32>()).collect();
-            if let Ok(text) = tokenizer.decode(&ids, true) {
-                append_streaming_text(&mut full_translation, &text, &mut on_streaming);
-            }
+            decoded_ids.extend(ids);
+            let text = tokenizer
+                .decode(&decoded_ids, true)
+                .map_err(|e| anyhow!("Generation decode failed: {e}"))?;
+            set_streaming_text(&mut full_translation, &text, &mut on_streaming);
         }
 
         if generated >= token_budget {
             break;
         }
     }
+    control.finish(saw_eos)?;
 
     if !token_buf.is_empty() {
-        let _ = eval(&token_buf);
+        eval(&token_buf).map_err(|e| anyhow!("Generation eval failed: {e}"))?;
         let ids: Vec<u32> = token_buf.drain(..).map(|t| t.item::<u32>()).collect();
-        if let Ok(text) = tokenizer.decode(&ids, true) {
-            append_streaming_text(&mut full_translation, &text, &mut on_streaming);
-        }
+        decoded_ids.extend(ids);
+        let text = tokenizer
+            .decode(&decoded_ids, true)
+            .map_err(|e| anyhow!("Generation decode failed: {e}"))?;
+        set_streaming_text(&mut full_translation, &text, &mut on_streaming);
     }
+    // Final decoding/callbacks can race a Stop after EOS was observed.
+    control.check()?;
 
     let elapsed = t_start.elapsed().as_secs_f32();
     tracing::info!(
@@ -335,6 +346,7 @@ pub(crate) fn translation_worker_loop(
             0.0,
             2,
             &eos_tokens,
+            &GenerationControl::new(std::time::Duration::from_secs(45), false),
             |_| {},
         );
         match warmup_result {
@@ -363,6 +375,7 @@ pub(crate) fn translation_worker_loop(
             temperature,
             max_tokens,
             &eos_tokens,
+            &task.control,
             move |translation| {
                 let _ = streaming_tx.send(TranslationWorkerEvent::Streaming {
                     commit_id,
@@ -390,7 +403,7 @@ pub(crate) fn translation_worker_loop(
 
 #[cfg(test)]
 mod tests {
-    use super::append_streaming_text;
+    use super::set_streaming_text;
 
     #[test]
     fn streaming_text_callback_receives_cumulative_snapshots() {
@@ -398,9 +411,9 @@ mod tests {
         let mut snapshots = Vec::new();
         let mut collect = |text: &str| snapshots.push(text.to_string());
 
-        append_streaming_text(&mut full, "  一个", &mut collect);
-        append_streaming_text(&mut full, "完整的句子。", &mut collect);
-        append_streaming_text(&mut full, "", &mut collect);
+        set_streaming_text(&mut full, "  一个", &mut collect);
+        set_streaming_text(&mut full, "  一个完整的句子。", &mut collect);
+        set_streaming_text(&mut full, "", &mut collect);
 
         assert_eq!(full, "  一个完整的句子。");
         assert_eq!(snapshots, vec!["一个", "一个完整的句子。"]);

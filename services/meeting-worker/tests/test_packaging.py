@@ -57,7 +57,11 @@ class PackagingBoundaryTests(unittest.TestCase):
         self.assertEqual(outside.read_bytes(), content)
 
     def test_checked_in_lock_has_official_hash_pins_and_macos14_wheels(self):
-        lock = json.loads(packager.LOCK.read_text())
+        self._check_lock(packager.LOCK)
+        self._check_lock(packager.REPO / "services/asr-worker/runtime-macos-arm64.lock.json")
+
+    def _check_lock(self, path):
+        lock = json.loads(path.read_text())
         for artifact in [lock["python"], *lock["wheels"]]:
             packager.validate_artifact(artifact)
         self.assertEqual(lock["python"]["version"], "3.12.11")

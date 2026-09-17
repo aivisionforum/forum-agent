@@ -1,24 +1,19 @@
-//! dora-qwen35-translator: real-time translation Dora node powered by qwen3.5-35B-mlx.
+//! Forum translation model node, owned by the private Dora runtime.
 //!
-//! The translator treats upstream ASR as a text provider.
+//! Production work comes only from committed core coverage over authenticated
+//! local IPC. Requested/final/failed events retain exact source revisions and
+//! are durably journalled before delivery; see durable.rs and durable_queue.rs.
+//! Dora translation output is a best-effort private caption notification after
+//! a core receipt, never the transcript or translation source of truth.
 //!
-//! Pipeline position:
-//!   dora-qwen3-asr + mic bridge
-//!      → dora-qwen35-translator
-//!      → [source_text, translation]
-//!
-//! # Inputs
-//!   text – StringArray (single element: latest ASR text chunk)
-//!
-//! # Outputs
-//!   source_text  – current transcript tail or committed sentence
-//!   translation  – translated committed sentence
-//!   log          – status / debug messages
-//!
-//! Internally, the node maintains a continuously growing transcript buffer.
-//! Same-burst chunks replace the active burst, new bursts seal the previous
-//! one, and only sealed text participates in periodic translation commits.
+//! The historical transient `text` pipeline below is diagnostic-only and needs
+//! FORUM_TRANSLATOR_ALLOW_LEGACY=1 when no Forum runtime configuration exists.
 
+mod attributed_buffer;
+mod durable;
+mod durable_queue;
+mod generation_control;
+mod recovery_budget;
 mod transcript_buffer;
 
 use anyhow::{anyhow, Result};
@@ -194,9 +189,21 @@ fn warmup_enabled_from_raw(raw: Option<&str>) -> bool {
 pub(crate) fn looks_like_reasoning(output: &str) -> bool {
     const MARKERS: &[&str] = &[
         // zh reasoning preambles / meta-talk
-        "好的，我", "好的,我", "我需要", "让我来", "首先，我", "首先,我", "原文", "翻译为", "用户提供的",
+        "好的，我",
+        "好的,我",
+        "我需要",
+        "让我来",
+        "首先，我",
+        "首先,我",
+        "原文",
+        "翻译为",
+        "用户提供的",
         // en reasoning preambles
-        "Let me", "I need to", "I will translate", "The user wants", "First, I",
+        "Let me",
+        "I need to",
+        "I will translate",
+        "The user wants",
+        "First, I",
     ];
     MARKERS.iter().any(|m| output.contains(m))
 }
@@ -241,6 +248,7 @@ struct TranslationTask {
     system_prompt: String,
     user_prompt: String,
     direction: DirectionMeta,
+    control: generation_control::GenerationControl,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -482,6 +490,7 @@ fn submit_translation_task(
             system_prompt,
             user_prompt,
             direction: direction.clone(),
+            control: generation_control::GenerationControl::new(Duration::from_secs(45), true),
         })
         .map_err(|e| anyhow!("failed to send translation task to worker: {e}"))?;
 
@@ -648,6 +657,13 @@ fn main() -> Result<()> {
 
     let (mut node, mut events) =
         DoraNode::init_from_env().map_err(|e| anyhow!("Failed to init Dora node: {e}"))?;
+
+    if let Some(config) = forum_runtime::RuntimeConfig::from_env()? {
+        return durable::run(node, events, config);
+    }
+    if std::env::var("FORUM_TRANSLATOR_ALLOW_LEGACY").as_deref() != Ok("1") {
+        return Err(anyhow!("Forum translator requires FORUM_RUNTIME_CONFIG for durable source coverage. FORUM_TRANSLATOR_ALLOW_LEGACY=1 is only for historical, non-durable diagnostics."));
+    }
 
     let src_lang = std::env::var("SRC_LANG").unwrap_or_else(|_| "zh".into());
     let tgt_lang = std::env::var("TGT_LANG").unwrap_or_else(|_| "en".into());
@@ -1130,14 +1146,14 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "windows")]
+    use super::looks_like_reasoning;
     use super::{
         build_session_meta, build_system_prompt, direction_from_parameters,
         find_commit_boundary_from_tail, format_commit_prompt_debug, seal_final_asr_chunk,
         should_trigger_idle_flush, stop_drain_timed_out, strip_hard_cut_terminal_punctuation,
         warmup_enabled_from_raw, DirectionMeta, TranscriptBuffer,
     };
-    #[cfg(target_os = "windows")]
-    use super::looks_like_reasoning;
     use std::collections::BTreeMap;
     use std::time::{Duration, Instant};
 

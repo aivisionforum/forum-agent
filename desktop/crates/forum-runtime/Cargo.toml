@@ -1,0 +1,16 @@
+[package]
+name = "forum-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bounded local Forum producer transport, durable outbox and recording journal"
+
+[dependencies]
+forum-contracts = { path = "../forum-contracts" }
+serde.workspace = true
+serde_json.workspace = true
+uuid = { workspace = true, features = ["serde"] }
+anyhow.workspace = true
+thiserror.workspace = true
+sha2 = "=0.10.9"
+libc = "0.2"

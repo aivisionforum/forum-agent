@@ -1,8 +1,21 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import type { SessionSummary, SnapshotPage, TranslationRecord, PageKey } from '../../../../../packages/contracts/forum.generated';
+export type { SessionSummary, SnapshotItem, TranslationRecord } from '../../../../../packages/contracts/forum.generated';
 
-export type LanguageCode = 'zh' | 'en' | 'ja' | 'fr' | 'none';
+export type MeetingPage = SnapshotPage & { translations: TranslationRecord[] };
+export async function getMeetingSessions(): Promise<SessionSummary[]> {
+  return isTauri() ? invoke('get_meeting_sessions') : [];
+}
+export async function getMeetingTranscript(sessionId: string, cursor: number | null = null, after: PageKey | null = null): Promise<MeetingPage> {
+  return invoke('get_meeting_transcript', { sessionId, cursor, after });
+}
+export async function recoverMeeting(sessionId: string): Promise<RuntimeState> {
+  return invoke('recover_meeting', { sessionId });
+}
+
+export type LanguageCode = 'auto' | 'bilingual' | 'zh' | 'en' | 'ja' | 'fr' | 'none';
 
 export interface TranslationSettings {
   appLanguage: 'zh' | 'en';
@@ -20,6 +33,7 @@ export interface TranslationSettings {
   spokenTranslationEnabled: boolean;
   spokenTranslationOutputDevice: string | null;
   spokenTranslationVoice: string | null;
+  recordingEnabled: boolean;
   autoSaveTranscript: boolean;
   periodicSaveTranscript: boolean;
   transcriptFileName: string;
@@ -55,6 +69,9 @@ export interface DirectionSwitchState {
 
 export interface ModelStatus {
   coreReady: boolean;
+  translationReady?: boolean;
+  automaticAsrReady?: boolean;
+  automaticAsrDetail?: string;
   downloading: boolean;
   component: 'core' | null;
   progress: number;
@@ -122,6 +139,7 @@ export const previewSettings: SettingsPayload = {
     spokenTranslationEnabled: false,
     spokenTranslationOutputDevice: null,
     spokenTranslationVoice: 'apple-voice-1',
+    recordingEnabled: true,
     autoSaveTranscript: false,
     periodicSaveTranscript: false,
     transcriptFileName: 'transcript.md',

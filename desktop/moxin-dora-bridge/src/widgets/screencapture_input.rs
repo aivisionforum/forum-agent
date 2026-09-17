@@ -11,7 +11,7 @@
 use screencapturekit::cm::CMSampleBuffer;
 use screencapturekit::prelude::*;
 use screencapturekit::stream::output_type::SCStreamOutputType;
-use std::sync::atomic::{AtomicI8, Ordering};
+use std::sync::atomic::{AtomicI8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::{info, warn};
 
@@ -50,6 +50,7 @@ pub fn permission_granted() -> Option<bool> {
 pub struct ScreenCaptureInput {
     stream: Option<SCStream>,
     audio_buffer: Arc<Mutex<Vec<f32>>>,
+    dropped_samples: Arc<AtomicU64>,
     is_recording: bool,
 }
 
@@ -65,6 +66,7 @@ impl ScreenCaptureInput {
         Ok(Self {
             stream: None,
             audio_buffer: Arc::new(Mutex::new(Vec::new())),
+            dropped_samples: Arc::new(AtomicU64::new(0)),
             is_recording: false,
         })
     }
@@ -107,6 +109,7 @@ impl ScreenCaptureInput {
 
         // Register audio callback: copy f32 PCM samples into the shared buffer.
         let audio_buffer = Arc::clone(&self.audio_buffer);
+        let dropped_samples=self.dropped_samples.clone();
         stream.add_output_handler(
             move |sample: CMSampleBuffer, output_type: SCStreamOutputType| {
                 if output_type != SCStreamOutputType::Audio {
@@ -127,6 +130,7 @@ impl ScreenCaptureInput {
                             .collect();
                         if let Ok(mut buf) = audio_buffer.lock() {
                             buf.extend_from_slice(&samples);
+                            if buf.len()>64_000 {let count=buf.len()-64_000;buf.drain(..count);dropped_samples.fetch_add(count as u64,Ordering::AcqRel);}
                         }
                     }
                 }
@@ -142,6 +146,17 @@ impl ScreenCaptureInput {
         self.stream = Some(stream);
         self.is_recording = true;
         Ok(())
+    }
+
+    pub fn take_dropped_samples(&self)->u64{self.dropped_samples.swap(0,Ordering::AcqRel)}
+
+    /// Release the stream and retain the final callback PCM for durable closing.
+    pub fn stop_and_drain(&mut self)->Result<Vec<f32>,String> {
+        if let Some(stream)=self.stream.take(){
+            if let Err(error)=stream.stop_capture(){self.stream=Some(stream);return Err(format!("ScreenCaptureKit release failed: {error:?}"));}
+        }
+        self.is_recording=false;
+        Ok(self.audio_buffer.lock().map_err(|_|"system audio buffer poisoned")?.drain(..).collect())
     }
 
     /// Stop the capture stream.

@@ -7,6 +7,8 @@ description = "ASR Dora node for Hen Local Translator (macOS: Qwen3-ASR MLX; Win
 
 # Shared deps: the Dora event loop and message contract are platform-independent.
 [dependencies]
+forum-runtime = { path = "../../crates/forum-runtime" }
+forum-contracts = { path = "../../crates/forum-contracts" }
 dora-node-api = "0.4.0"
 arrow = { version = "54.2.1", default-features = false, features = ["ipc"] }
 serde = { version = "1.0", features = ["derive"] }

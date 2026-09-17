@@ -6,6 +6,8 @@ license.workspace = true
 description = "Dora runtime bridge for Hen Local Translator"
 
 [dependencies]
+forum-runtime = { path = "../crates/forum-runtime" }
+forum-contracts = { path = "../crates/forum-contracts" }
 # Dora
 dora-node-api.workspace = true
 # dora-node-api 0.4.1 uses message protocol crate 0.7.0 (different version series).
@@ -50,4 +52,5 @@ libloading = "0.8"
 screencapturekit = "1.5.4"
 
 [dev-dependencies]
+forum-core = { path = "../crates/forum-core" }
 tokio-test = "0.4"

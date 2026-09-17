@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import base64
 import hashlib
 import json
 import os
@@ -124,13 +125,57 @@ def install(python: Path, wheels: list[dict], cache: Path, target: Path,
                  "-r", str(requirements)], cwd=scratch, env=env)
 
 
-def package(output: Path, cache: Path, offline: bool = False) -> dict:
+def relocate_whisper_dependencies(site: Path) -> list[dict]:
+    """Remove only the pinned SciPy wheel's three unused build-machine RPATHs.
+
+    Its actual BLAS/Fortran dependencies are already wheel-relative. Preserving
+    Homebrew search directories would violate the standalone bundle contract.
+    """
+    import importlib.util
+    check_path = Path(__file__).with_name("check_meeting_worker_bundle.py")
+    spec = importlib.util.spec_from_file_location("forum_bundle_macho", check_path)
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    target = site / "scipy/linalg/_fblas.cpython-312-darwin.so"
+    before = sha256(target)
+    known = {
+        "/opt/homebrew/Cellar/gcc@13/13.4.0/lib/gcc/13/gcc/aarch64-apple-darwin23/13",
+        "/opt/homebrew/Cellar/gcc@13/13.4.0/lib/gcc/13/gcc",
+        "/opt/homebrew/Cellar/gcc@13/13.4.0/lib/gcc/13",
+    }
+    actual = set(checker.macho_arm64(target)["rpaths"])
+    if not known.issubset(actual):
+        raise ValueError("Pinned SciPy wheel changed its expected relocation inputs.")
+    command = ["/usr/bin/install_name_tool"]
+    for path in sorted(known):
+        command.extend(["-delete_rpath", path])
+    subprocess.run([*command, str(target)], check=True, stdout=sys.stderr, stderr=sys.stderr)
+    subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--timestamp=none", str(target)],
+                   check=True, stdout=sys.stderr, stderr=sys.stderr)
+    after = sha256(target)
+    record = site / "scipy-1.18.1.dist-info/RECORD"
+    with record.open(newline="") as stream:
+        rows = list(csv.reader(stream))
+    relative = str(target.relative_to(site))
+    matches = [row for row in rows if row[0] == relative]
+    if len(matches) != 1:
+        raise ValueError("Pinned SciPy RECORD is missing the relocated library.")
+    matches[0][1:] = ["sha256=" + base64.urlsafe_b64encode(bytes.fromhex(after)).decode().rstrip("="),
+                      str(target.stat().st_size)]
+    with record.open("w", newline="") as stream:
+        csv.writer(stream).writerows(rows)
+    return [{"file": relative, "original_sha256": before, "bundled_sha256": after,
+             "removed_build_rpaths": sorted(known), "signature": "ad-hoc, timestamp disabled"}]
+
+
+def package(output: Path, cache: Path, offline: bool = False, with_asr: bool = False) -> dict:
     output = new_output(output)
     if cache.is_symlink():
         raise ValueError("Cache directory must not be a symlink.")
     cache.mkdir(parents=True, exist_ok=True)
     cache = cache.resolve(strict=True)
-    lock = json.loads(LOCK.read_text())
+    lock_path = REPO / "services/asr-worker/runtime-macos-arm64.lock.json" if with_asr else LOCK
+    lock = json.loads(lock_path.read_text())
     if lock["schema_version"] != 1 or lock["target"] != "aarch64-apple-darwin":
         raise ValueError("Unsupported runtime lock target/schema.")
     artifacts = [lock["python"], lock["python_license_archive"], *lock["wheels"]]
@@ -182,6 +227,7 @@ def package(output: Path, cache: Path, offline: bool = False) -> dict:
                           "sha256": sha256(worker_wheel)}],
                 wheelhouse, runtime_site, scratch, env, "worker")
         run(python, ["-m", "pip", "--isolated", "check"], cwd=scratch, env=env)
+        native_relocations = relocate_whisper_dependencies(runtime_site) if with_asr else []
         # pip --target console scripts have staging-directory shebangs. Runtime
         # uses only our relative launcher plus '-m'; remove these unused scripts
         # and standalone's build-time pip from our owned staging tree.
@@ -252,11 +298,32 @@ def package(output: Path, cache: Path, offline: bool = False) -> dict:
                             'unset PYTHONHOME PYTHONPATH VIRTUAL_ENV CONDA_PREFIX DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH\n'
                             'exec "$worker_root/python/bin/python3.12" -I -B -m forum_meeting_worker "$@"\n')
         launcher.chmod(0o755)
+        contracts = staged / "contracts"
+        contracts.mkdir()
+        schema_source = REPO / "packages/contracts/forum.schema.json"
+        schema_hash = None
+        if schema_source.is_file():
+            shutil.copyfile(schema_source, contracts / schema_source.name)
+            schema_hash = sha256(schema_source)
+        asr_manifest = None
+        if with_asr:
+            asr_directory = staged / "asr"
+            asr_directory.mkdir()
+            asr_source = REPO / "services/asr-worker/asr_worker.py"
+            shutil.copyfile(asr_source, asr_directory / "asr_worker.py")
+            asr_launcher = launcher_dir / "asr-worker"
+            asr_launcher.write_text('#!/bin/sh\nset -eu\n'
+                'worker_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)\n'
+                'unset PYTHONHOME PYTHONPATH VIRTUAL_ENV CONDA_PREFIX DYLD_LIBRARY_PATH DYLD_FALLBACK_LIBRARY_PATH\n'
+                'exec "$worker_root/python/bin/python3.12" -I -B "$worker_root/asr/asr_worker.py" "$@"\n')
+            asr_launcher.chmod(0o755)
+            asr_manifest = {"protocol_version": 1, "entrypoint": "bin/asr-worker",
+                            "script_sha256": sha256(asr_source), "model_weights_included": False}
         manifest = {
             "owner": OWNER, "schema_version": 1, "target": lock["target"],
             "minimum_macos": lock["minimum_macos"], "python": lock["python"],
             "worker_version": worker_version, "worker_wheel_sha256": sha256(worker_wheel),
-            "source_sha256": source_hashes, "lock_sha256": sha256(LOCK),
+            "source_sha256": source_hashes, "lock_sha256": sha256(lock_path),
             "runtime_wheels": [w for w in lock["wheels"] if w["role"] == "runtime"],
             "build_wheels": [w for w in lock["wheels"] if w["role"] == "build"],
             "python_license_archive": lock["python_license_archive"],
@@ -265,6 +332,8 @@ def package(output: Path, cache: Path, offline: bool = False) -> dict:
             "packaging_script_sha256": sha256(Path(__file__)),
             "entrypoint": "bin/meeting-worker", "formal_job_capabilities": [],
             "probe": "--allow-model-probe / diagnostics.model_probe (F01 only)",
+            "asr_adapter": asr_manifest, "contract_schema_sha256": schema_hash,
+            "native_relocations": native_relocations,
         }
         (staged / "runtime-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         # Same-volume rename publishes a complete candidate. Never replace even
@@ -274,7 +343,7 @@ def package(output: Path, cache: Path, offline: bool = False) -> dict:
         staged.rename(output)
     return {"output": str(output), "launcher": str(output / "bin/meeting-worker"),
             "python_version": lock["python"]["version"], "minimum_macos": lock["minimum_macos"],
-            "lock_sha256": sha256(LOCK)}
+            "lock_sha256": sha256(lock_path)}
 
 
 def main() -> int:
@@ -282,11 +351,12 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path, help="new absolute meeting-worker resource directory")
     parser.add_argument("--cache", required=True, type=Path, help="build artifact cache (no model weights)")
     parser.add_argument("--offline", action="store_true", help="only use already hash-verified cached artifacts")
+    parser.add_argument("--with-asr", action="store_true", help="bundle the separately run Whisper auto-language adapter and pinned dependencies")
     args = parser.parse_args()
     if sys.version_info < (3, 12) or platform.system() != "Darwin" or platform.machine() != "arm64":
         parser.error("Build on macOS arm64 with a Python 3.12+ bootstrap interpreter.")
     try:
-        result = package(args.output, args.cache, args.offline)
+        result = package(args.output, args.cache, args.offline, args.with_asr)
     except (ValueError, OSError, subprocess.CalledProcessError, tarfile.TarError) as exc:
         print(f"Worker packaging failed: {exc}", file=sys.stderr)
         return 1

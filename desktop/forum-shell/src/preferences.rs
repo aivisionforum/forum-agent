@@ -10,6 +10,7 @@ pub const MAX_FINAL_INTERVAL_SECONDS: u64 = 8;
 pub struct AppPreferences {
     pub app_language: String,
     pub accent_theme: String,
+    pub translation_recording_enabled: bool,
     pub translation_auto_save_transcript: bool,
     pub translation_periodic_save_transcript: bool,
     pub translation_transcript_file_name: String,
@@ -34,6 +35,7 @@ impl Default for AppPreferences {
         Self {
             app_language: "zh".into(),
             accent_theme: "neon-blue".into(),
+            translation_recording_enabled: true,
             translation_auto_save_transcript: false,
             translation_periodic_save_transcript: false,
             translation_transcript_file_name: "transcript.md".into(),
@@ -95,13 +97,13 @@ pub fn save(preferences: &AppPreferences) -> Result<(), String> {
 fn sanitize(preferences: &mut AppPreferences) {
     if !matches!(
         preferences.translation_source_language.as_str(),
-        "zh" | "en" | "ja" | "fr"
+        "auto" | "zh" | "en" | "ja" | "fr"
     ) {
         preferences.translation_source_language = "zh".into();
     }
     if !matches!(
         preferences.translation_target_language.as_str(),
-        "zh" | "en" | "ja" | "fr" | "none"
+        "zh" | "en" | "ja" | "fr" | "bilingual" | "none"
     ) {
         preferences.translation_target_language = "en".into();
     }

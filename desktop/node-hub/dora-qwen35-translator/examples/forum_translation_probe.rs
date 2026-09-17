@@ -3,6 +3,8 @@
 #[cfg(target_os = "macos")]
 #[path = "../src/backend_mlx.rs"]
 mod backend_mlx;
+#[path = "../src/generation_control.rs"]
+mod generation_control;
 
 // The binary's private wire types are reproduced here only to call its unchanged backend.
 #[derive(Debug)]
@@ -12,6 +14,7 @@ struct TranslationTask {
     system_prompt: String,
     user_prompt: String,
     direction: DirectionMeta,
+    control: generation_control::GenerationControl,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +62,8 @@ fn main() -> anyhow::Result<()> {
         source_language: String,
         target_language: String,
         text: String,
+        #[serde(default)]
+        cancel_after_streams: Option<usize>,
     }
 
     tracing_subscriber::fmt()
@@ -114,6 +119,10 @@ fn main() -> anyhow::Result<()> {
             case.id
         );
         ensure!(
+            case.cancel_after_streams != Some(0),
+            "cancel_after_streams must be positive"
+        );
+        ensure!(
             matches!(case.source_language.as_str(), "zh" | "en" | "mixed"),
             "unsupported source language"
         );
@@ -166,17 +175,20 @@ fn main() -> anyhow::Result<()> {
         let user_prompt = format!("Source:\n{}", case.text);
         let observed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
         let started = Instant::now();
+        let control = generation_control::GenerationControl::new(Duration::from_secs(45), true);
         request_tx.send(TranslationTask {
             commit_id,
             source_text: case.text.clone(),
             system_prompt,
             user_prompt,
             direction: direction.clone(),
+            control: control.clone(),
         })?;
         let mut first_stream_ms = None;
         let mut first_stream_text = None;
         let mut first_nonempty_stream_ms = None;
         let mut stream_count = 0;
+        let mut cancellation_requested_ms = None;
         let completion = loop {
             let remaining = Duration::from_secs(60).saturating_sub(started.elapsed());
             let event = response_rx
@@ -197,6 +209,10 @@ fn main() -> anyhow::Result<()> {
                         "stream event attribution mismatch"
                     );
                     stream_count += 1;
+                    if case.cancel_after_streams == Some(stream_count) {
+                        control.cancel();
+                        cancellation_requested_ms = Some(event_ms);
+                    }
                     if first_nonempty_stream_ms.is_none() && !translation.trim().is_empty() {
                         first_nonempty_stream_ms = Some(event_ms);
                     }
@@ -217,7 +233,15 @@ fn main() -> anyhow::Result<()> {
             }
         };
         let final_ms = started.elapsed().as_secs_f64() * 1000.0;
-        failed |= completion.is_err();
+        let cancellation_observed = completion
+            .as_ref()
+            .err()
+            .is_some_and(|message| message.contains("CANCELLED"));
+        failed |= if case.cancel_after_streams.is_some() {
+            !cancellation_observed
+        } else {
+            completion.is_err()
+        };
         let (translation, error) = match completion {
             Ok(text) => (Some(text), None),
             Err(error) => (None, Some(error)),
@@ -228,6 +252,9 @@ fn main() -> anyhow::Result<()> {
                 "case_id": case.id,
                 "observed_at_unix_ms": observed_at_unix_ms,
                 "input_kind": "synthetic_text",
+                "expected_cancelled":case.cancel_after_streams.is_some(),
+                "cancellation_requested_ms":cancellation_requested_ms,
+                "cancellation_observed":cancellation_observed,
                 "source_language": case.source_language,
                 "target_language": case.target_language,
                 "source_text": case.text,

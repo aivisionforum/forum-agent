@@ -21,7 +21,7 @@ use libloading::{Library, Symbol};
 use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -318,6 +318,8 @@ impl Drop for NativeAudioCapture {
 struct CpalMicCapture {
     stream: Option<cpal::Stream>,
     audio_buffer: Arc<parking_lot::Mutex<Vec<i16>>>,
+    dropped_samples: Arc<AtomicU64>,
+    capture_error: Arc<parking_lot::Mutex<Option<String>>>,
     is_recording: bool,
     sample_rate: u32,
     vad_threshold: f32, // Energy threshold for simple VAD
@@ -367,6 +369,7 @@ fn push_converted_input<F>(
     input_rate: u32,
     output_rate: u32,
     buffer: &Arc<parking_lot::Mutex<Vec<i16>>>,
+    dropped_samples: &Arc<AtomicU64>,
     to_f32: impl Fn(F) -> f32,
 ) where
     F: Copy,
@@ -379,7 +382,13 @@ fn push_converted_input<F>(
         .map(|s| (s * 32767.0).clamp(-32768.0, 32767.0) as i16)
         .collect();
     if !converted.is_empty() {
-        buffer.lock().extend(converted);
+        let mut buffer = buffer.lock();
+        buffer.extend(converted);
+        if buffer.len() > 64_000 {
+            let dropped = buffer.len() - 64_000;
+            buffer.drain(..dropped);
+            dropped_samples.fetch_add(dropped as u64, Ordering::AcqRel);
+        }
     }
 }
 
@@ -388,6 +397,8 @@ impl CpalMicCapture {
         Ok(Self {
             stream: None,
             audio_buffer: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            dropped_samples: Arc::new(AtomicU64::new(0)),
+            capture_error: Arc::new(parking_lot::Mutex::new(None)),
             is_recording: false,
             sample_rate: 16000,
             vad_threshold: 0.01,
@@ -427,7 +438,12 @@ impl CpalMicCapture {
         let channels = config.channels;
 
         let buffer = Arc::clone(&self.audio_buffer);
-        let err_fn = |err| error!("CPAL stream error: {}", err);
+        let dropped_samples = self.dropped_samples.clone();
+        let capture_error = self.capture_error.clone();
+        let err_fn = move |err| {
+            error!("CPAL stream error: {}", err);
+            *capture_error.lock() = Some(format!("{err}"));
+        };
 
         eprintln!(
             "[AecInput] Starting CPAL mic capture: device='{}', sample_format={:?}, channels={}, sample_rate={}Hz -> target={}Hz mono",
@@ -438,7 +454,15 @@ impl CpalMicCapture {
             cpal::SampleFormat::F32 => device.build_input_stream(
                 &config,
                 move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    push_converted_input(data, channels, input_rate, 16_000, &buffer, |s| s);
+                    push_converted_input(
+                        data,
+                        channels,
+                        input_rate,
+                        16_000,
+                        &buffer,
+                        &dropped_samples,
+                        |s| s,
+                    );
                 },
                 err_fn,
                 None,
@@ -446,9 +470,15 @@ impl CpalMicCapture {
             cpal::SampleFormat::I16 => device.build_input_stream(
                 &config,
                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    push_converted_input(data, channels, input_rate, 16_000, &buffer, |s| {
-                        s as f32 / 32768.0
-                    });
+                    push_converted_input(
+                        data,
+                        channels,
+                        input_rate,
+                        16_000,
+                        &buffer,
+                        &dropped_samples,
+                        |s| s as f32 / 32768.0,
+                    );
                 },
                 err_fn,
                 None,
@@ -456,9 +486,15 @@ impl CpalMicCapture {
             cpal::SampleFormat::U16 => device.build_input_stream(
                 &config,
                 move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                    push_converted_input(data, channels, input_rate, 16_000, &buffer, |s| {
-                        (s as f32 / 65535.0) * 2.0 - 1.0
-                    });
+                    push_converted_input(
+                        data,
+                        channels,
+                        input_rate,
+                        16_000,
+                        &buffer,
+                        &dropped_samples,
+                        |s| (s as f32 / 65535.0) * 2.0 - 1.0,
+                    );
                 },
                 err_fn,
                 None,
@@ -629,6 +665,20 @@ impl AecInputBridge {
         is_recording: Arc<AtomicBool>,
         aec_enabled: Arc<AtomicBool>,
     ) {
+        if let Some(context) = shared_state
+            .as_ref()
+            .and_then(|shared| shared.capture_context.read().clone())
+        {
+            Self::run_reliable_capture(
+                node_id,
+                state,
+                shared_state,
+                stop_receiver,
+                is_recording,
+                context,
+            );
+            return;
+        }
         eprintln!("[AecInput] Starting event loop for {}", node_id);
 
         // Initialize both capture methods
@@ -1566,6 +1616,352 @@ impl AecInputBridge {
             ss.mic.set_recording(false);
         }
         info!("AEC input bridge event loop ended");
+    }
+
+    fn run_reliable_capture(
+        node_id: String,
+        state: Arc<RwLock<BridgeState>>,
+        shared_state: Option<Arc<SharedDoraState>>,
+        stop_receiver: Receiver<()>,
+        is_recording: Arc<AtomicBool>,
+        context: crate::CaptureContext,
+    ) {
+        let Some(shared) = shared_state else {
+            *state.write() = BridgeState::Error;
+            return;
+        };
+        let mut progress = crate::CaptureProgress::default();
+        shared.capture_progress.set(progress.clone());
+        let mut connection = None;
+        let mut teardown_requested = false;
+        let result = (|| -> anyhow::Result<()> {
+            connection = Some(crate::dynamic_node_endpoint::init_from_shared(
+                Some(&shared),
+                NodeId::from(node_id.clone()),
+            )?);
+            let (node, events) = connection.as_mut().unwrap();
+            *state.write() = BridgeState::Connected;
+            shared.add_bridge(node_id.clone());
+            let mut capture = crate::CaptureSession::open(context.clone())?;
+            let deadline = Instant::now() + Duration::from_secs(120);
+            loop {
+                if {
+                    if stop_receiver.try_recv().is_ok() {
+                        teardown_requested = true;
+                    }
+                    teardown_requested
+                } || shared.capture_stop_requested.load(Ordering::Acquire)
+                {
+                    progress.devices_released = true;
+                    shared.capture_progress.set(progress.clone());
+                    if !context.replay_only {
+                        let stop_deadline = Instant::now() + Duration::from_secs(2);
+                        loop {
+                            match capture.seal_after_devices_released() {
+                                Ok(()) => {
+                                    progress.capture_sealed = true;
+                                    break;
+                                }
+                                Err(error) => {
+                                    if Instant::now() >= stop_deadline {
+                                        return Err(error);
+                                    }
+                                    thread::sleep(Duration::from_millis(50));
+                                }
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+                if capture.models_ready()? {
+                    break;
+                }
+                anyhow::ensure!(Instant::now() < deadline, "ASR readiness barrier timed out");
+                thread::sleep(Duration::from_millis(100));
+            }
+            let dispatch = |node: &mut DoraNode,
+                            metadata: &forum_runtime::audio::SegmentMeta,
+                            pcm: &[f32]|
+             -> anyhow::Result<()> {
+                let mut params = BTreeMap::new();
+                params.insert("sample_rate".into(), Parameter::Integer(16000));
+                params.insert(
+                    "forum_segment".into(),
+                    Parameter::String(serde_json::to_string(metadata)?),
+                );
+                node.send_output("audio_segment".into(), params, pcm.to_vec().into_arrow())
+                    .map_err(|e| anyhow::anyhow!("ASR dispatch failed: {e}"))
+            };
+            if context.replay_only {
+                progress.devices_released = true;
+                shared.capture_progress.set(progress.clone());
+                let client = forum_runtime::RuntimeClient::new(context.runtime.endpoint.clone());
+                capture.replay_pending(|metadata, pcm| {
+                    anyhow::ensure!(
+                        !shared.capture_stop_requested.load(Ordering::Acquire),
+                        "capture recovery cancelled"
+                    );
+                    dispatch(node, metadata, pcm)?;
+                    crate::reliable_capture::wait_for_final(&client, metadata, || {
+                        if stop_receiver.try_recv().is_ok() {
+                            teardown_requested = true;
+                        }
+                        teardown_requested || shared.capture_stop_requested.load(Ordering::Acquire)
+                    })
+                })?;
+                progress = capture.progress();
+                progress.devices_released = true;
+                progress.capture_sealed = true;
+                shared.capture_progress.set(progress.clone());
+                return Ok(());
+            }
+            if shared.capture_stop_requested.load(Ordering::Acquire) {
+                progress.devices_released = true;
+                shared.capture_progress.set(progress.clone());
+                return Ok(());
+            }
+            // Reliable capture selects one declared track. It never falls back to
+            // another device/source, and uses CPAL rather than the legacy Swift
+            // singleton whose asynchronous stop has no release acknowledgement.
+            let mut mic: Option<CpalMicCapture> = None;
+            #[cfg(target_os = "macos")]
+            let mut system: Option<
+                crate::widgets::screencapture_input::ScreenCaptureInput,
+            > = None;
+            match context.track.kind {
+                forum_contracts::TrackKind::Mic => {
+                    let mut source =
+                        CpalMicCapture::with_device(shared.translation_input_device.read())
+                            .map_err(anyhow::Error::msg)?;
+                    source.start().map_err(anyhow::Error::msg)?;
+                    mic = Some(source);
+                }
+                forum_contracts::TrackKind::System => {
+                    #[cfg(target_os = "macos")]
+                    {
+                        let mut source =
+                            crate::widgets::screencapture_input::ScreenCaptureInput::new()
+                                .map_err(anyhow::Error::msg)?;
+                        source.start().map_err(anyhow::Error::msg)?;
+                        system = Some(source);
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    anyhow::bail!("System track unavailable on this platform");
+                }
+                _ => anyhow::bail!("Live capture requires an explicit microphone or system track"),
+            }
+            progress.started = true;
+            shared.capture_progress.set(progress.clone());
+            is_recording.store(true, Ordering::Release);
+            shared.mic.set_recording(true);
+            let mut segmenter =
+                crate::reliable_capture::PcmSegmenter::with_max_segment_ms(context.max_segment_ms)?;
+            let mut deliveries = crate::reliable_capture::DeliveryQueue::default();
+            let process = |capture: &mut crate::CaptureSession,
+                           segmenter: &mut crate::reliable_capture::PcmSegmenter,
+                           deliveries: &mut crate::reliable_capture::DeliveryQueue,
+                           pcm: &[f32]|
+             -> anyhow::Result<()> {
+                if pcm.is_empty() {
+                    return Ok(());
+                }
+                capture.record(pcm)?;
+                for segment in segmenter.push(pcm) {
+                    capture.use_segment_identity(segment.segment_id, segment.start_sample)?;
+                    let metadata = capture.close_segment(&segment.samples)?;
+                    deliveries.enqueue(metadata, segment.samples)?;
+                }
+                capture.checkpoint_segmenter(segmenter)?;
+                Ok(())
+            };
+            let mut capture_error = None;
+            loop {
+                if {
+                    if stop_receiver.try_recv().is_ok() {
+                        teardown_requested = true;
+                    }
+                    teardown_requested
+                } || shared.capture_stop_requested.load(Ordering::Acquire)
+                {
+                    break;
+                }
+                let mut pcm = Vec::new();
+                let mut dropped = 0u64;
+                if let Some(source) = mic.as_ref() {
+                    dropped += source.dropped_samples.swap(0, Ordering::AcqRel);
+                    if let Some(error) = source.capture_error.lock().take() {
+                        capture_error = Some(anyhow::anyhow!("microphone device failed: {error}"));
+                        break;
+                    }
+                }
+                #[cfg(target_os = "macos")]
+                if let Some(source) = system.as_ref() {
+                    dropped += source.take_dropped_samples();
+                }
+                if let Some(source) = mic.as_ref() {
+                    if let Some((samples, _)) = source.get_audio() {
+                        pcm.extend(samples.into_iter().map(|s| s as f32 / 32768.0));
+                    }
+                }
+                #[cfg(target_os = "macos")]
+                if let Some(source) = system.as_ref() {
+                    if let Some(samples) = source.get_audio() {
+                        pcm.extend(samples);
+                    }
+                }
+                if dropped > 0 {
+                    let result = (|| -> anyhow::Result<()> {
+                        if let Some(segment) = segmenter.finish() {
+                            capture
+                                .use_segment_identity(segment.segment_id, segment.start_sample)?;
+                            let metadata = capture.close_segment(&segment.samples)?;
+                            deliveries.enqueue(metadata, segment.samples)?;
+                        }
+                        capture.record_gap(dropped, "capture_buffer_overflow")?;
+                        segmenter.skip_samples(dropped);
+                        Ok(())
+                    })();
+                    if let Err(error) = result {
+                        capture_error = Some(error);
+                        break;
+                    }
+                }
+                if let Err(error) = process(&mut capture, &mut segmenter, &mut deliveries, &pcm) {
+                    capture_error = Some(error);
+                    break;
+                }
+                if let Err(error) =
+                    deliveries.pump(&mut capture, |metadata, pcm| dispatch(node, metadata, pcm))
+                {
+                    capture_error = Some(error);
+                    break;
+                }
+                let requested = shared.translation_direction_request.read();
+                if requested.epoch > capture.context().direction_epoch {
+                    let changed = (|| -> anyhow::Result<()> {
+                        if let Some(segment) = segmenter.finish() {
+                            capture
+                                .use_segment_identity(segment.segment_id, segment.start_sample)?;
+                            let metadata = capture.close_segment(&segment.samples)?;
+                            deliveries.enqueue(metadata, segment.samples)?;
+                        }
+                        capture.checkpoint_segmenter(&segmenter)?;
+                        capture.change_direction(
+                            requested.source_language.clone(),
+                            vec![requested.target_language.clone()],
+                            requested.epoch,
+                        )?;
+                        shared.translation_direction_active.set(requested);
+                        Ok(())
+                    })();
+                    if let Err(error) = changed {
+                        capture_error = Some(error);
+                        break;
+                    }
+                }
+                let updated = capture.progress();
+                shared.capture_progress.set(crate::CaptureProgress {
+                    started: true,
+                    ..updated
+                });
+                if let Ok(Event::Stop(_)) = events.try_recv() {
+                    teardown_requested = true;
+                    break;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+            // Drop hardware streams before any potentially blocked durable final
+            // or core RPC. Preserve their last callback buffer for the tail segment.
+            let mut tail = Vec::new();
+            if let Some(mut source) = mic.take() {
+                drop(source.stream.take());
+                source.is_recording = false;
+                tail.extend(
+                    source
+                        .audio_buffer
+                        .lock()
+                        .drain(..)
+                        .map(|s| s as f32 / 32768.0),
+                );
+            }
+            #[cfg(target_os = "macos")]
+            if let Some(mut source) = system.take() {
+                match source.stop_and_drain() {
+                    Ok(samples) => tail.extend(samples),
+                    Err(error) => {
+                        progress.error = Some(error.clone());
+                        shared.capture_progress.set(progress.clone());
+                        return Err(anyhow::anyhow!(error));
+                    }
+                }
+            }
+            is_recording.store(false, Ordering::Release);
+            shared.mic.set_recording(false);
+            progress = capture.progress();
+            progress.started = true;
+            progress.devices_released = true;
+            shared.capture_progress.set(progress.clone());
+            // A previous capture/storage failure preserves recording + outbox and
+            // reports incomplete, instead of claiming the expected set was sealed.
+            if let Some(error) = capture_error {
+                if !tail.is_empty() {
+                    let _ = capture.record(&tail);
+                }
+                return Err(error);
+            }
+            process(&mut capture, &mut segmenter, &mut deliveries, &tail)?;
+            if let Some(segment) = segmenter.finish() {
+                capture.use_segment_identity(segment.segment_id, segment.start_sample)?;
+                let metadata = capture.close_segment(&segment.samples)?;
+                deliveries.enqueue(metadata, segment.samples)?;
+            }
+            capture.seal_after_devices_released()?;
+            progress = capture.progress();
+            progress.started = true;
+            progress.devices_released = true;
+            progress.capture_sealed = true;
+            shared.capture_progress.set(progress.clone());
+            while !deliveries.is_empty() {
+                if stop_receiver.try_recv().is_ok() {
+                    teardown_requested = true;
+                    break;
+                }
+                deliveries.pump(&mut capture, |metadata, pcm| dispatch(node, metadata, pcm))?;
+                thread::sleep(Duration::from_millis(50));
+            }
+            Ok(())
+        })();
+        if !progress.started {
+            progress.devices_released = true;
+        }
+        if let Err(error) = result {
+            progress.error = Some(format!("{error:#}"));
+            shared.set_error(progress.error.clone());
+            *state.write() = BridgeState::Error;
+        }
+        shared.capture_progress.set(progress);
+        // Capture completion is not a Dora input-close signal. Keep the source
+        // node alive while ASR/translation drain durable work; only dispatcher
+        // teardown uses stop_receiver. The capture atomic never closes this node.
+        if let Some((_, events)) = connection.as_mut() {
+            while !teardown_requested {
+                if stop_receiver.try_recv().is_ok() {
+                    break;
+                }
+                match events.try_recv() {
+                    Ok(Event::Stop(_)) | Err(dora_node_api::TryRecvError::Closed) => break,
+                    Ok(Event::Error(error)) => {
+                        shared.set_error(Some(format!("capture Dora event failure: {error}")));
+                        break;
+                    }
+                    _ => {}
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+        drop(connection);
+        *state.write() = BridgeState::Disconnected;
+        shared.remove_bridge(&node_id);
     }
 
     fn send_speech_started(node: &mut DoraNode) -> BridgeResult<()> {

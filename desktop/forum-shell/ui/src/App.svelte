@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import MeetingTranscript from './MeetingTranscript.svelte';
   import logoUrl from '../../icons/logo-mark.png';
   import { productName, developmentVersion } from './lib/product';
   import {
@@ -127,6 +128,8 @@
 
   function languageName(code: string): string {
     if (code === 'none') return tr('不翻译', 'No translation');
+    if (code === 'auto') return tr('自动识别（Whisper）', 'Auto detect (Whisper)');
+    if (code === 'bilingual') return tr('中文和英文', 'Chinese + English');
     const language = languages.find((item) => item.code === code);
     return language ? (isEnglish() ? language.en : language.zh) : code.toUpperCase();
   }
@@ -484,7 +487,7 @@
 
   function runtimeDisplayMessage(): string {
     if (browserPreview) return tr('界面预览 · 合成字幕', 'UI preview · synthetic captions');
-    if (runtimeStatus === 'error') return runtimeMessage;
+    if (['error', 'degraded', 'draining', 'stopping'].includes(runtimeStatus)) return runtimeMessage;
     if (directionSwitchPending && settings) {
       return tr(
         `将在下一句切换：${languageName(settings.sourceLanguage)} → ${languageName(settings.targetLanguage)}`,
@@ -493,7 +496,7 @@
     }
     if (runtimeStatus === 'listening') return tr('实时翻译进行中', 'Live translation active');
     if (runtimeStatus === 'warming') return tr('正在启动本地翻译…', 'Starting local translation…');
-    return tr('本地 AI 已就绪', 'Local AI is ready');
+    return runtimeMessage || tr('本地 AI 已就绪', 'Local AI is ready');
   }
 
   onMount(() => {
@@ -560,8 +563,8 @@
       <div class="header-actions">
         <div class:active={runtimeStatus === 'listening'} class="status-line">
           <span></span>{tr(
-            browserPreview ? '界面预览' : runtimeStatus === 'listening' ? '翻译中' : runtimeStatus === 'warming' ? '正在准备' : '本地 AI 就绪',
-            browserPreview ? 'UI PREVIEW' : runtimeStatus === 'listening' ? 'TRANSLATING' : runtimeStatus === 'warming' ? 'WARMING UP' : 'LOCAL AI READY'
+            browserPreview ? '界面预览' : runtimeStatus === 'listening' ? '翻译中' : runtimeStatus === 'warming' ? '正在准备' : runtimeStatus === 'draining' ? '保存尾句中' : runtimeStatus === 'stopping' ? '正在停止' : runtimeStatus === 'degraded' ? '部分功能待恢复' : runtimeStatus === 'error' ? '需要处理' : '已停止',
+            browserPreview ? 'UI PREVIEW' : runtimeStatus === 'listening' ? 'TRANSLATING' : runtimeStatus === 'warming' ? 'WARMING UP' : runtimeStatus === 'draining' ? 'SAVING LAST SEGMENTS' : runtimeStatus === 'stopping' ? 'STOPPING' : runtimeStatus === 'degraded' ? 'RECOVERY NEEDED' : runtimeStatus === 'error' ? 'NEEDS ATTENTION' : 'STOPPED'
           )}
         </div>
         <button class="outline-button" on:click={() => openTranscriptHistory()}>{tr('转录记录', 'TRANSCRIPTS')}</button>
@@ -580,6 +583,17 @@
       </div>
     </header>
 
+    {#if settings.sourceLanguage === 'auto' && !modelStatus?.automaticAsrReady && !browserPreview}
+      <p role="status" class="error-message">{modelStatus?.automaticAsrDetail ?? tr('自动识别模型准备状态待检查', 'Checking automatic ASR readiness')}</p>
+    {/if}
+    <div class="recording-choice">
+      <label><input type="checkbox" bind:checked={settings.recordingEnabled} disabled={running} on:change={persist} />
+        {tr('保存本场录音，支持异常恢复', 'Save session audio for recovery')}</label>
+      <span>{settings.recordingEnabled
+        ? tr('原文和译文会持续保存到本机。', 'Transcripts and translations are saved continuously on this Mac.')
+        : tr('原文和译文仍会保存；尚未识别的音频在退出后无法恢复。', 'Text is still saved; untranscribed audio cannot be recovered after exit.')}</span>
+    </div>
+
     <section class="control-grid">
       <div class="grid-row route-row">
         <div class="row-number">01</div>
@@ -591,13 +605,14 @@
           <label class="route-field">
             <span class="route-heading"><strong>{tr('源语言', 'SOURCE LANGUAGE')}</strong></span>
             <select disabled={running} bind:value={settings.sourceLanguage} on:change={persist}>
+              <option value="auto">{tr('自动识别（Whisper）', 'Auto detect (Whisper)')}</option>
               {#each languages as language}
                 <option value={language.code}>{isEnglish() ? language.en : language.zh}</option>
               {/each}
             </select>
           </label>
 
-          <button disabled={directionSwitchPending || settings.targetLanguage === 'none'} class="swap-button" aria-label={tr('交换语言', 'Swap languages')} on:click={swapLanguages}>⇄</button>
+          <button disabled={directionSwitchPending || settings.targetLanguage === 'none' || settings.sourceLanguage === 'auto' || settings.targetLanguage === 'bilingual'} class="swap-button" aria-label={tr('交换语言', 'Swap languages')} on:click={swapLanguages}>⇄</button>
 
           <label class="route-field">
             <span class="route-heading"><strong>{tr('目标语言', 'TARGET LANGUAGE')}</strong></span>
@@ -605,6 +620,7 @@
               {#each languages as language}
                 <option value={language.code}>{isEnglish() ? language.en : language.zh}</option>
               {/each}
+              <option value="bilingual">{tr('中文和英文', 'Chinese + English')}</option>
               <option value="none">{tr('不翻译', 'No translation')}</option>
             </select>
           </label>
@@ -715,6 +731,7 @@
         {browserPreview ? tr('界面预览 · 请在桌面应用中启动', 'UI PREVIEW · START IN DESKTOP APP') : busy ? tr('请稍候…', 'PLEASE WAIT…') : running ? tr('停止实时翻译', 'STOP LIVE TRANSLATION') : tr('启动实时翻译', 'START LIVE TRANSLATION')}
       </button>
     </footer>
+    <MeetingTranscript {running} english={isEnglish()} on:runtime={(event) => applyRuntime(event.detail)} />
   </main>
 
   {#if advancedOpen}
@@ -934,7 +951,7 @@
       </dialog>
     </div>
   {/if}
-  {#if modelStatus && !modelStatus.coreReady}
+  {#if modelStatus && !modelStatus.coreReady && !(settings.sourceLanguage === 'auto' && modelStatus.automaticAsrReady && modelStatus.translationReady)}
     <div class="modal-backdrop model-setup-backdrop">
       <section class="model-setup" aria-label={tr('下载本地模型', 'Download local models')}>
         <span class="brand-logo-tile"><span class="brand-logo" style={`--brand-mark:url("${logoUrl}")`} aria-hidden="true"></span></span>
@@ -959,3 +976,9 @@
 {:else}
   <main class="loading-screen"><span class="brand-logo-tile"><span class="brand-logo" style={`--brand-mark:url("${logoUrl}")`} aria-hidden="true"></span></span><p>LOADING AI VISION FORUM</p></main>
 {/if}
+
+<style>
+  .recording-choice { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 0; font-size: 13px; }
+  .recording-choice label { display: flex; align-items: center; gap: 8px; }
+  .recording-choice span { opacity: .65; }
+</style>

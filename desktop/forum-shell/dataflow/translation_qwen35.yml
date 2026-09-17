@@ -24,7 +24,9 @@ nodes:
   - id: asr
     path: __ASR_BIN_PATH__
     inputs:
-      audio: moxin-mic-input/audio_segment
+      audio:
+        source: moxin-mic-input/audio_segment
+        queue_size: 4
       question_ended: moxin-mic-input/question_ended
     outputs:
       - transcription

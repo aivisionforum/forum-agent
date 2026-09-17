@@ -1,7 +1,8 @@
 use crate::{
     apple_speech::{self, AppleSpeech},
     dataflow::{render_translation_dataflow, RenderOptions},
-    models::ModelPaths,
+    meeting::MeetingOptions,
+    models::{AutomaticAsrPaths, ModelPaths},
     power_activity::WakeLock,
     preferences::{self, AppPreferences},
     runtime::{RuntimeEvent, TranslationRuntime},
@@ -45,10 +46,16 @@ pub struct TranslationSettings {
     spoken_translation_enabled: bool,
     spoken_translation_output_device: Option<String>,
     spoken_translation_voice: Option<String>,
+    #[serde(default = "recording_default")]
+    recording_enabled: bool,
     auto_save_transcript: bool,
     periodic_save_transcript: bool,
     transcript_file_name: String,
     transcript_save_dir: Option<String>,
+}
+
+fn recording_default() -> bool {
+    true
 }
 
 impl From<&AppPreferences> for TranslationSettings {
@@ -71,6 +78,7 @@ impl From<&AppPreferences> for TranslationSettings {
                 .experimental_spoken_translation_output_device
                 .clone(),
             spoken_translation_voice: preferences.experimental_spoken_translation_voice.clone(),
+            recording_enabled: preferences.translation_recording_enabled,
             auto_save_transcript: preferences.translation_auto_save_transcript,
             periodic_save_transcript: preferences.translation_periodic_save_transcript,
             transcript_file_name: preferences.translation_transcript_file_name.clone(),
@@ -102,6 +110,7 @@ impl TranslationSettings {
         preferences.experimental_spoken_translation_output_device =
             self.spoken_translation_output_device.clone();
         preferences.experimental_spoken_translation_voice = self.spoken_translation_voice.clone();
+        preferences.translation_recording_enabled = self.recording_enabled;
         preferences.translation_auto_save_transcript = self.auto_save_transcript;
         preferences.translation_periodic_save_transcript = self.periodic_save_transcript;
         preferences.translation_transcript_file_name = self.transcript_file_name.clone();
@@ -189,12 +198,72 @@ struct OverlayState {
 #[serde(rename_all = "camelCase")]
 struct ModelStatus {
     core_ready: bool,
+    translation_ready: bool,
+    automatic_asr_ready: bool,
+    automatic_asr_detail: String,
     downloading: bool,
     component: Option<String>,
     progress: f64,
     title: String,
     detail: String,
     core_download_bytes: u64,
+}
+
+#[derive(Default)]
+struct SpokenTranslationCursor {
+    session_id: Option<forum_contracts::Uuid>,
+    seen: std::collections::HashSet<moxin_dora_bridge::data::DurableTranslationIdentity>,
+    legacy_completed_count: u64,
+}
+
+impl SpokenTranslationCursor {
+    fn consume(&mut self, update: &TranslationUpdate, enabled: bool) -> Vec<String> {
+        self.consume_for_target(update, enabled, None)
+    }
+    fn consume_for_target(
+        &mut self,
+        update: &TranslationUpdate,
+        enabled: bool,
+        target: Option<&str>,
+    ) -> Vec<String> {
+        if let Some(batch) = &update.durable_deliveries {
+            if self.session_id != Some(batch.session_id) {
+                self.session_id = Some(batch.session_id);
+                self.seen.clear();
+                self.legacy_completed_count = 0;
+            }
+            let mut text = Vec::new();
+            for delivery in &batch.items {
+                // Mark seen even while output is disabled. Enabling speech
+                // later must not replay an old snapshot or a late UI refresh.
+                if self.seen.insert(delivery.identity.clone())
+                    && enabled
+                    && !delivery.source_segment_ids.is_empty()
+                    && !delivery.text.trim().is_empty()
+                    && target.is_none_or(|language| language == delivery.target_language)
+                {
+                    text.push(delivery.text.clone());
+                }
+            }
+            return text;
+        }
+        if update.completed_count < self.legacy_completed_count {
+            self.legacy_completed_count = 0;
+        }
+        let count = update
+            .completed_count
+            .saturating_sub(self.legacy_completed_count) as usize;
+        self.legacy_completed_count = update.completed_count;
+        if !enabled {
+            return Vec::new();
+        }
+        update
+            .history
+            .iter()
+            .skip(update.history.len().saturating_sub(count))
+            .map(|sentence| sentence.translation.clone())
+            .collect()
+    }
 }
 
 struct AppState {
@@ -205,7 +274,7 @@ struct AppState {
     voice_preview_process: Mutex<Option<Child>>,
     apple_speech: AppleSpeech,
     wake_lock: WakeLock,
-    spoken_completed_count: Mutex<u64>,
+    spoken_translations: Mutex<SpokenTranslationCursor>,
     model_download_process: Mutex<Option<(String, Child)>>,
     subtitle_preview_visible: Mutex<bool>,
     usage: Arc<UsageTracker>,
@@ -215,7 +284,7 @@ impl AppState {
     fn new(resource_dir: Option<PathBuf>) -> Self {
         let preferences = preferences::load();
         let settings = TranslationSettings::from(&preferences);
-        let runtime = TranslationRuntime::new();
+        let runtime = TranslationRuntime::new(preferences::preferences_dir());
         let usage = UsageTracker::load(preferences::preferences_dir().join("usage.json"));
         let state = Self {
             preferences: Mutex::new(preferences),
@@ -225,7 +294,7 @@ impl AppState {
             voice_preview_process: Mutex::new(None),
             apple_speech: AppleSpeech::new(),
             wake_lock: WakeLock::new(),
-            spoken_completed_count: Mutex::new(0),
+            spoken_translations: Mutex::new(SpokenTranslationCursor::default()),
             model_download_process: Mutex::new(None),
             subtitle_preview_visible: Mutex::new(true),
             usage,
@@ -336,6 +405,7 @@ impl AppState {
                 history,
                 pending_source_text: String::new(),
                 completed_count: 2,
+                durable_deliveries: None,
             }));
         self.runtime.shared_state().translation_stream.set(None);
         *self.subtitle_preview_visible.lock() = true;
@@ -350,23 +420,13 @@ impl AppState {
     fn overlay_state(&self) -> OverlayState {
         let shared = self.runtime.shared_state();
         let active = shared.translation_overlay_active.read();
-        let bridge_status = shared.status.read();
-        let bridges_ready = bridge_status
-            .active_bridges
-            .iter()
-            .any(|bridge| bridge == "moxin-mic-input")
-            && bridge_status
-                .active_bridges
-                .iter()
-                .any(|bridge| bridge == "moxin-translation-listener");
         let status = if !active {
-            "idle"
-        } else if bridges_ready {
-            "listening"
+            "idle".to_owned()
+        } else if shared.capture_context.read().is_some() {
+            self.runtime_state.lock().status.clone()
         } else {
-            "warming"
-        }
-        .to_string();
+            shared.translation_overlay_status.read()
+        };
         if shared.translation_overlay_status.read() != status {
             shared.translation_overlay_status.set(status.clone());
         }
@@ -451,7 +511,11 @@ impl AppState {
                     state.status = "listening".into();
                     state.message = format!("Local translation connected · {id}");
                 }
-                RuntimeEvent::Stopped => {
+                RuntimeEvent::Stopped {
+                    session_id,
+                    incomplete,
+                    translation_pending,
+                } => {
                     self.apple_speech.stop();
                     self.wake_lock.stop();
                     if state.running {
@@ -461,13 +525,32 @@ impl AppState {
                     }
                     state.running = false;
                     state.status = "idle".into();
-                    state.message = "Translation stopped".into();
+                    if let Err(error) = self.save_transcript_if_needed() {
+                        log::error!("Transcript export failed: {error}");
+                    }
+                    state.message = if incomplete {
+                        format!("采音已停止；会议 {session_id} 有待恢复的音频或原文，剩余 {translation_pending} 项翻译")
+                    } else if translation_pending > 0 {
+                        format!("原文已完整保存；剩余 {translation_pending} 项译文可恢复")
+                    } else {
+                        "原文和译文已保存，音频设备已释放".into()
+                    };
                     let shared = self.runtime.shared_state();
                     let requested = shared.translation_direction_request.read();
                     shared.translation_direction_active.set(requested.clone());
                     shared
                         .translation_lang_pair
                         .set((requested.source_language, requested.target_language));
+                }
+                RuntimeEvent::Draining(message) => {
+                    state.running = true;
+                    state.status = "draining".into();
+                    state.message = message;
+                }
+                RuntimeEvent::Degraded(message) => {
+                    state.running = true;
+                    state.status = "degraded".into();
+                    state.message = message;
                 }
                 RuntimeEvent::ShutdownFailed(message) => {
                     self.apple_speech.stop();
@@ -500,25 +583,35 @@ impl AppState {
     }
 
     fn queue_completed_translations_for_speech(&self) {
-        if !self.runtime_state.lock().running {
-            return;
-        }
         let Some(update) = self.runtime.shared_state().translation.read() else {
             return;
         };
-        let mut spoken = self.spoken_completed_count.lock();
-        if update.completed_count < *spoken {
-            *spoken = 0;
+        let runtime = self.runtime_state.lock().clone();
+        let direction = self.direction_switch_state();
+        let enabled = runtime.running
+            && !matches!(
+                runtime.status.as_str(),
+                "stopping" | "draining" | "idle" | "error"
+            )
+            && !direction.pending
+            && self
+                .preferences
+                .lock()
+                .experimental_spoken_translation_enabled;
+        let texts = self.spoken_translations.lock().consume_for_target(
+            &update,
+            enabled,
+            Some(&direction.active_target_language),
+        );
+        for text in texts {
+            self.apple_speech.speak(text);
         }
-        let new_sentences = update.completed_count.saturating_sub(*spoken) as usize;
-        for sentence in update
-            .history
-            .iter()
-            .skip(update.history.len().saturating_sub(new_sentences))
-        {
-            self.apple_speech.speak(sentence.translation.clone());
+    }
+
+    fn mark_current_translations_seen(&self) {
+        if let Some(update) = self.runtime.shared_state().translation.read() {
+            self.spoken_translations.lock().consume(&update, false);
         }
-        *spoken = update.completed_count;
     }
 
     fn save_transcript_if_needed(&self) -> Result<(), String> {
@@ -528,12 +621,10 @@ impl AppState {
         {
             return Ok(());
         }
-        let Some(update) = self.runtime.shared_state().translation.read() else {
+        let Some(session_id) = self.runtime.current_session_id() else {
             return Ok(());
         };
-        if update.history.is_empty() {
-            return Ok(());
-        }
+        let markdown = self.runtime.repository()?.export_markdown(session_id)?;
 
         let directory = preferences::transcript_dir(&preferences);
         fs::create_dir_all(&directory)
@@ -547,21 +638,6 @@ impl AppState {
         } else {
             preferences.translation_transcript_file_name.trim()
         };
-        let mut markdown = String::from("# Translation transcript\n\n");
-        let mut last_direction_epoch = None;
-        for sentence in update.history {
-            if last_direction_epoch != Some(sentence.direction_epoch) {
-                markdown.push_str(&format!(
-                    "## {} → {}\n\n",
-                    sentence.source_language, sentence.target_language
-                ));
-                last_direction_epoch = Some(sentence.direction_epoch);
-            }
-            markdown.push_str(&format!(
-                "**Source**\n\n{}\n\n**Translation**\n\n{}\n\n---\n\n",
-                sentence.source_text, sentence.translation
-            ));
-        }
         fs::write(directory.join(filename), markdown)
             .map_err(|error| format!("Could not save transcript: {error}"))
     }
@@ -594,7 +670,14 @@ impl AppState {
                     )
                 }
             });
+        let automatic = AutomaticAsrPaths::resolve(self.resource_dir.as_deref());
         ModelStatus {
+            automatic_asr_ready: automatic.is_ok(),
+            automatic_asr_detail: automatic
+                .err()
+                .unwrap_or_else(|| "Whisper 自动识别已准备".into()),
+            translation_ready: ModelPaths::resolve_current()
+                .is_ok_and(|paths| paths.ready_for(true)),
             core_ready: core_models_ready(),
             downloading: active_component.is_some(),
             component,
@@ -824,13 +907,14 @@ fn update_settings(
             && (preferences.translation_source_language != settings.source_language
                 || preferences.translation_target_language != settings.target_language
                 || preferences.translation_input_device != settings.input_device
+                || preferences.translation_recording_enabled != settings.recording_enabled
                 || preferences.translation_final_interval_seconds
                     != preferences::sanitize_final_interval_seconds(
                         settings.final_interval_seconds,
                     ))
         {
             return Err(
-                "Stop live translation before changing its languages, audio input, or caption interval"
+                "Stop live translation before changing its languages, audio input, recording, or caption interval"
                     .into(),
             );
         }
@@ -855,13 +939,7 @@ fn update_settings(
         }
     }
     if speech_settings_changed && state.runtime_state.lock().running {
-        *state.spoken_completed_count.lock() = state
-            .runtime
-            .shared_state()
-            .translation
-            .read()
-            .map(|update| update.completed_count)
-            .unwrap_or(0);
+        state.mark_current_translations_seen();
         state.apple_speech.configure(
             settings.spoken_translation_enabled,
             &settings.target_language,
@@ -904,6 +982,14 @@ fn swap_translation_direction(
         )?;
     }
 
+    let shared = state.runtime.shared_state();
+    let requested = shared.translation_direction_request.read();
+    let active = shared.translation_direction_active.read();
+    if requested.epoch != active.epoch {
+        return Err("正在等待上一项语向切换到达音频段边界，请稍候".into());
+    }
+    let next_epoch = active.epoch.checked_add(1).ok_or("语向版本已达到上限")?;
+
     {
         let mut preferences = state.preferences.lock();
         if settings.source_language != preferences.translation_target_language
@@ -921,28 +1007,16 @@ fn swap_translation_direction(
         preferences::save(&preferences)?;
     }
 
-    let shared = state.runtime.shared_state();
-    let requested = shared.translation_direction_request.read();
-    let active = shared.translation_direction_active.read();
-    let next_epoch = requested.epoch.max(active.epoch).saturating_add(1);
-    shared
-        .translation_direction_request
-        .set(TranslationDirection::new(
-            settings.source_language,
-            settings.target_language,
-            next_epoch,
-        ));
+    state.runtime.change_direction(TranslationDirection::new(
+        settings.source_language,
+        settings.target_language,
+        next_epoch,
+    ))?;
 
     // Pause spoken output while the old epoch drains. The new target voice is
     // configured after the requested direction reaches a speech boundary.
     state.apple_speech.stop();
-    *state.spoken_completed_count.lock() = state
-        .runtime
-        .shared_state()
-        .translation
-        .read()
-        .map(|update| update.completed_count)
-        .unwrap_or(0);
+    state.mark_current_translations_seen();
 
     Ok(state.direction_switch_state())
 }
@@ -958,6 +1032,18 @@ fn start_translation(
     state: State<'_, AppState>,
     settings: TranslationSettings,
 ) -> Result<RuntimeState, String> {
+    begin_translation(app, state, settings, None)
+}
+
+fn begin_translation(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    settings: TranslationSettings,
+    recovery: Option<forum_contracts::Uuid>,
+) -> Result<RuntimeState, String> {
+    if state.runtime_state.lock().running {
+        return Err("请先完成上一场的停止或恢复".into());
+    }
     stop_preview_process(&state);
     if settings.spoken_translation_enabled {
         apple_speech::ensure_voice_available(
@@ -969,10 +1055,13 @@ fn start_translation(
         )?;
     }
     let models = ModelPaths::resolve_current()?;
-    if !models.ready() {
+    if !models.ready_for(settings.source_language == "auto") {
         return Err("The selected core models are incomplete. Check explicit model paths or download the Forum models before starting live translation".into());
     }
-    let model_env = models.env_vars()?;
+    let mut model_env = models.env_vars()?;
+    if settings.source_language == "auto" {
+        model_env.extend(AutomaticAsrPaths::resolve(state.resource_dir.as_deref())?.env_vars()?);
+    }
     {
         let mut preferences = state.preferences.lock();
         settings.apply_to(&mut preferences);
@@ -1001,7 +1090,7 @@ fn start_translation(
     shared.translation_window_visible.set(true);
     shared.translation_overlay_active.set(true);
     shared.translation_overlay_status.set("warming".into());
-    *state.spoken_completed_count.lock() = 0;
+    state.spoken_translations.lock().legacy_completed_count = 0;
     state.apple_speech.configure(
         settings.spoken_translation_enabled,
         &settings.target_language,
@@ -1041,7 +1130,17 @@ fn start_translation(
     // The event consumer takes the same lock. Publish the transition and submit
     // atomically so a fast Started/Error cannot be overwritten by late warming.
     let mut current = state.runtime_state.lock();
-    if let Err(error) = state.runtime.start(dataflow, model_env) {
+    if let Err(error) = state.runtime.start(
+        dataflow,
+        model_env,
+        MeetingOptions {
+            max_segment_ms: preferences::sanitize_final_interval_seconds(settings.final_interval_seconds) * 1000,            source_language: settings.source_language.clone(),
+            target_language: settings.target_language.clone(),
+            recording_enabled: settings.recording_enabled,
+            system_audio: settings.input_device == "__system_audio__",
+        },
+        recovery,
+    ) {
         state.wake_lock.stop();
         let _ = state.usage.stop();
         return Err(error);
@@ -1054,11 +1153,14 @@ fn start_translation(
 fn stop_translation(state: State<'_, AppState>) -> Result<RuntimeState, String> {
     state.apple_speech.stop();
     state.wake_lock.stop();
-    *state.spoken_completed_count.lock() = 0;
+    state.mark_current_translations_seen();
     // Submit while holding the event consumer's state lock. Slow transcript I/O
     // happens afterwards and must never overwrite a completed shutdown receipt.
     {
         let mut current = state.runtime_state.lock();
+        if !current.running {
+            return Ok(current.clone());
+        }
         state.runtime.stop()?;
         *current = RuntimeState {
             running: true,
@@ -1070,6 +1172,44 @@ fn stop_translation(state: State<'_, AppState>) -> Result<RuntimeState, String> 
     // A transcript write error must not prevent the Stop command reaching capture.
     state.save_transcript_if_needed()?;
     Ok(state.runtime_state.lock().clone())
+}
+
+#[tauri::command]
+fn get_meeting_sessions(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    state.runtime.repository()?.sessions()
+}
+
+#[tauri::command]
+fn get_meeting_transcript(
+    state: State<'_, AppState>,
+    session_id: forum_contracts::Uuid,
+    cursor: Option<u64>,
+    after: Option<forum_core::PageKey>,
+) -> Result<serde_json::Value, String> {
+    state.runtime.repository()?.page(session_id, cursor, after)
+}
+
+#[tauri::command]
+fn recover_meeting(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    session_id: forum_contracts::Uuid,
+) -> Result<RuntimeState, String> {
+    let setup = state.runtime.repository()?.setup(session_id)?;
+    let mut settings = TranslationSettings::from(&*state.preferences.lock());
+    settings.source_language = setup.options.source_language;
+    settings.target_language = setup.options.target_language;
+    settings.recording_enabled = setup.options.recording_enabled;
+    settings.final_interval_seconds = setup.options.max_segment_ms / 1000;
+    settings.spoken_translation_enabled = false;
+    // replay_only is carried separately; the capture bridge returns before
+    // initializing CPAL/ScreenCaptureKit, regardless of this saved source kind.
+    settings.input_device = if setup.options.system_audio {
+        "__system_audio__".into()
+    } else {
+        "__default_microphone__".into()
+    };
+    begin_translation(app, state, settings, Some(session_id))
 }
 
 #[tauri::command]
@@ -1337,7 +1477,6 @@ fn start_event_bridge(app_handle: tauri::AppHandle) {
             }
             let state = app_handle.state::<AppState>();
             let runtime_state = state.poll_runtime_events();
-            state.queue_completed_translations_for_speech();
 
             if last_runtime_state.as_ref() != Some(&runtime_state) {
                 if has_main_window {
@@ -1350,13 +1489,6 @@ fn start_event_bridge(app_handle: tauri::AppHandle) {
             if last_direction_state.as_ref() != Some(&direction_state) {
                 if runtime_state.running && !direction_state.pending {
                     let preferences = state.preferences.lock().clone();
-                    *state.spoken_completed_count.lock() = state
-                        .runtime
-                        .shared_state()
-                        .translation
-                        .read()
-                        .map(|update| update.completed_count)
-                        .unwrap_or(0);
                     state.apple_speech.configure(
                         preferences.experimental_spoken_translation_enabled,
                         &direction_state.active_target_language,
@@ -1374,6 +1506,8 @@ fn start_event_bridge(app_handle: tauri::AppHandle) {
                 }
                 last_direction_state = Some(direction_state);
             }
+            // Apply the target voice before enqueuing a newly committed result.
+            state.queue_completed_translations_for_speech();
 
             if state.take_overlay_dirty() {
                 let overlay_state = state.overlay_state();
@@ -1415,13 +1549,23 @@ pub fn run(args: Args) {
                 if initial_settings.keep_awake_during_translation {
                     state.wake_lock.start().map_err(anyhow::Error::msg)?;
                 }
+                let mut model_env=ModelPaths::resolve_current().and_then(|models|models.env_vars()).map_err(anyhow::Error::msg)?;
+                if initial_settings.source_language=="auto" {
+                    model_env.extend(AutomaticAsrPaths::resolve(state.resource_dir.as_deref()).and_then(|paths|paths.env_vars()).map_err(anyhow::Error::msg)?);
+                }
                 state
                     .runtime
                     .start(
                         dataflow.into(),
-                        ModelPaths::resolve_current()
-                            .and_then(|models| models.env_vars())
-                            .map_err(anyhow::Error::msg)?,
+                        model_env,
+                        MeetingOptions {
+                            max_segment_ms: preferences::sanitize_final_interval_seconds(initial_settings.final_interval_seconds) * 1000,
+                            source_language: initial_settings.source_language.clone(),
+                            target_language: initial_settings.target_language.clone(),
+                            recording_enabled: initial_settings.recording_enabled,
+                            system_audio: initial_settings.input_device == "__system_audio__",
+                        },
+                        None,
                     )
                     .map_err(|error| anyhow::anyhow!(error))?;
                 state.usage.start().map_err(anyhow::Error::msg)?;
@@ -1439,6 +1583,9 @@ pub fn run(args: Args) {
             start_translation,
             stop_translation,
             get_usage,
+            get_meeting_sessions,
+            get_meeting_transcript,
+            recover_meeting,
             get_overlay_state,
             open_transcript_history,
             toggle_subtitle_preview,
@@ -1483,6 +1630,148 @@ pub fn run(args: Args) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn speech_delivery(text: &str) -> moxin_dora_bridge::data::DurableTranslationDelivery {
+        use moxin_dora_bridge::data::*;
+        DurableTranslationDelivery {
+            identity: DurableTranslationIdentity {
+                translation_id: forum_contracts::Uuid::new_v4(),
+                revision: 1,
+                attempt: 1,
+            },
+            source_segment_ids: vec![forum_contracts::Uuid::new_v4()],
+            target_language: "en".into(),
+            text: text.into(),
+        }
+    }
+    fn speech_update(
+        session_id: forum_contracts::Uuid,
+        items: Vec<moxin_dora_bridge::data::DurableTranslationDelivery>,
+        count: u64,
+    ) -> TranslationUpdate {
+        TranslationUpdate {
+            completed_count: count,
+            durable_deliveries: Some(moxin_dora_bridge::data::DurableTranslationBatch {
+                session_id,
+                items,
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn durable_speech_uses_late_result_identity_not_last_rows_or_counts() {
+        let session = forum_contracts::Uuid::new_v4();
+        let first = speech_delivery("later source");
+        let late = speech_delivery("earlier source, late result");
+        let mut cursor = SpokenTranslationCursor::default();
+        assert_eq!(
+            cursor.consume(&speech_update(session, vec![first.clone()], 200), true),
+            vec!["later source"]
+        );
+        // A decreasing/reused count and a completely different UI window do
+        // not requeue a seen result or choose the last unrelated caption row.
+        let update = speech_update(session, vec![late.clone(), first], 199);
+        assert_eq!(
+            cursor.consume(&update, true),
+            vec!["earlier source, late result"]
+        );
+        assert!(cursor.consume(&update, true).is_empty());
+        assert!(cursor
+            .consume(&speech_update(session, vec![], 0), true)
+            .is_empty());
+        assert!(cursor
+            .consume(&speech_update(session, vec![late], 1), true)
+            .is_empty());
+    }
+
+    #[test]
+    fn disabled_speech_consumes_deliveries_without_replaying_on_enable() {
+        let session = forum_contracts::Uuid::new_v4();
+        let old = speech_delivery("old");
+        let new = speech_delivery("new");
+        let mut cursor = SpokenTranslationCursor::default();
+        assert!(cursor
+            .consume(&speech_update(session, vec![old.clone()], 1), false)
+            .is_empty());
+        assert!(cursor
+            .consume(&speech_update(session, vec![old.clone()], 1), true)
+            .is_empty());
+        assert_eq!(
+            cursor.consume(&speech_update(session, vec![old, new], 2), true),
+            vec!["new"]
+        );
+    }
+
+    #[test]
+    fn late_previous_direction_is_not_spoken_with_the_new_target_voice() {
+        let session = forum_contracts::Uuid::new_v4();
+        let old = speech_delivery("old English");
+        let mut current = speech_delivery("新的中文");
+        current.target_language = "zh".into();
+        let update = speech_update(session, vec![old, current], 2);
+        let mut cursor = SpokenTranslationCursor::default();
+        assert_eq!(
+            cursor.consume_for_target(&update, true, Some("zh")),
+            vec!["新的中文"]
+        );
+        assert!(cursor
+            .consume_for_target(&update, true, Some("en"))
+            .is_empty());
+    }
+
+    #[test]
+    fn durable_speech_distinguishes_revision_attempt_and_resets_only_for_new_session() {
+        let session = forum_contracts::Uuid::new_v4();
+        let original = speech_delivery("original");
+        let mut revised = original.clone();
+        revised.identity.revision = 2;
+        revised.text = "revised".into();
+        let mut retried = revised.clone();
+        retried.identity.attempt = 2;
+        retried.text = "retried".into();
+        let mut cursor = SpokenTranslationCursor::default();
+        assert_eq!(
+            cursor.consume(
+                &speech_update(session, vec![original.clone(), revised, retried], 3),
+                true
+            ),
+            vec!["original", "revised", "retried"]
+        );
+        assert!(cursor
+            .consume(&speech_update(session, vec![original.clone()], 1), true)
+            .is_empty());
+        assert_eq!(
+            cursor.consume(
+                &speech_update(forum_contracts::Uuid::new_v4(), vec![original], 1),
+                true
+            ),
+            vec!["original"]
+        );
+        assert_eq!(cursor.seen.len(), 1);
+    }
+
+    #[test]
+    fn preview_speech_keeps_explicit_legacy_count_fallback() {
+        let mut cursor = SpokenTranslationCursor::default();
+        let mut update = TranslationUpdate {
+            history: vec![SentenceUnit {
+                source_text: "preview".into(),
+                translation: "sample".into(),
+                source_language: "zh".into(),
+                target_language: "en".into(),
+                direction_epoch: 0,
+            }],
+            completed_count: 1,
+            ..Default::default()
+        };
+        assert_eq!(cursor.consume(&update, true), vec!["sample"]);
+        assert!(cursor.consume(&update, true).is_empty());
+        update.completed_count = 0;
+        cursor.consume(&update, false);
+        update.completed_count = 1;
+        assert_eq!(cursor.consume(&update, true), vec!["sample"]);
+    }
 
     #[test]
     fn settings_round_trip_preserves_translation_preferences() {

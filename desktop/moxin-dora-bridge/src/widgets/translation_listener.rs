@@ -330,9 +330,10 @@ impl TranslationListenerBridge {
         info!("[TranslationListener] Connected to dora as: {}", node_id);
         *state.write() = BridgeState::Connected;
 
+        let authoritative_core = shared_state.as_ref().is_some_and(|shared|shared.capture_context.read().is_some());
         if let Some(ref shared) = shared_state {
             shared.add_bridge(node_id.clone());
-            shared.translation_stream.set(None);
+            if !authoritative_core { shared.translation_stream.set(None); }
         }
 
         const MAX_HISTORY: usize = 10_000;
@@ -347,6 +348,7 @@ impl TranslationListenerBridge {
             if let Some(event) = events.recv_timeout(std::time::Duration::from_millis(100)) {
                 match event {
                     Event::Input { id, metadata, data } => {
+                        if authoritative_core && id.as_str() != "log" { continue; }
                         // Extract text value from Arrow StringArray
                         let text_value: Option<String> = {
                             use arrow::array::Array;
@@ -463,6 +465,7 @@ impl TranslationListenerBridge {
                                     history: display.history.clone(),
                                     pending_source_text: display.pending_source_text.clone(),
                                     completed_count: display.completed_count,
+                                    durable_deliveries: None,
                                 }));
                                 if session_status == "translating" {
                                     shared
@@ -551,6 +554,7 @@ impl TranslationListenerBridge {
                                         history: display.history.clone(),
                                         pending_source_text: display.pending_source_text.clone(),
                                         completed_count: display.completed_count,
+                                    durable_deliveries: None,
                                     }));
                                 }
                             } else if session_status == "failed"
@@ -562,6 +566,7 @@ impl TranslationListenerBridge {
                                         history: display.history.clone(),
                                         pending_source_text: display.pending_source_text.clone(),
                                         completed_count: display.completed_count,
+                                    durable_deliveries: None,
                                     }));
                                 }
                             }

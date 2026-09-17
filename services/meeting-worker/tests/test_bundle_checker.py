@@ -64,6 +64,37 @@ class MachOTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 checker.check_native_dependencies(self.root)
 
+    def test_system_path_traversal_is_not_accepted_as_a_system_dependency(self):
+        (self.root / "python/bin").mkdir(parents=True)
+        executable = self.root / "python/bin/python3.12"
+        executable.write_bytes(thin())
+        path = self.root / "native.dylib"
+        for dependency in ("/usr/lib/../../opt/homebrew/lib/unsafe.dylib",
+                           "/System/Library/../../Users/developer/native.dylib"):
+            path.write_bytes(thin(dependency=dependency))
+            with self.assertRaises(ValueError):
+                checker.check_native_dependencies(self.root)
+
+    def test_exact_loader_and_system_rpaths_are_portable_but_homebrew_is_not(self):
+        (self.root / "python/bin").mkdir(parents=True)
+        executable = self.root / "python/bin/python3.12"
+        executable.write_bytes(thin())
+        path = self.root / "native.dylib"
+        for rpath in ("/usr/lib", "/System/Library", "@loader_path", "@executable_path",
+                      "/opt/homebrew/Cellar/gcc@13/13.4.0/lib/gcc/13"):
+            data = thin()
+            name = rpath.encode() + b"\0"
+            length = (12 + len(name) + 7) // 8 * 8
+            command = struct.pack("<3I", 0x8000001C, length, 12) + name
+            command += b"\0" * (length - len(command))
+            header = list(struct.unpack("<8I", data[:32]))
+            header[4] += 1; header[5] += len(command)
+            path.write_bytes(struct.pack("<8I", *header) + data[32:] + command)
+            if rpath.startswith("/opt"):
+                with self.assertRaises(ValueError): checker.check_native_dependencies(self.root)
+            else:
+                checker.check_native_dependencies(self.root)
+
 
 if __name__ == "__main__":
     unittest.main()

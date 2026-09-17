@@ -37,6 +37,9 @@ pub struct StopReport {
 }
 
 /// Local executable delegated by the private graph to this direct-child supervisor.
+#[derive(Debug,Clone,serde::Serialize)]
+pub struct NodeHealth { pub node_id:String, pub pid:u32, pub running:bool, pub exit_status:Option<String> }
+
 pub struct ExecutableNode {
     pub id: String,
     pub program: PathBuf,
@@ -51,7 +54,7 @@ pub struct OwnedRuntime {
     reservations: Vec<TcpListener>,
     coordinator: Option<OwnedProcess>,
     daemon: Option<OwnedProcess>,
-    nodes: parking_lot::Mutex<Vec<OwnedProcess>>,
+    nodes: parking_lot::Mutex<Vec<(String,OwnedProcess)>>,
     started: bool,
 }
 
@@ -200,14 +203,21 @@ impl OwnedRuntime {
     }
 
     pub fn node_pids(&self) -> Vec<u32> {
-        self.nodes.lock().iter().map(OwnedProcess::id).collect()
+        self.nodes.lock().iter().map(|(_,process)|process.id()).collect()
+    }
+
+    pub fn node_health(&self)->BridgeResult<Vec<NodeHealth>> {
+        self.nodes.lock().iter_mut().map(|(node_id,process)|{
+            let status=process.poll()?;
+            Ok(NodeHealth{node_id:node_id.clone(),pid:process.id(),running:status.is_none(),exit_status:status.map(|value|value.to_string())})
+        }).collect()
     }
 
     pub fn check_node_health(&self) -> BridgeResult<()> {
-        for process in self.nodes.lock().iter_mut() {
+        for (node_id,process) in self.nodes.lock().iter_mut() {
             if let Some(status) = process.poll()? {
                 return Err(BridgeError::ConnectionFailed(format!(
-                    "Owned executable node {} exited: {status}",
+                    "Owned executable node {node_id} ({}) exited: {status}",
                     process.id()
                 )));
             }
@@ -247,7 +257,7 @@ impl OwnedRuntime {
                 .env("DORA_NODE_CONFIG", serde_yaml::to_string(&config)?)
                 .env("PYTHONUNBUFFERED", "1");
             log_to_files(&mut command, &self.directory, &format!("node-{index}"))?;
-            self.nodes.get_mut().push(OwnedProcess::spawn(command)?);
+            self.nodes.get_mut().push((node.id.clone(),OwnedProcess::spawn(command)?));
         }
         Ok(())
     }
@@ -255,7 +265,7 @@ impl OwnedRuntime {
     /// Reap only the groups that this runtime created. On any error, retain all handles.
     pub fn contain(&mut self) -> BridgeResult<()> {
         let mut failures = Vec::new();
-        for process in self.nodes.get_mut().iter_mut().chain(
+        for process in self.nodes.get_mut().iter_mut().map(|(_,process)|process).chain(
             [&mut self.daemon, &mut self.coordinator]
                 .into_iter()
                 .flatten(),
