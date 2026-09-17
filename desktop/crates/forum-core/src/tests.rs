@@ -90,6 +90,15 @@ impl Fixture {
     fn setup(&self, store: &mut Store) {
         store.create_session(&self.session).unwrap();
         store.create_track(&self.track).unwrap();
+        // These transaction tests isolate ingestion. Lifecycle has dedicated
+        // end-to-end tests using versioned transitions in reliable_tests.
+        store
+            .connection
+            .execute(
+                "UPDATE sessions SET state='recording' WHERE id=?1",
+                [self.session.session_id.to_string()],
+            )
+            .unwrap();
     }
 
     fn revision(&self, expected: Revision, text: &str) -> Event<TranscriptRevision> {
@@ -481,7 +490,7 @@ fn reopening_recovers_committed_state_and_ack_lost_replay() {
         1
     );
     assert_eq!(reopened.coverage(f.session.session_id).unwrap().len(), 1);
-    assert_eq!(reopened.outbox_after(0, 100).unwrap().len(), 2);
+    assert_eq!(reopened.outbox_after(0, 100).unwrap().len(), 3);
 }
 
 #[test]
@@ -587,3 +596,6 @@ fn event_payload_type_schema_and_unknown_wire_fields_are_checked() {
     assert!(serde_json::from_value::<Event<TranscriptFinal>>(wire).is_err());
     assert!(store.outbox_after(0, 100).unwrap().is_empty());
 }
+
+#[path = "reliable_tests.rs"]
+mod reliable_tests;

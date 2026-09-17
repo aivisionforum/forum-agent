@@ -101,6 +101,30 @@ fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let mut store = Store::open(&path)?;
     store.create_session(&session)?;
     store.create_track(&track)?;
+    for (expected_state, next_state) in [
+        (SessionState::Created, SessionState::Preparing),
+        (SessionState::Preparing, SessionState::Ready),
+        (SessionState::Ready, SessionState::Recording),
+    ] {
+        store.transition_session(&Event {
+            schema_version: SCHEMA_VERSION,
+            message_id: Uuid::new_v4(),
+            event_type: EventType::SessionChanged,
+            event_id: session.event_id,
+            room_id: session.room_id,
+            session_id: session.session_id,
+            producer: Producer {
+                name: "synthetic-host".into(),
+                run_id: Uuid::new_v4(),
+                seq: 1,
+            },
+            payload: SessionTransition {
+                expected_state,
+                next_state,
+                reason: "synthetic setup".into(),
+            },
+        })?;
+    }
     store.register_capture(&capture)?;
     let final_receipt = store.ingest_final(&final_event)?;
     store.revise_transcript(&edit)?;

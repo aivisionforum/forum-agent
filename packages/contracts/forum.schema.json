@@ -1,0 +1,2329 @@
+{
+  "$defs": {
+    "AudioGap": {
+      "additionalProperties": false,
+      "properties": {
+        "audio": {
+          "$ref": "#/$defs/AudioRange"
+        },
+        "gap_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "recoverable": {
+          "type": "boolean"
+        },
+        "track_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "gap_id",
+        "track_id",
+        "audio",
+        "reason",
+        "recoverable"
+      ],
+      "type": "object"
+    },
+    "AudioGapEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "message_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/AudioGap"
+        },
+        "producer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "room_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "type": {
+          "const": "audio.gap",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_id",
+        "type",
+        "event_id",
+        "room_id",
+        "session_id",
+        "producer",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "AudioRange": {
+      "additionalProperties": false,
+      "properties": {
+        "end_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "end_sample": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sample_rate": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "start_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "start_sample": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "start_sample",
+        "end_sample",
+        "sample_rate",
+        "start_ms",
+        "end_ms"
+      ],
+      "type": "object"
+    },
+    "CaptureSegmentClosed": {
+      "additionalProperties": false,
+      "properties": {
+        "audio": {
+          "$ref": "#/$defs/AudioRange"
+        },
+        "recording_ref": {
+          "description": "An opaque recording-manifest reference, never opened as a path here.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "segment_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "track_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "track_id",
+        "segment_id",
+        "audio"
+      ],
+      "type": "object"
+    },
+    "CaptureSegmentClosedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "message_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/CaptureSegmentClosed"
+        },
+        "producer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "room_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "type": {
+          "const": "audio.segment_closed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_id",
+        "type",
+        "event_id",
+        "room_id",
+        "session_id",
+        "producer",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "CaptureStopped": {
+      "additionalProperties": false,
+      "properties": {
+        "manifest_sha256": {
+          "type": "string"
+        },
+        "tracks": {
+          "items": {
+            "$ref": "#/$defs/TrackSeal"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "tracks",
+        "manifest_sha256"
+      ],
+      "type": "object"
+    },
+    "CaptureStoppedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "message_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/CaptureStopped"
+        },
+        "producer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "room_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "type": {
+          "const": "session.capture_stopped",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_id",
+        "type",
+        "event_id",
+        "room_id",
+        "session_id",
+        "producer",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "CoverageIntent": {
+      "properties": {
+        "direction_epoch": {
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "end_utf8": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "segment_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "segment_revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "start_utf8": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "state": {
+          "type": "string"
+        },
+        "target_language": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "segment_id",
+        "segment_revision",
+        "target_language",
+        "direction_epoch",
+        "start_utf8",
+        "end_utf8",
+        "state"
+      ],
+      "type": "object"
+    },
+    "DirectionBoundary": {
+      "additionalProperties": false,
+      "properties": {
+        "configured_source_language": {
+          "type": "string"
+        },
+        "start_sample": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "track_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "track_id",
+        "start_sample",
+        "configured_source_language"
+      ],
+      "type": "object"
+    },
+    "DirectionChanged": {
+      "additionalProperties": false,
+      "properties": {
+        "boundary": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DirectionBoundary"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Some applies only to capture at/after this sample boundary. None is an\nexplicit retroactive retranslation of this session's current sources."
+        },
+        "direction_epoch": {
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "expected_epoch": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target_languages": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "expected_epoch",
+        "direction_epoch",
+        "target_languages"
+      ],
+      "type": "object"
+    },
+    "DirectionChangedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "message_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/DirectionChanged"
+        },
+        "producer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "room_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "type": {
+          "const": "translation.direction_changed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_id",
+        "type",
+        "event_id",
+        "room_id",
+        "session_id",
+        "producer",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "EventType": {
+      "enum": [
+        "session.changed",
+        "audio.gap",
+        "session.capture_stopped",
+        "session.producer_sealed",
+        "session.producer_reconciled",
+        "session.transcript_sealed",
+        "translation.requested",
+        "translation.final",
+        "translation.failed",
+        "translation.direction_changed",
+        "audio.segment_closed",
+        "transcript.final",
+        "transcript.revised"
+      ],
+      "type": "string"
+    },
+    "ForumEvent": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CaptureSegmentClosedEvent"
+        },
+        {
+          "$ref": "#/$defs/TranscriptFinalEvent"
+        },
+        {
+          "$ref": "#/$defs/TranscriptRevisionEvent"
+        },
+        {
+          "$ref": "#/$defs/SessionTransitionEvent"
+        },
+        {
+          "$ref": "#/$defs/AudioGapEvent"
+        },
+        {
+          "$ref": "#/$defs/CaptureStoppedEvent"
+        },
+        {
+          "$ref": "#/$defs/ProducerSealEvent"
+        },
+        {
+          "$ref": "#/$defs/ProducerReconciledEvent"
+        },
+        {
+          "$ref": "#/$defs/TranscriptSealEvent"
+        },
+        {
+          "$ref": "#/$defs/DirectionChangedEvent"
+        },
+        {
+          "$ref": "#/$defs/TranslationRequestedEvent"
+        },
+        {
+          "$ref": "#/$defs/TranslationFinalEvent"
+        },
+        {
+          "$ref": "#/$defs/TranslationFailedEvent"
+        }
+      ]
+    },
+    "IncompleteSegment": {
+      "properties": {
+        "audio": {
+          "$ref": "#/$defs/AudioRange"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recording_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "segment_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TranscriptStatus"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "None means capture registered but no ASR result has been committed."
+        },
+        "track_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "segment_id",
+        "track_id",
+        "audio"
+      ],
+      "type": "object"
+    },
+    "OutboxMessage": {
+      "properties": {
+        "body": {
+          "description": "Internal event data only. Never forward this as a public projection."
+        },
+        "event_type": {
+          "type": "string"
+        },
+        "message_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "store_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "store_seq",
+        "message_id",
+        "session_id",
+        "event_type",
+        "body"
+      ],
+      "type": "object"
+    },
+    "PageKey": {
+      "properties": {
+        "segment_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "start_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "track_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "start_ms",
+        "track_id",
+        "segment_id"
+      ],
+      "type": "object"
+    },
+    "Producer": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "run_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "seq": {
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "run_id",
+        "seq"
+      ],
+      "type": "object"
+    },
+    "ProducerReconciled": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "$ref": "#/$defs/ProducerRecoveryEvidence"
+        },
+        "final_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "producer_run_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "producer_run_id",
+        "final_seq",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "ProducerReconciledEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "message_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ProducerReconciled"
+        },
+        "producer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "room_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "type": {
+          "const": "session.producer_reconciled",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_id",
+        "type",
+        "event_id",
+        "room_id",
+        "session_id",
+        "producer",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "ProducerRecoveryEvidence": {
+      "additionalProperties": false,
+      "description": "Host-only evidence. Boolean assertions must come from owned process cleanup\nand a fully acknowledged producer outbox, never from untrusted node claims.",
+      "properties": {
+        "capture_manifest_sha256": {
+          "type": "string"
+        },
+        "outbox_replayed": {
+          "type": "boolean"
+        },
+        "owned_process_exited": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "capture_manifest_sha256",
+        "owned_process_exited",
+        "outbox_replayed",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "ProducerSeal": {
+      "additionalProperties": false,
+      "properties": {
+        "final_seq": {
+          "description": "Last durable sequence BEFORE this seal; seal itself uses final_seq + 1.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "producer_run_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "segment_ids": {
+          "items": {
+            "format": "uuid",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            },
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "producer_run_id",
+        "final_seq",
+        "segment_ids"
+      ],
+      "type": "object"
+    },
+    "ProducerSealEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "message_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/ProducerSeal"
+        },
+        "producer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "room_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "type": {
+          "const": "session.producer_sealed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_id",
+        "type",
+        "event_id",
+        "room_id",
+        "session_id",
+        "producer",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "Receipt": {
+      "properties": {
+        "duplicate": {
+          "type": "boolean"
+        },
+        "message_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "store_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "message_id",
+        "store_seq",
+        "duplicate"
+      ],
+      "type": "object"
+    },
+    "RecoveryRevision": {
+      "properties": {
+        "next_revision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Revision"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "segment_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "terminal": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "segment_id",
+        "terminal"
+      ],
+      "type": "object"
+    },
+    "RecoverySegment": {
+      "properties": {
+        "audio": {
+          "$ref": "#/$defs/AudioRange"
+        },
+        "next_revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "previous_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TranscriptStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "recording_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "segment_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "track_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "segment_id",
+        "track_id",
+        "audio",
+        "next_revision"
+      ],
+      "type": "object"
+    },
+    "Revision": {
+      "format": "uint32",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "RevisionOrigin": {
+      "oneOf": [
+        {
+          "properties": {
+            "kind": {
+              "const": "asr",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "base_revision": {
+              "$ref": "#/$defs/Revision"
+            },
+            "kind": {
+              "const": "human",
+              "type": "string"
+            },
+            "operator_id": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "operator_id",
+            "reason",
+            "base_revision"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SessionExport": {
+      "properties": {
+        "gaps": {
+          "items": {
+            "$ref": "#/$defs/AudioGap"
+          },
+          "type": "array"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/SessionSnapshot"
+        },
+        "sources": {
+          "description": "Every registered capture, including missing, empty and failed ASR.",
+          "items": {
+            "$ref": "#/$defs/SnapshotItem"
+          },
+          "type": "array"
+        },
+        "status": {
+          "$ref": "#/$defs/SessionStatus"
+        },
+        "translations": {
+          "items": {
+            "$ref": "#/$defs/TranslationRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "snapshot",
+        "sources",
+        "status",
+        "translations",
+        "gaps"
+      ],
+      "type": "object"
+    },
+    "SessionSnapshot": {
+      "properties": {
+        "cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "incomplete": {
+          "items": {
+            "$ref": "#/$defs/IncompleteSegment"
+          },
+          "type": "array"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionSpec"
+        },
+        "transcript": {
+          "items": {
+            "$ref": "#/$defs/TranscriptRecord"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "session",
+        "cursor",
+        "transcript",
+        "incomplete"
+      ],
+      "type": "object"
+    },
+    "SessionSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "owner_device_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "room_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "event_id",
+        "room_id",
+        "owner_device_id",
+        "title"
+      ],
+      "type": "object"
+    },
+    "SessionState": {
+      "enum": [
+        "created",
+        "preparing",
+        "ready",
+        "recording",
+        "stopping",
+        "draining",
+        "completed",
+        "interrupted"
+      ],
+      "type": "string"
+    },
+    "SessionStatus": {
+      "properties": {
+        "capture_stopped": {
+          "type": "boolean"
+        },
+        "direction_epoch": {
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "incomplete": {
+          "type": "boolean"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/SessionState"
+        },
+        "state_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target_languages": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "transcript_sealed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "session_id",
+        "state",
+        "direction_epoch",
+        "target_languages",
+        "capture_stopped",
+        "transcript_sealed",
+        "incomplete",
+        "state_seq"
+      ],
+      "type": "object"
+    },
+    "SessionSummary": {
+      "properties": {
+        "cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "segment_count": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "session": {
+          "$ref": "#/$defs/SessionSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/SessionStatus"
+        },
+        "translation_pending": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session",
+        "status",
+        "cursor",
+        "segment_count",
+        "translation_pending"
+      ],
+      "type": "object"
+    },
+    "SessionTransition": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_state": {
+          "$ref": "#/$defs/SessionState"
+        },
+        "next_state": {
+          "$ref": "#/$defs/SessionState"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "expected_state",
+        "next_state",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "SessionTransitionEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "message_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/SessionTransition"
+        },
+        "producer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "room_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "type": {
+          "const": "session.changed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_id",
+        "type",
+        "event_id",
+        "room_id",
+        "session_id",
+        "producer",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "SnapshotItem": {
+      "properties": {
+        "audio": {
+          "$ref": "#/$defs/AudioRange"
+        },
+        "recording_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "segment_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "track_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "transcript": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TranscriptRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "segment_id",
+        "track_id",
+        "audio"
+      ],
+      "type": "object"
+    },
+    "SnapshotPage": {
+      "properties": {
+        "cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/SnapshotItem"
+          },
+          "type": "array"
+        },
+        "next_after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PageKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session": {
+          "$ref": "#/$defs/SessionSpec"
+        },
+        "status": {
+          "$ref": "#/$defs/SessionStatus"
+        }
+      },
+      "required": [
+        "session",
+        "status",
+        "cursor",
+        "items"
+      ],
+      "type": "object"
+    },
+    "SourceSpan": {
+      "additionalProperties": false,
+      "properties": {
+        "end_utf8": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "quote": {
+          "type": "string"
+        },
+        "segment_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "segment_revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "start_utf8": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "segment_id",
+        "segment_revision",
+        "start_utf8",
+        "end_utf8",
+        "quote"
+      ],
+      "type": "object"
+    },
+    "TrackKind": {
+      "enum": [
+        "mic",
+        "system",
+        "room_mix",
+        "replay"
+      ],
+      "type": "string"
+    },
+    "TrackSeal": {
+      "additionalProperties": false,
+      "properties": {
+        "final_sample": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "segment_ids": {
+          "items": {
+            "format": "uuid",
+            "not": {
+              "const": "00000000-0000-0000-0000-000000000000"
+            },
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "track_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "track_id",
+        "final_sample",
+        "segment_ids"
+      ],
+      "type": "object"
+    },
+    "TrackSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/TrackKind"
+        },
+        "sample_rate": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "track_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "track_id",
+        "session_id",
+        "kind",
+        "sample_rate"
+      ],
+      "type": "object"
+    },
+    "TranscriptFinal": {
+      "additionalProperties": false,
+      "properties": {
+        "audio": {
+          "$ref": "#/$defs/AudioRange"
+        },
+        "backend": {
+          "type": "string"
+        },
+        "configured_source_language": {
+          "type": "string"
+        },
+        "detected_language": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "direction_epoch": {
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "model_manifest_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "segment_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "speaker_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/TranscriptStatus"
+        },
+        "target_languages": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "text": {
+          "type": "string"
+        },
+        "track_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "track_id",
+        "segment_id",
+        "revision",
+        "audio",
+        "text",
+        "configured_source_language",
+        "target_languages",
+        "direction_epoch",
+        "status",
+        "backend",
+        "model_manifest_id"
+      ],
+      "type": "object"
+    },
+    "TranscriptFinalEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "message_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TranscriptFinal"
+        },
+        "producer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "room_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "type": {
+          "const": "transcript.final",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_id",
+        "type",
+        "event_id",
+        "room_id",
+        "session_id",
+        "producer",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "TranscriptRecord": {
+      "properties": {
+        "created_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "origin": {
+          "$ref": "#/$defs/RevisionOrigin"
+        },
+        "payload": {
+          "$ref": "#/$defs/TranscriptFinal",
+          "description": "For a human revision, backend/model fields retain the original ASR\nprovenance; `origin` identifies who produced this revision's text."
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "payload",
+        "origin",
+        "created_seq"
+      ],
+      "type": "object"
+    },
+    "TranscriptRevision": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "operator_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "segment_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "segment_id",
+        "expected_revision",
+        "text",
+        "reason",
+        "operator_id"
+      ],
+      "type": "object"
+    },
+    "TranscriptRevisionEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "message_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TranscriptRevision"
+        },
+        "producer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "room_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "type": {
+          "const": "transcript.revised",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_id",
+        "type",
+        "event_id",
+        "room_id",
+        "session_id",
+        "producer",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "TranscriptSeal": {
+      "additionalProperties": false,
+      "properties": {
+        "capture_manifest_sha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "capture_manifest_sha256"
+      ],
+      "type": "object"
+    },
+    "TranscriptSealEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "message_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TranscriptSeal"
+        },
+        "producer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "room_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "type": {
+          "const": "session.transcript_sealed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_id",
+        "type",
+        "event_id",
+        "room_id",
+        "session_id",
+        "producer",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "TranscriptStatus": {
+      "enum": [
+        "success",
+        "empty",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "TranslationFailed": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "code": {
+          "type": "string"
+        },
+        "direction_epoch": {
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "translation_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "translation_id",
+        "revision",
+        "attempt",
+        "direction_epoch",
+        "code",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "TranslationFailedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "message_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TranslationFailed"
+        },
+        "producer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "room_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "type": {
+          "const": "translation.failed",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_id",
+        "type",
+        "event_id",
+        "room_id",
+        "session_id",
+        "producer",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "TranslationFinal": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "backend": {
+          "type": "string"
+        },
+        "direction_epoch": {
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "elapsed_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model_manifest_id": {
+          "type": "string"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "status": {
+          "$ref": "#/$defs/TranslationStatus"
+        },
+        "text": {
+          "type": "string"
+        },
+        "translation_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "translation_id",
+        "revision",
+        "attempt",
+        "direction_epoch",
+        "text",
+        "status",
+        "backend",
+        "model_manifest_id",
+        "elapsed_ms"
+      ],
+      "type": "object"
+    },
+    "TranslationFinalEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "message_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TranslationFinal"
+        },
+        "producer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "room_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "type": {
+          "const": "translation.final",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_id",
+        "type",
+        "event_id",
+        "room_id",
+        "session_id",
+        "producer",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "TranslationPage": {
+      "properties": {
+        "cursor": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/TranslationRecord"
+          },
+          "type": "array"
+        },
+        "next_after": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TranslationPageKey"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "cursor",
+        "items"
+      ],
+      "type": "object"
+    },
+    "TranslationPageKey": {
+      "properties": {
+        "created_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "translation_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "created_seq",
+        "translation_id"
+      ],
+      "type": "object"
+    },
+    "TranslationRecord": {
+      "properties": {
+        "created_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "request": {
+          "$ref": "#/$defs/TranslationRequested"
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TranslationFinal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_seq": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "session_id",
+        "request",
+        "state",
+        "created_seq",
+        "updated_seq"
+      ],
+      "type": "object"
+    },
+    "TranslationRequested": {
+      "additionalProperties": false,
+      "properties": {
+        "attempt": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "backend": {
+          "type": "string"
+        },
+        "direction_epoch": {
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "input_text": {
+          "type": "string"
+        },
+        "model_manifest_id": {
+          "type": "string"
+        },
+        "normalization_version": {
+          "type": "string"
+        },
+        "revision": {
+          "$ref": "#/$defs/Revision"
+        },
+        "source_spans": {
+          "items": {
+            "$ref": "#/$defs/SourceSpan"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "target_language": {
+          "type": "string"
+        },
+        "translation_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "translation_id",
+        "revision",
+        "attempt",
+        "target_language",
+        "direction_epoch",
+        "source_spans",
+        "input_text",
+        "normalization_version",
+        "backend",
+        "model_manifest_id"
+      ],
+      "type": "object"
+    },
+    "TranslationRequestedEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "message_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "payload": {
+          "$ref": "#/$defs/TranslationRequested"
+        },
+        "producer": {
+          "$ref": "#/$defs/Producer"
+        },
+        "room_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "schema_version": {
+          "const": 1,
+          "type": "integer"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        },
+        "type": {
+          "const": "translation.requested",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "message_id",
+        "type",
+        "event_id",
+        "room_id",
+        "session_id",
+        "producer",
+        "payload"
+      ],
+      "type": "object"
+    },
+    "TranslationStatus": {
+      "enum": [
+        "final",
+        "passthrough"
+      ],
+      "type": "string"
+    },
+    "TranslationWork": {
+      "properties": {
+        "configured_source_language": {
+          "type": "string"
+        },
+        "detected_language": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "direction_epoch": {
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "source_span": {
+          "$ref": "#/$defs/SourceSpan"
+        },
+        "target_language": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_span",
+        "configured_source_language",
+        "target_language",
+        "direction_epoch"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "urn:ai-vision-forum:contracts:1",
+  "$ref": "#/$defs/ForumEvent",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema_version": 1
+}

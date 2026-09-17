@@ -1,17 +1,51 @@
-//! Synchronous single-connection writer, ready to be owned by a future actor.
-//! No Tauri, MLX, audio capture, network access, or background threads.
+//! Versioned SQLite store and bounded single-writer actor for local meetings.
+//! No Tauri, MLX, audio device, or network access; CoreHandle owns its writer thread.
 
 use forum_contracts::*;
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{path::Path, time::Duration};
+use std::{
+    fs::{File, OpenOptions, TryLockError},
+    path::{Path, PathBuf},
+    time::Duration,
+};
 use thiserror::Error;
+mod actor;
+mod direction;
+use direction::*;
+mod reliable;
+mod translation;
+pub use actor::*;
+pub use reliable::*;
+pub use translation::*;
 
-pub const DATABASE_VERSION: u32 = 1;
+pub const DATABASE_VERSION: u32 = 4;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error("database is already owned by another core process")]
+    AlreadyOwned,
+    #[error("core request queue is full")]
+    QueueFull,
+    #[error("core actor has stopped")]
+    ActorClosed,
+    #[error("core actor request panicked")]
+    ActorPanicked,
+    #[error("core acknowledgement deadline elapsed; commit outcome is unknown; replay the identical message")]
+    AckUnknown,
+    #[error("session state does not permit this operation")]
+    InvalidState,
+    #[error("translation result belongs to an outdated revision, attempt, or direction")]
+    LateResult,
+    #[error("requested source range is already owned or is not pending")]
+    CoverageConflict,
+    #[error("capture/producer seal does not reconcile with durable data")]
+    SealMismatch,
+    #[error("snapshot cursor is invalid or no longer available")]
+    InvalidCursor,
     #[error(transparent)]
     Validation(#[from] ValidationError),
     #[error(transparent)]
@@ -36,14 +70,14 @@ pub enum StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Receipt {
     pub message_id: Uuid,
     pub store_seq: u64,
     pub duplicate: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RevisionOrigin {
     Asr,
@@ -54,7 +88,7 @@ pub enum RevisionOrigin {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TranscriptRecord {
     pub session_id: Uuid,
     /// For a human revision, backend/model fields retain the original ASR
@@ -64,7 +98,7 @@ pub struct TranscriptRecord {
     pub created_seq: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IncompleteSegment {
     pub segment_id: Uuid,
     pub track_id: Uuid,
@@ -75,7 +109,7 @@ pub struct IncompleteSegment {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SessionSnapshot {
     pub session: SessionSpec,
     pub cursor: u64,
@@ -83,7 +117,7 @@ pub struct SessionSnapshot {
     pub incomplete: Vec<IncompleteSegment>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CoverageIntent {
     pub segment_id: Uuid,
     pub segment_revision: Revision,
@@ -94,7 +128,7 @@ pub struct CoverageIntent {
     pub state: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OutboxMessage {
     pub store_seq: u64,
     pub message_id: Uuid,
@@ -106,18 +140,68 @@ pub struct OutboxMessage {
 
 pub struct Store {
     connection: Connection,
+    // Sidecar lock is shared by canonical path aliases; hard links are rejected.
+    _ownership: Option<File>,
+    pub migration_backup: Option<PathBuf>,
 }
 
 impl Store {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        Self::from_connection(Connection::open(path)?)
+        let path = path.as_ref();
+        // A separate lock inode is essential: macOS SQLite locking conflicts
+        // with flock on the database file itself. Resolve symlink aliases and
+        // reject hard links, which otherwise could name different sidecars.
+        drop(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(path)?,
+        );
+        let path = path.canonicalize()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            if path.metadata()?.nlink() != 1 {
+                return Err(ValidationError::Invalid("database_hard_link").into());
+            }
+        }
+        let lock_path = path.with_file_name(format!(
+            "{}.core-owner",
+            path.file_name()
+                .ok_or(ValidationError::Invalid("database_path"))?
+                .to_string_lossy()
+        ));
+        if std::fs::symlink_metadata(&lock_path).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(ValidationError::Invalid("ownership_symlink").into());
+        }
+        let ownership = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(lock_path)?;
+        match ownership.try_lock() {
+            Ok(()) => (),
+            Err(TryLockError::WouldBlock) => return Err(StoreError::AlreadyOwned),
+            Err(TryLockError::Error(error)) => return Err(error.into()),
+        }
+        let mut store =
+            Self::from_connection(Connection::open(&path)?, Some(&path), Some(ownership))?;
+        store.recover_interrupted_sessions()?;
+        Ok(store)
     }
 
     pub fn in_memory() -> Result<Self> {
-        Self::from_connection(Connection::open_in_memory()?)
+        Self::from_connection(Connection::open_in_memory()?, None, None)
     }
 
-    fn from_connection(mut connection: Connection) -> Result<Self> {
+    fn from_connection(
+        mut connection: Connection,
+        path: Option<&Path>,
+        ownership: Option<File>,
+    ) -> Result<Self> {
         let version: u32 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if version > DATABASE_VERSION {
             return Err(StoreError::UnsupportedDatabase(version));
@@ -126,12 +210,41 @@ impl Store {
         connection.pragma_update(None, "foreign_keys", true)?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "FULL")?;
+        let mut migration_backup = None;
+        if version > 0 && version < DATABASE_VERSION {
+            if let Some(path) = path {
+                let backup =
+                    path.with_extension(format!("backup-v{version}-{}.sqlite", Uuid::new_v4()));
+                connection.execute("VACUUM INTO ?1", [backup.to_string_lossy().as_ref()])?;
+                File::open(&backup)?.sync_all()?;
+                migration_backup = Some(backup);
+            }
+        }
         if version == 0 {
             let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             tx.execute_batch(include_str!("../migrations/001_initial.sql"))?;
             tx.commit()?;
         }
-        Ok(Self { connection })
+        if version < 2 {
+            let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(include_str!("../migrations/002_reliable.sql"))?;
+            tx.commit()?;
+        }
+        if version < 3 {
+            let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(include_str!("../migrations/003_recovery_history.sql"))?;
+            tx.commit()?;
+        }
+        if version < 4 {
+            let tx = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            tx.execute_batch(include_str!("../migrations/004_direction_boundaries.sql"))?;
+            tx.commit()?;
+        }
+        Ok(Self {
+            connection,
+            _ownership: ownership,
+            migration_backup,
+        })
     }
 
     /// Idempotent catalog setup, before capture begins. Future lifecycle
@@ -226,6 +339,7 @@ impl Store {
         if receipt.duplicate {
             return Ok(receipt);
         }
+        require_capture_state(&tx, event.session_id)?;
         let p = &event.payload;
         let track: Option<(String, u32)> = tx
             .query_row(
@@ -259,8 +373,12 @@ impl Store {
                 p.track_id.to_string()
             ],
         )?;
-        tx.execute("INSERT INTO capture_segments(segment_id,audio_json,recording_ref,created_seq) VALUES(?1,?2,?3,?4)",
-            params![p.segment_id.to_string(), serde_json::to_string(&p.audio)?, p.recording_ref, receipt.store_seq])?;
+        let (epoch, configured, targets) =
+            capture_direction_at(&tx, event.session_id, p.track_id, &p.audio)?;
+        tx.execute("INSERT INTO capture_segments(segment_id,audio_json,recording_ref,created_seq,direction_epoch,configured_source_language,targets_json) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+            params![p.segment_id.to_string(), serde_json::to_string(&p.audio)?, p.recording_ref, receipt.store_seq,epoch,configured,targets])?;
+        refresh_integrity(&tx, event.session_id)?;
+        save_history(&tx, event.session_id, receipt.store_seq)?;
         append_outbox(&tx, event, &receipt, &body)?;
         tx.commit()?;
         Ok(receipt)
@@ -278,10 +396,34 @@ impl Store {
         }
         let p = &event.payload;
         let (track_id, audio, current) = capture_context(&tx, event.session_id, p.segment_id)?;
+        validate_final_direction(&tx, event.session_id, p)?;
         if track_id != p.track_id || audio != p.audio {
             return Err(StoreError::ScopeMismatch);
         }
-        if current.is_some() || p.revision != Revision::FIRST {
+        if let Some(current_revision) = current {
+            let previous = load_revision(
+                &tx,
+                event.session_id,
+                p.segment_id,
+                current_revision.try_into()?,
+            )?;
+            if previous.payload.status != TranscriptStatus::Failed
+                || previous.origin != RevisionOrigin::Asr
+                || previous.payload.revision.next()? != p.revision
+            {
+                return Err(StoreError::RevisionConflict {
+                    expected: current_revision.saturating_add(1),
+                    actual: current,
+                });
+            }
+            invalidate_source_translations(
+                &tx,
+                event.session_id,
+                p.segment_id,
+                previous.payload.revision,
+                receipt.store_seq,
+            )?;
+        } else if p.revision != Revision::FIRST {
             return Err(StoreError::RevisionConflict {
                 expected: 1,
                 actual: current,
@@ -299,6 +441,8 @@ impl Store {
             params![receipt.store_seq, p.segment_id.to_string()],
         )?;
         insert_coverage(&tx, &record)?;
+        refresh_integrity(&tx, event.session_id)?;
+        save_history(&tx, event.session_id, receipt.store_seq)?;
         append_outbox(&tx, event, &receipt, &body)?;
         tx.commit()?;
         Ok(receipt)
@@ -336,7 +480,16 @@ impl Store {
         insert_revision(&tx, &record)?;
         tx.execute("UPDATE translation_coverage SET state='stale' WHERE segment_id=?1 AND segment_revision=?2",
             params![p.segment_id.to_string(), p.expected_revision.get()])?;
+        invalidate_source_translations(
+            &tx,
+            event.session_id,
+            p.segment_id,
+            p.expected_revision,
+            receipt.store_seq,
+        )?;
         insert_coverage(&tx, &record)?;
+        refresh_integrity(&tx, event.session_id)?;
+        save_history(&tx, event.session_id, receipt.store_seq)?;
         append_outbox(&tx, event, &receipt, &body)?;
         tx.commit()?;
         Ok(receipt)
@@ -564,6 +717,21 @@ fn register_event<T: Serialize>(
             body,
         ));
     }
+    let foreign: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM ingested_events WHERE producer_run_id=?1 AND session_id!=?2)",
+        params![
+            event.producer.run_id.to_string(),
+            event.session_id.to_string()
+        ],
+        |r| r.get(0),
+    )?;
+    if foreign {
+        return Err(StoreError::ScopeMismatch);
+    }
+    let sealed:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM producer_seals WHERE producer_run_id=?1) OR EXISTS(SELECT 1 FROM producer_reconciliations WHERE producer_run_id=?1)",[event.producer.run_id.to_string()],|r|r.get(0))?;
+    if sealed {
+        return Err(StoreError::LateResult);
+    }
     tx.execute("INSERT INTO ingested_events(message_id,event_id,session_id,producer_run_id,producer_seq,event_type,body_sha256,body_json)
         VALUES(?1,?2,?3,?4,?5,?6,?7,?8)", params![event.message_id.to_string(), event.event_id.to_string(), event.session_id.to_string(),
             event.producer.run_id.to_string(), event.producer.seq, event.event_type.as_str(), hash, body])?;
@@ -646,9 +814,18 @@ fn insert_revision(tx: &Transaction<'_>, record: &TranscriptRecord) -> Result<()
 fn insert_coverage(tx: &Transaction<'_>, record: &TranscriptRecord) -> Result<()> {
     let p = &record.payload;
     if p.status == TranscriptStatus::Success {
-        for target in &p.target_languages {
+        let (epoch, targets_json): (u64, Option<String>) = tx.query_row(
+            "SELECT direction_epoch,targets_json FROM capture_segments WHERE segment_id=?1",
+            [p.segment_id.to_string()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let targets: Vec<String> = targets_json
+            .map(|body| serde_json::from_str(&body))
+            .transpose()?
+            .unwrap_or_else(|| p.target_languages.clone());
+        for target in &targets {
             tx.execute("INSERT INTO translation_coverage(segment_id,segment_revision,target_language,direction_epoch,start_utf8,end_utf8,state)
-                VALUES(?1,?2,?3,?4,0,?5,'pending')", params![p.segment_id.to_string(), p.revision.get(), target, p.direction_epoch, p.text.len()])?;
+                VALUES(?1,?2,?3,?4,0,?5,'pending')", params![p.segment_id.to_string(), p.revision.get(), target, epoch, p.text.len()])?;
         }
     }
     Ok(())

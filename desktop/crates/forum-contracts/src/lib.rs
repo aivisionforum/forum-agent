@@ -1,7 +1,10 @@
 //! The implemented F02 subset of the Forum v1 ingestion contract.
 //! Unknown fields and unknown event types are rejected rather than silently lost.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+mod reliable;
+pub use reliable::*;
 use std::collections::HashSet;
 use thiserror::Error;
 pub use uuid::Uuid;
@@ -39,14 +42,14 @@ pub fn non_blank(value: &str, field: &'static str) -> Result<()> {
 }
 
 fn sqlite_integer(value: u64, field: &'static str) -> Result<()> {
-    if value > i64::MAX as u64 {
+    if value > 9_007_199_254_740_991 {
         Err(ValidationError::Invalid(field))
     } else {
         Ok(())
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(try_from = "u32", into = "u32")]
 pub struct Revision(u32);
 
@@ -80,7 +83,7 @@ impl From<Revision> for u32 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SessionSpec {
     pub session_id: Uuid,
@@ -100,7 +103,7 @@ impl SessionSpec {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TrackKind {
     Mic,
@@ -109,7 +112,7 @@ pub enum TrackKind {
     Replay,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TrackSpec {
     pub track_id: Uuid,
@@ -129,7 +132,7 @@ impl TrackSpec {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AudioRange {
     pub start_sample: u64,
@@ -159,7 +162,7 @@ impl AudioRange {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Producer {
     pub name: String,
@@ -167,8 +170,28 @@ pub struct Producer {
     pub seq: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum EventType {
+    #[serde(rename = "session.changed")]
+    SessionChanged,
+    #[serde(rename = "audio.gap")]
+    AudioGap,
+    #[serde(rename = "session.capture_stopped")]
+    CaptureStopped,
+    #[serde(rename = "session.producer_sealed")]
+    ProducerSealed,
+    #[serde(rename = "session.producer_reconciled")]
+    ProducerReconciled,
+    #[serde(rename = "session.transcript_sealed")]
+    TranscriptSealed,
+    #[serde(rename = "translation.requested")]
+    TranslationRequested,
+    #[serde(rename = "translation.final")]
+    TranslationFinal,
+    #[serde(rename = "translation.failed")]
+    TranslationFailed,
+    #[serde(rename = "translation.direction_changed")]
+    DirectionChanged,
     #[serde(rename = "audio.segment_closed")]
     AudioSegmentClosed,
     #[serde(rename = "transcript.final")]
@@ -180,6 +203,16 @@ pub enum EventType {
 impl EventType {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::SessionChanged => "session.changed",
+            Self::AudioGap => "audio.gap",
+            Self::CaptureStopped => "session.capture_stopped",
+            Self::ProducerSealed => "session.producer_sealed",
+            Self::ProducerReconciled => "session.producer_reconciled",
+            Self::TranscriptSealed => "session.transcript_sealed",
+            Self::TranslationRequested => "translation.requested",
+            Self::TranslationFinal => "translation.final",
+            Self::TranslationFailed => "translation.failed",
+            Self::DirectionChanged => "translation.direction_changed",
             Self::AudioSegmentClosed => "audio.segment_closed",
             Self::TranscriptFinal => "transcript.final",
             Self::TranscriptRevised => "transcript.revised",
@@ -187,7 +220,7 @@ impl EventType {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Event<T> {
     pub schema_version: u32,
@@ -219,11 +252,14 @@ impl<T> Event<T> {
             non_nil(id, name)?;
         }
         non_blank(&self.producer.name, "producer.name")?;
+        if self.producer.seq == 0 {
+            return Err(ValidationError::Invalid("producer.seq"));
+        }
         sqlite_integer(self.producer.seq, "producer.seq")
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureSegmentClosed {
     pub track_id: Uuid,
@@ -245,7 +281,7 @@ impl CaptureSegmentClosed {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TranscriptStatus {
     Success,
@@ -253,7 +289,7 @@ pub enum TranscriptStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TranscriptFinal {
     pub track_id: Uuid,
@@ -313,7 +349,7 @@ impl TranscriptFinal {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TranscriptRevision {
     pub segment_id: Uuid,
@@ -334,7 +370,7 @@ impl TranscriptRevision {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SourceSpan {
     pub segment_id: Uuid,
@@ -347,7 +383,7 @@ pub struct SourceSpan {
 impl SourceSpan {
     pub fn validate_against<'a>(&self, text: &'a str) -> Result<&'a str> {
         non_nil(self.segment_id, "segment_id")?;
-        if self.end_utf8 <= self.start_utf8 || self.quote.trim().is_empty() {
+        if self.end_utf8 <= self.start_utf8 || self.quote.is_empty() {
             return Err(ValidationError::InvalidSpan);
         }
         match text.get(self.start_utf8..self.end_utf8) {
