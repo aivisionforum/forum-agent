@@ -108,6 +108,9 @@ pub trait DoraBridge: Send + Sync {
     /// Connect to the dora dataflow as a dynamic node
     fn connect(&mut self) -> BridgeResult<()>;
 
+    /// Signal every worker before waiting on any of them. Must not block.
+    fn request_disconnect(&mut self) {}
+
     /// Disconnect from dora
     fn disconnect(&mut self) -> BridgeResult<()>;
 

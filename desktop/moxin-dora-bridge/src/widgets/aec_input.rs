@@ -702,21 +702,23 @@ impl AecInputBridge {
 
         // Initialize dora node
         eprintln!("[AecInput] Initializing dora node for {}", node_id);
-        let (mut node, mut events) =
-            match DoraNode::init_from_node_id(NodeId::from(node_id.clone())) {
-                Ok(n) => {
-                    eprintln!("[AecInput] Dora node init SUCCESS for {}", node_id);
-                    n
+        let (mut node, mut events) = match crate::dynamic_node_endpoint::init_from_shared(
+            shared_state.as_deref(),
+            NodeId::from(node_id.clone()),
+        ) {
+            Ok(n) => {
+                eprintln!("[AecInput] Dora node init SUCCESS for {}", node_id);
+                n
+            }
+            Err(e) => {
+                eprintln!("[AecInput] FAILED to init dora node {}: {}", node_id, e);
+                *state.write() = BridgeState::Error;
+                if let Some(ref ss) = shared_state {
+                    ss.set_error(Some(format!("Dora init failed: {}", e)));
                 }
-                Err(e) => {
-                    eprintln!("[AecInput] FAILED to init dora node {}: {}", node_id, e);
-                    *state.write() = BridgeState::Error;
-                    if let Some(ref ss) = shared_state {
-                        ss.set_error(Some(format!("Dora init failed: {}", e)));
-                    }
-                    return;
-                }
-            };
+                return;
+            }
+        };
 
         *state.write() = BridgeState::Connected;
         eprintln!("[AecInput] Bridge state set to CONNECTED for {}", node_id);
@@ -1752,18 +1754,7 @@ impl DoraBridge for AecInputBridge {
             return Err(BridgeError::AlreadyConnected);
         }
 
-        // If there's an existing worker thread, wait for it to finish
-        // This prevents duplicate dora node connections
-        if let Some(handle) = self.worker_handle.take() {
-            eprintln!("[AecInput] Waiting for previous worker thread to finish...");
-            if let Some(stop_tx) = self.stop_sender.take() {
-                let _ = stop_tx.send(());
-            }
-            let _ = handle.join();
-            eprintln!("[AecInput] Previous worker thread finished");
-            // Give dora a moment to clean up the old connection
-            std::thread::sleep(Duration::from_millis(500));
-        }
+        self.disconnect()?;
 
         *self.state.write() = BridgeState::Connecting;
 
@@ -1831,15 +1822,19 @@ impl DoraBridge for AecInputBridge {
         ))
     }
 
+    fn request_disconnect(&mut self) {
+        if let Some(stop_tx) = &self.stop_sender {
+            let _ = stop_tx.try_send(());
+        }
+    }
+
     fn disconnect(&mut self) -> BridgeResult<()> {
-        if let Some(stop_tx) = self.stop_sender.take() {
-            let _ = stop_tx.send(());
-        }
-
-        if let Some(handle) = self.worker_handle.take() {
-            let _ = handle.join();
-        }
-
+        self.request_disconnect();
+        crate::owned_process::join_worker(
+            &mut self.worker_handle,
+            std::time::Duration::from_secs(2),
+        )?;
+        self.stop_sender = None;
         *self.state.write() = BridgeState::Disconnected;
         Ok(())
     }

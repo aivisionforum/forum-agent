@@ -441,8 +441,9 @@ impl AppState {
     }
 
     fn poll_runtime_events(&self) -> RuntimeState {
-        let events = self.runtime.poll_events();
+        // Serialize draining and applying events across IPC and the event bridge.
         let mut state = self.runtime_state.lock();
+        let events = self.runtime.poll_events();
         for event in events {
             match event {
                 RuntimeEvent::Started(id) => {
@@ -467,6 +468,13 @@ impl AppState {
                     shared
                         .translation_lang_pair
                         .set((requested.source_language, requested.target_language));
+                }
+                RuntimeEvent::ShutdownFailed(message) => {
+                    self.apple_speech.stop();
+                    // Keep Stop available and prevent replacing a still-owned session.
+                    state.running = true;
+                    state.status = "error".into();
+                    state.message = message;
                 }
                 RuntimeEvent::Error(message) => {
                     self.apple_speech.stop();
@@ -1008,25 +1016,18 @@ fn start_translation(
     } else {
         state.wake_lock.stop();
     }
-    if let Err(error) = state.runtime.start(dataflow, model_env) {
-        state.wake_lock.stop();
-        return Err(error);
-    }
     if let Err(error) = state.usage.start() {
-        let _ = state.runtime.stop();
         state.wake_lock.stop();
         return Err(error);
     }
     if let Err(error) = apply_overlay_window(&app, &settings) {
         let _ = state.usage.stop();
-        let _ = state.runtime.stop();
         state.wake_lock.stop();
         return Err(error);
     }
     if let Some(window) = app.get_webview_window("overlay") {
         if let Err(error) = window.show() {
             let _ = state.usage.stop();
-            let _ = state.runtime.stop();
             state.wake_lock.stop();
             return Err(error.to_string());
         }
@@ -1037,7 +1038,15 @@ fn start_translation(
         status: "warming".into(),
         message: "Starting local translation…".into(),
     };
-    *state.runtime_state.lock() = next.clone();
+    // The event consumer takes the same lock. Publish the transition and submit
+    // atomically so a fast Started/Error cannot be overwritten by late warming.
+    let mut current = state.runtime_state.lock();
+    if let Err(error) = state.runtime.start(dataflow, model_env) {
+        state.wake_lock.stop();
+        let _ = state.usage.stop();
+        return Err(error);
+    }
+    *current = next.clone();
     Ok(next)
 }
 
@@ -1046,32 +1055,21 @@ fn stop_translation(state: State<'_, AppState>) -> Result<RuntimeState, String> 
     state.apple_speech.stop();
     state.wake_lock.stop();
     *state.spoken_completed_count.lock() = 0;
-    state.save_transcript_if_needed()?;
-    state.runtime.stop()?;
-    state.usage.stop()?;
-    let shared = state.runtime.shared_state();
-    shared.translation.set(None);
-    shared.translation_stream.set(None);
-    shared.translation_window_visible.set(true);
-    shared.translation_overlay_active.set(false);
-    shared.translation_overlay_status.set("idle".into());
-    let requested_direction = shared.translation_direction_request.read();
-    shared
-        .translation_direction_active
-        .set(requested_direction.clone());
-    shared.translation_lang_pair.set((
-        requested_direction.source_language,
-        requested_direction.target_language,
-    ));
+    // Submit while holding the event consumer's state lock. Slow transcript I/O
+    // happens afterwards and must never overwrite a completed shutdown receipt.
+    {
+        let mut current = state.runtime_state.lock();
+        state.runtime.stop()?;
+        *current = RuntimeState {
+            running: true,
+            status: "stopping".into(),
+            message: "Stopping translation; waiting for resource cleanup".into(),
+        };
+    }
     *state.subtitle_preview_visible.lock() = false;
-
-    let next = RuntimeState {
-        running: false,
-        status: "idle".into(),
-        message: "Translation stopped".into(),
-    };
-    *state.runtime_state.lock() = next.clone();
-    Ok(next)
+    // A transcript write error must not prevent the Stop command reaching capture.
+    state.save_transcript_if_needed()?;
+    Ok(state.runtime_state.lock().clone())
 }
 
 #[tauri::command]

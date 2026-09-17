@@ -10,7 +10,7 @@ use crate::shared_state::{SharedDoraState, TranslationDirection};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use dora_node_api::{
     dora_core::config::{DataId, NodeId},
-    DoraNode, Event, Parameter,
+    Event, Parameter,
 };
 use parking_lot::RwLock;
 use std::collections::{HashMap, HashSet};
@@ -315,15 +315,17 @@ impl TranslationListenerBridge {
     ) {
         info!("[TranslationListener] Worker started for node: {}", node_id);
 
-        let (mut _node, mut events) =
-            match DoraNode::init_from_node_id(NodeId::from(node_id.clone())) {
-                Ok(n) => n,
-                Err(e) => {
-                    error!("[TranslationListener] Failed to init dora node: {}", e);
-                    *state.write() = BridgeState::Error;
-                    return;
-                }
-            };
+        let (mut _node, mut events) = match crate::dynamic_node_endpoint::init_from_shared(
+            shared_state.as_deref(),
+            NodeId::from(node_id.clone()),
+        ) {
+            Ok(n) => n,
+            Err(e) => {
+                error!("[TranslationListener] Failed to init dora node: {}", e);
+                *state.write() = BridgeState::Error;
+                return;
+            }
+        };
 
         info!("[TranslationListener] Connected to dora as: {}", node_id);
         *state.write() = BridgeState::Connected;
@@ -604,6 +606,8 @@ impl DoraBridge for TranslationListenerBridge {
             return Ok(());
         }
 
+        self.disconnect()?;
+
         *self.state.write() = BridgeState::Connecting;
 
         let (stop_tx, stop_rx) = bounded(1);
@@ -662,15 +666,19 @@ impl DoraBridge for TranslationListenerBridge {
         )))
     }
 
+    fn request_disconnect(&mut self) {
+        if let Some(stop_tx) = &self.stop_sender {
+            let _ = stop_tx.try_send(());
+        }
+    }
+
     fn disconnect(&mut self) -> BridgeResult<()> {
-        if let Some(stop_tx) = self.stop_sender.take() {
-            let _ = stop_tx.send(());
-        }
-
-        if let Some(handle) = self.worker_handle.take() {
-            handle.join().map_err(|_| BridgeError::ThreadJoinFailed)?;
-        }
-
+        self.request_disconnect();
+        crate::owned_process::join_worker(
+            &mut self.worker_handle,
+            std::time::Duration::from_secs(2),
+        )?;
+        self.stop_sender = None;
         *self.state.write() = BridgeState::Disconnected;
         Ok(())
     }

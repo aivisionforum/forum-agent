@@ -19,6 +19,7 @@ def main():
     parser.add_argument("--dora", type=Path, required=True)
     parser.add_argument("--node", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--shutdown-policy", choices=("strict-cli-ack", "owned-runtime-fallback"), default="strict-cli-ack", help="Select the acceptance criterion explicitly; fallback never reports a CLI acknowledgement")
     args = parser.parse_args()
     for executable in (args.dora, args.node):
         if not executable.is_absolute() or not executable.is_file():
@@ -26,7 +27,7 @@ def main():
     run_dir = args.output.resolve() / str(uuid.uuid4())
     run_dir.mkdir(parents=True)
     children, handles, reservations, instances = [], [], [], []
-    report = {"scope": "two private timer-only Dora instances; no production controller, models or audio", "run_dir": str(run_dir), "passed": False}
+    report = {"scope": "two private timer-only Dora instances; no production controller, models or audio", "run_dir": str(run_dir), "shutdown_policy": args.shutdown_policy, "passed": False}
 
     def launch(name, command, cwd, env, stdin=None):
         stdout = (cwd / f"{name}.stdout.log").open("w")
@@ -79,6 +80,8 @@ def main():
         if instance.get("flow") and not instance.get("stop_attempted"):
             instance["stop_attempted"] = True
             command = [str(args.dora), "stop", instance["flow"], "--grace-duration", "2s", "--coordinator-addr", "127.0.0.1", "--coordinator-port", str(instance["control_port"])]
+            started_at_unix_ms = time.time_ns() // 1_000_000
+            started = time.monotonic()
             try:
                 result = subprocess.run(command, cwd=instance["work"], env=instance["env"], capture_output=True, text=True, timeout=3)
                 instance["stop_acknowledged"] = result.returncode == 0
@@ -88,8 +91,62 @@ def main():
                 # Keep testing delivery/isolation, but never report an acknowledged stop.
                 instance["stop_acknowledged"] = False
                 evidence = {"command": command, "timeout_seconds": 3, "stdout": str(error.stdout), "stderr": str(error.stderr)}
+            evidence["started_at_unix_ms"] = started_at_unix_ms
+            evidence["elapsed_ms"] = (time.monotonic() - started) * 1000
+            instance["stop_cli_evidence"] = evidence
             with (instance["work"] / "cli.log").open("a") as log:
                 log.write(json.dumps(evidence) + "\n")
+
+    def reap_owned(child):
+        """Signal only a Popen child that this invocation created and still holds."""
+        action = "already_exited"
+        if child.poll() is None:
+            action = "terminate"
+            child.terminate()
+            try:
+                child.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                action = "kill_after_terminate_timeout"
+                child.kill()
+                child.wait(timeout=3)
+        return {"pid": child.pid, "returncode": child.returncode, "action": action}
+
+    def verify_node_shutdown(instance):
+        instance["node"].wait(timeout=6)
+        events = {row["event"] for row in rows(instance)}
+        required = {"stop", "event_stream_drop_completed", "node_drop_completed"}
+        if instance["node"].returncode != 0 or not required.issubset(events):
+            raise RuntimeError(f"{instance['label']} did not complete the official Drop protocol and exit cleanly")
+        instance["node_stopped_cleanly"] = True
+        instance["node_drop_protocol_completed"] = True
+        drop_row = next(row for row in rows(instance) if row["event"] == "node_drop_completed")
+        instance["node_drop_after_stop_request_ms"] = drop_row["observed_at_unix_ms"] - instance["stop_cli_evidence"]["started_at_unix_ms"]
+
+    def contain_runtime(instance):
+        """No daemon-wide destroy or process scan: reap exact private children, then verify."""
+        started = time.monotonic()
+        owned_endpoints = set(instance["socket_evidence"]["daemon_listeners"])
+        owned_endpoints.update(endpoints(instance["coordinator"]))
+        evidence = [reap_owned(instance[role]) for role in ("daemon", "coordinator")]
+        for endpoint in owned_endpoints:
+            host, port = endpoint.rsplit(":", 1)
+            with socket.socket() as check:
+                check.settimeout(0.2)
+                if check.connect_ex((host, int(port))) == 0:
+                    raise RuntimeError(f"previous private endpoint is still accepting connections: {endpoint}")
+        for role in ("node", "daemon", "coordinator"):
+            child = instance[role]
+            if child.poll() is None:
+                raise RuntimeError(f"owned {role} has not exited")
+            try:
+                os.kill(child.pid, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                raise RuntimeError(f"PID {child.pid} still exists or was reused; containment is unverified")
+        instance["contained"] = True
+        instance["shutdown_outcome"] = "StoppedGracefully" if instance.get("stop_acknowledged") else "StoppedByOwnedRuntimeFallback"
+        instance["containment_evidence"] = {"services": evidence, "closed_endpoints": sorted(owned_endpoints), "duration_ms": (time.monotonic() - started) * 1000}
 
     def interrupted(signum, _frame):
         raise KeyboardInterrupt(f"signal {signum}")
@@ -118,7 +175,7 @@ def main():
             env = os.environ.copy()
             for key in ("DORA_NODE_CONFIG", "DORA_TEST_WITH_INPUTS", "DORA_TEST_WRITE_OUTPUTS_TO", "ZENOH_CONFIG_OVERRIDE"):
                 env.pop(key, None)
-            env.update({"ZENOH_CONFIG": str(zenoh), "RUST_LOG": "info", "NO_COLOR": "1"})
+            env.update({"ZENOH_CONFIG": str(zenoh), "RUST_LOG": "info,dora_daemon=trace,dora_coordinator=debug", "NO_COLOR": "1"})
             instance = {"label": label, "work": work, "env": env, "control_port": control_port, "daemon_port": daemon_port}
             instances.append(instance)
             ports[0][1].close()
@@ -154,10 +211,8 @@ def main():
         if a["flow"] == b["flow"]:
             raise RuntimeError("private dataflow UUIDs unexpectedly match")
         stop(a)
-        a["node"].wait(timeout=6)
-        if a["node"].returncode != 0 or not any(row["event"] == "stop" for row in rows(a)):
-            raise RuntimeError("A did not receive Stop and exit cleanly")
-        a["node_stopped_cleanly"] = True
+        verify_node_shutdown(a)
+        contain_runtime(a)
         before = len([row for row in rows(b) if row["event"] == "tick"])
         await_condition(lambda: len([row for row in rows(b) if row["event"] == "tick"]) >= before + 5, seconds=4)
         listed_b = cli(b, "list", "--format", "json")
@@ -166,14 +221,14 @@ def main():
             raise RuntimeError("B was affected by stopping A")
         report["b_ticks_after_a_stopped"] = len([row for row in rows(b) if row["event"] == "tick"]) - before
         stop(b)
-        b["node"].wait(timeout=6)
-        if b["node"].returncode != 0 or not any(row["event"] == "stop" for row in rows(b)):
-            raise RuntimeError("B did not stop cleanly")
-        b["node_stopped_cleanly"] = True
+        verify_node_shutdown(b)
+        contain_runtime(b)
         report["isolation_behaviors_passed"] = True
-        report["passed"] = all(item.get("stop_acknowledged") for item in instances)
-        if not report["passed"]:
-            report["unresolved"] = "Stop reached both nodes and they exited, but Dora CLI did not confirm flow completion within 3 seconds. Full lifecycle acceptance remains unpassed."
+        report["cli_acknowledgement_passed"] = all(item.get("stop_acknowledged") for item in instances)
+        report["containment_passed"] = all(item.get("contained") for item in instances)
+        report["passed"] = report["containment_passed"] and (report["cli_acknowledgement_passed"] or args.shutdown_policy == "owned-runtime-fallback")
+        if not report["cli_acknowledgement_passed"]:
+            report["unresolved"] = "Dora 0.4.1 pure-dynamic flows do not produce the spawned-process completion event needed for CLI stop acknowledgement. Acknowledgement remains false; only exact owned children and their listener endpoints were contained."
     except BaseException as error:
         report["error"] = repr(error)
     finally:
@@ -183,18 +238,12 @@ def main():
             except BaseException as error:
                 report.setdefault("cleanup_errors", []).append(repr(error))
         for name, child in reversed(children):
-            if child.poll() is None:
-                child.terminate()
-                try:
-                    child.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    child.kill()
-                    child.wait(timeout=3)
+            reap_owned(child)
         for reservation in reservations:
             reservation.close()
         for handle in handles:
             handle.close()
-        report["instances"] = [{"label": item["label"], "flow": item.get("flow"), "daemon_lookup_port": item["daemon_port"], "control_port": item["control_port"], "sockets": item.get("socket_evidence"), "stop_acknowledged": item.get("stop_acknowledged", False), "node_stopped_cleanly": item.get("node_stopped_cleanly", False)} for item in instances]
+        report["instances"] = [{"label": item["label"], "flow": item.get("flow"), "daemon_lookup_port": item["daemon_port"], "control_port": item["control_port"], "sockets": item.get("socket_evidence"), "acknowledged": item.get("stop_acknowledged", False), "contained": item.get("contained", False), "shutdown_outcome": item.get("shutdown_outcome", "StopFailed"), "node_stopped_cleanly": item.get("node_stopped_cleanly", False), "node_drop_protocol_completed": item.get("node_drop_protocol_completed", False), "node_drop_after_stop_request_ms": item.get("node_drop_after_stop_request_ms"), "stop_cli_elapsed_ms": item.get("stop_cli_evidence", {}).get("elapsed_ms"), "containment_evidence": item.get("containment_evidence")} for item in instances]
         report["owned_children"] = [{"name": name, "pid": child.pid, "returncode": child.poll()} for name, child in children]
         report["all_owned_children_exited"] = all(child.poll() is not None for _, child in children)
         if not report["all_owned_children_exited"] or report.get("cleanup_errors"):

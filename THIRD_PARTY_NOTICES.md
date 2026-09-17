@@ -25,3 +25,14 @@ The upstream tracked `desktop/moxin-dora-bridge/lib/libAudioCapture.dylib` is an
 arm64 runtime resource. Reproducible build provenance, inclusion in the final
 bundle and signing must be verified during F01/F11. Models are obtained separately
 and require their own manifest, revision and license records before release.
+
+## Standalone meeting worker runtime
+
+The F01 development bundle includes Astral python-build-standalone CPython
+3.12.11 and hash-pinned Python wheels. Exact inputs and source URLs are recorded
+in `services/meeting-worker/packaging/runtime-macos-arm64.lock.json`. The bundle
+preserves CPython and static dependency license files under
+`Contents/Resources/meeting-worker/third-party/python/`, wheel license/NOTICE
+files in their original dist-info layouts, and an inventory at
+`Contents/Resources/meeting-worker/THIRD_PARTY.md`. Build-only tools and model
+weights are excluded. This inventory does not replace F11 distribution review.

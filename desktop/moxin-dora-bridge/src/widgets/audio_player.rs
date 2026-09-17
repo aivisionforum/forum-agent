@@ -198,18 +198,20 @@ impl AudioPlayerBridge {
         info!("Starting audio player bridge event loop for {}", node_id);
 
         // Initialize dora node
-        let (mut node, mut events) =
-            match DoraNode::init_from_node_id(NodeId::from(node_id.clone())) {
-                Ok(n) => n,
-                Err(e) => {
-                    error!("Failed to init dora node {}: {}", node_id, e);
-                    *state.write() = BridgeState::Error;
-                    if let Some(ref ss) = shared_state {
-                        ss.set_error(Some(format!("Init failed: {}", e)));
-                    }
-                    return;
+        let (mut node, mut events) = match crate::dynamic_node_endpoint::init_from_shared(
+            shared_state.as_deref(),
+            NodeId::from(node_id.clone()),
+        ) {
+            Ok(n) => n,
+            Err(e) => {
+                error!("Failed to init dora node {}: {}", node_id, e);
+                *state.write() = BridgeState::Error;
+                if let Some(ref ss) = shared_state {
+                    ss.set_error(Some(format!("Init failed: {}", e)));
                 }
-            };
+                return;
+            }
+        };
 
         *state.write() = BridgeState::Connected;
         if let Some(ref ss) = shared_state {
@@ -758,6 +760,8 @@ impl DoraBridge for AudioPlayerBridge {
             return Err(BridgeError::AlreadyConnected);
         }
 
+        self.disconnect()?;
+
         *self.state.write() = BridgeState::Connecting;
 
         let (stop_tx, stop_rx) = bounded(1);
@@ -774,21 +778,32 @@ impl DoraBridge for AudioPlayerBridge {
 
         self.worker_handle = Some(handle);
 
-        // Wait briefly for connection
-        std::thread::sleep(std::time::Duration::from_millis(200));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            match self.state() {
+                BridgeState::Connected => return Ok(()),
+                BridgeState::Error | BridgeState::Disconnected => break,
+                _ => std::thread::sleep(std::time::Duration::from_millis(50)),
+            }
+        }
+        Err(BridgeError::ConnectionFailed(
+            "Audio player did not register with its owned daemon".into(),
+        ))
+    }
 
-        Ok(())
+    fn request_disconnect(&mut self) {
+        if let Some(stop_tx) = &self.stop_sender {
+            let _ = stop_tx.try_send(());
+        }
     }
 
     fn disconnect(&mut self) -> BridgeResult<()> {
-        if let Some(stop_tx) = self.stop_sender.take() {
-            let _ = stop_tx.send(());
-        }
-
-        if let Some(handle) = self.worker_handle.take() {
-            let _ = handle.join();
-        }
-
+        self.request_disconnect();
+        crate::owned_process::join_worker(
+            &mut self.worker_handle,
+            std::time::Duration::from_secs(2),
+        )?;
+        self.stop_sender = None;
         *self.state.write() = BridgeState::Disconnected;
         Ok(())
     }

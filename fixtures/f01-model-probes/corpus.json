@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "scope": "Synthetic file-only feasibility fixtures; not real meeting or speaker-identification acceptance",
+  "sample_rate": 16000,
+  "voices": {"zh": "Yue (Premium)", "en": "Samantha (English (US))"},
+  "cases": [
+    {"id": "zh_negation", "kind": "single_language", "reference": "我们还没有批准这项预算。请在星期五下午三点前确认十二位嘉宾的名单。", "segments": [{"voice": "zh", "text": "我们还没有批准这项预算。请在星期五下午三点前确认十二位嘉宾的名单。"}], "hints": ["Chinese", "English", "", "auto"]},
+    {"id": "en_negation", "kind": "single_language", "reference": "We have not approved this budget. Please confirm the list of twelve guests by three p.m. on Friday.", "segments": [{"voice": "en", "text": "We have not approved this budget. Please confirm the list of twelve guests by three p.m. on Friday."}], "hints": ["English", "Chinese", "", "auto"]},
+    {"id": "mixed_zh_single_voice", "kind": "intra_sentence_single_tts_voice", "reference": "请检查 API latency，我们的目标不是 five seconds，而是 three seconds。", "segments": [{"voice": "zh", "text": "请检查 API latency，我们的目标不是 five seconds，而是 three seconds。"}], "hints": ["Chinese", "English", "", "auto"]},
+    {"id": "mixed_en_stitched", "kind": "intra_sentence_stitched_tts_voices", "reference": "Please keep the draft private，因为它还没有审核，and do not publish it today.", "segments": [{"voice": "en", "text": "Please keep the draft private,"}, {"voice": "zh", "text": "因为它还没有审核，"}, {"voice": "en", "text": "and do not publish it today."}], "hints": ["English", "Chinese", "", "auto"]},
+    {"id": "alternating_turns", "kind": "separate_synthetic_speakers_no_overlap", "reference": "这不是最终决定，我们还要测试。I agree. We should test both rooms before Friday.第二个房间需要一台独立的电脑。", "segments": [{"voice": "zh", "speaker": "synthetic_speaker_1", "text": "这不是最终决定，我们还要测试。", "gap_after_ms": 450}, {"voice": "en", "speaker": "synthetic_speaker_2", "text": "I agree. We should test both rooms before Friday.", "gap_after_ms": 450}, {"voice": "zh", "speaker": "synthetic_speaker_1", "text": "第二个房间需要一台独立的电脑。"}], "hints": ["Chinese", "English", "", "auto"]},
+    {"id": "short_en", "kind": "short_utterance", "reference": "No. Do not publish the draft.", "segments": [{"voice": "en", "text": "No. Do not publish the draft."}], "hints": ["English", "", "auto"]},
+    {"id": "silence", "kind": "synthetic_digital_silence", "reference": "", "silence_ms": 1600, "segments": [], "hints": ["Chinese", "English"]}
+  ],
+  "summary_turns": [
+    {"id": "t1", "speaker": "speaker_1", "text": "我们计划为两个圆桌房间分别准备一台电脑，但还没有批准采购预算。"},
+    {"id": "t2", "speaker": "speaker_2", "text": "The goal is a private operator transcript first. Public captions and public summaries require human review."},
+    {"id": "t3", "speaker": "speaker_1", "text": "请 speaker_3 在星期五下午三点前确认十二位嘉宾的名单。"},
+    {"id": "t4", "speaker": "speaker_3", "text": "I will confirm the guest list by Friday at three p.m. I cannot confirm the equipment budget yet."},
+    {"id": "t5", "speaker": "speaker_2", "text": "The API latency target is under three seconds, but no real meeting latency test has passed yet."},
+    {"id": "t6", "speaker": "speaker_1", "text": "今天决定先完成本地模型可行性测试。不要把合成语音测试当成正式活动验收。"},
+    {"id": "t7", "speaker": "speaker_3", "text": "The remaining risks are mixed-language recognition, sustained GPU contention, and reviewer delays."},
+    {"id": "t8", "speaker": "speaker_2", "text": "Keep the recording and raw transcript private. A draft must not appear on the public wall."}
+  ]
+}

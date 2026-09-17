@@ -177,7 +177,9 @@ impl DynamicNodeDispatcher {
     /// Disconnect all bridges
     pub fn disconnect_all(&mut self) -> BridgeResult<()> {
         let mut errors = Vec::new();
-
+        for bridge in self.bridges.values_mut() {
+            bridge.request_disconnect();
+        }
         for (node_id, bridge) in &mut self.bridges {
             match bridge.disconnect() {
                 Ok(()) => {
@@ -229,19 +231,8 @@ impl DynamicNodeDispatcher {
             controller.start()?
         };
 
-        // Wait for dataflow to initialize and register dynamic nodes
-        // This is necessary because `dora start --detach` returns immediately
-        // macOS typically needs more time than Windows for dynamic node registration
-        info!("Waiting for dataflow to initialize...");
-
-        // Platform-specific delays
-        #[cfg(target_os = "macos")]
-        let init_delay = std::time::Duration::from_secs(5);
-        #[cfg(not(target_os = "macos"))]
-        let init_delay = std::time::Duration::from_secs(2);
-
-        std::thread::sleep(init_delay);
-        info!("Initialization delay completed ({}s)", init_delay.as_secs());
+        *self.shared_state.dynamic_node_context.write() =
+            Some(self.controller.read().dynamic_node_context()?);
 
         // Create bridges if not already created
         if self.bridges.is_empty() {
@@ -250,8 +241,8 @@ impl DynamicNodeDispatcher {
 
         info!("Connecting {} bridges to dora...", self.bridges.len());
 
-        const MAX_CONNECT_ATTEMPTS: usize = 15;
-        let connect_retry_delay = std::time::Duration::from_secs(2);
+        const MAX_CONNECT_ATTEMPTS: usize = 2;
+        let connect_retry_delay = std::time::Duration::from_millis(200);
 
         let mut last_err: Option<BridgeError> = None;
         for attempt in 1..=MAX_CONNECT_ATTEMPTS {
@@ -283,35 +274,35 @@ impl DynamicNodeDispatcher {
         Ok(dataflow_id)
     }
 
-    /// Stop the dataflow and disconnect all bridges (graceful, default 15s)
+    /// Shutdown confirmation requires both owned runtime and bridge workers to exit.
     pub fn stop(&mut self) -> BridgeResult<()> {
-        let disconnect_result = self.disconnect_all();
-        let stop_result = self.controller.write().stop();
-        combine_shutdown_results(disconnect_result, stop_result)
+        self.stop_with_grace_duration(std::time::Duration::from_secs(2))
     }
 
-    /// Stop the dataflow with a custom grace duration
-    ///
-    /// After the grace duration, nodes that haven't stopped will be killed (SIGKILL).
     pub fn stop_with_grace_duration(
         &mut self,
         grace_duration: std::time::Duration,
     ) -> BridgeResult<()> {
-        let disconnect_result = self.disconnect_all();
+        // Signal all workers first. A blocked upstream registration/drop may
+        // need its own daemon to exit before a bounded join can succeed.
+        let first_disconnect = self.disconnect_all();
         let stop_result = self
             .controller
             .write()
             .stop_with_grace_duration(grace_duration);
-        combine_shutdown_results(disconnect_result, stop_result)
+        let disconnect_result = match first_disconnect {
+            Ok(()) => Ok(()),
+            Err(_) => self.disconnect_all(),
+        };
+        let result = combine_shutdown_results(disconnect_result, stop_result);
+        if result.is_ok() {
+            *self.shared_state.dynamic_node_context.write() = None;
+        }
+        result
     }
 
-    /// Force stop the dataflow immediately (0s grace period)
-    ///
-    /// This will immediately kill all nodes without waiting for graceful shutdown.
     pub fn force_stop(&mut self) -> BridgeResult<()> {
-        let disconnect_result = self.disconnect_all();
-        let stop_result = self.controller.write().force_stop();
-        combine_shutdown_results(disconnect_result, stop_result)
+        self.stop_with_grace_duration(std::time::Duration::ZERO)
     }
 
     /// Check if the dispatcher is running
@@ -333,8 +324,9 @@ fn combine_shutdown_results(
 
 impl Drop for DynamicNodeDispatcher {
     fn drop(&mut self) {
-        // Disconnect all bridges
-        let _ = self.disconnect_all();
+        if let Err(error) = self.stop() {
+            error!("Dispatcher shutdown did not complete: {error}");
+        }
     }
 }
 

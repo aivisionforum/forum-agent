@@ -11,6 +11,7 @@ dora-node-api.workspace = true
 # dora-node-api 0.4.1 uses message protocol crate 0.7.0 (different version series).
 dora-message = "=0.7.0"
 bincode = "1.3.3"
+libc = "0.2"
 
 # Async runtime
 tokio.workspace = true

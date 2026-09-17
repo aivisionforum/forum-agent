@@ -5,7 +5,7 @@ use crate::widgets::AudioSource;
 use parking_lot::RwLock;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 pub struct DirtyValue<T> {
     data: RwLock<T>,
@@ -181,6 +181,8 @@ impl Default for MicState {
 }
 
 pub struct SharedDoraState {
+    /// One dispatcher owns this endpoint. Never inferred from a default port.
+    pub dynamic_node_context: RwLock<Option<crate::owned_runtime::DynamicNodeContext>>,
     pub audio: AudioState,
     pub status: DirtyValue<DoraStatus>,
     pub mic: MicState,
@@ -204,11 +206,10 @@ pub struct SharedDoraState {
     pub translation_overlay_active: DirtyValue<bool>,
 }
 
-static GLOBAL_DORA_STATE: OnceLock<Arc<SharedDoraState>> = OnceLock::new();
-
 impl SharedDoraState {
     fn fresh() -> Self {
         Self {
+            dynamic_node_context: RwLock::new(None),
             audio: AudioState::new(100),
             status: DirtyValue::default(),
             mic: MicState::new(),
@@ -234,9 +235,7 @@ impl SharedDoraState {
     }
 
     pub fn new() -> Arc<Self> {
-        GLOBAL_DORA_STATE
-            .get_or_init(|| Arc::new(Self::fresh()))
-            .clone()
+        Arc::new(Self::fresh())
     }
 
     pub fn add_bridge(&self, bridge_id: String) {
@@ -271,6 +270,17 @@ impl Default for SharedDoraState {
 #[cfg(test)]
 mod tests {
     use super::DirtyValue;
+
+    #[test]
+    fn different_dispatchers_do_not_share_session_or_endpoint_state() {
+        let first = super::SharedDoraState::new();
+        let second = super::SharedDoraState::new();
+        first.translation_overlay_active.set(true);
+        first.add_bridge("first-only".into());
+        assert!(!std::sync::Arc::ptr_eq(&first, &second));
+        assert!(!second.translation_overlay_active.read());
+        assert!(second.status.read().active_bridges.is_empty());
+    }
 
     #[test]
     fn take_dirty_consumes_the_flag_without_changing_the_value() {

@@ -1,0 +1,8 @@
+{
+  "status": "passed",
+  "scope": "Two independent builds from pinned archive/wheels, both --offline; relative file bytes/modes/symlinks compared (not timestamps or app signatures).",
+  "first": "/tmp/forum-worker-f01-ready/AI Vision Forum.app/Contents/Resources/meeting-worker",
+  "second": "/tmp/forum-worker-f01-ready-repeat/meeting-worker",
+  "files_and_symlinks": 7051,
+  "differences": []
+}

@@ -160,6 +160,15 @@ stage_sidecar "$BUILD_TARGET_DIR/$PROFILE_DIR/mlx.metallib" "mlx.metallib"
 # Use Tauri's official bundler for the application shell. The previous script
 # assembled Info.plist and the launcher by hand, which produced WebViews that
 # could open as empty white windows in the distributed DMG.
+# Build a standalone interpreter and hash-pinned wheels. The build interpreter
+# is bootstrap tooling only and is never copied into the app.
+BUILD_PYTHON="${FORUM_AGENT_BUILD_PYTHON:-python3}"
+WORKER_STAGE="$SIDECAR_DIR/meeting-worker"
+WORKER_PACKAGE_ARGS=(--output "$WORKER_STAGE" --cache "${FORUM_AGENT_WORKER_CACHE:-$BUILD_TARGET_DIR/worker-artifacts}")
+if [[ "${FORUM_AGENT_BUILD_OFFLINE:-0}" == "1" ]]; then
+  WORKER_PACKAGE_ARGS+=(--offline)
+fi
+"$BUILD_PYTHON" "$ROOT_DIR/scripts/package_meeting_worker.py" "${WORKER_PACKAGE_ARGS[@]}"
 echo "Building the Tauri application bundle..."
 (
   cd "$ROOT_DIR/forum-shell"
@@ -184,6 +193,17 @@ ensure_translator_is_not_running
 rm -rf "$APP_DIR"
 cp -R "$TAURI_APP" "$APP_DIR"
 
+cp -R "$WORKER_STAGE" "$APP_DIR/Contents/Resources/meeting-worker"
+mkdir -p "$APP_DIR/Contents/Resources/diagnostics"
+cp "$ROOT_DIR/scripts/check_meeting_worker_bundle.py" "$APP_DIR/Contents/Resources/diagnostics/"
+cp "$ROOT_DIR/../scripts/f01_lan_probe.py" "$APP_DIR/Contents/Resources/diagnostics/"
+# Run from the final resource location before signing, with developer paths
+# excluded by the checker's subprocess environment.
+"$APP_DIR/Contents/Resources/meeting-worker/python/bin/python3.12" -I -B \
+  "$APP_DIR/Contents/Resources/diagnostics/check_meeting_worker_bundle.py" \
+  --resource-dir "$APP_DIR/Contents/Resources/meeting-worker" \
+  --report "$OUT_DIR/meeting-worker-local-check-$(date +%s).json"
+
 PLIST_PATH="$APP_DIR/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $MARKETING_VERSION" "$PLIST_PATH"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_VERSION" "$PLIST_PATH"
@@ -194,5 +214,5 @@ rm -rf "$SIDECAR_DIR"
 
 echo "App bundle created with the official Tauri shell:"
 echo "  $APP_DIR"
-echo "Development translation shell only; Python analysis runtime and clean-Mac acceptance are pending."
+echo "Standalone Python/MLX included; clean-Mac acceptance and production analysis jobs are pending."
 echo "Models are not bundled. Prepare them before offline use."

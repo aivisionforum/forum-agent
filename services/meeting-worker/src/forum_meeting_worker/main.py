@@ -29,9 +29,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Forum meeting worker protocol bootstrap")
     parser.add_argument("--frame-timeout-seconds", type=_positive_seconds, default=10.0,
                         help="deadline for an incomplete stdin frame (default: 10)")
+    parser.add_argument("--allow-model-probe", action="store_true",
+                        help="enable the bounded F01 diagnostics.model_probe; not a jobs API")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s", stream=sys.stderr)
-    protocol = Protocol()
+    protocol = Protocol(allow_model_probe=args.allow_model_probe)
     LOG.info("starting build %s; analysis capabilities unavailable", __version__)
     try:
         for frame in frames(sys.stdin.buffer, args.frame_timeout_seconds):

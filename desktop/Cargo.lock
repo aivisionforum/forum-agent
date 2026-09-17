@@ -3823,6 +3823,7 @@ dependencies = [
  "crossbeam-channel",
  "dora-message",
  "dora-node-api",
+ "libc",
  "libloading 0.8.9",
  "parking_lot",
  "rand 0.8.6",

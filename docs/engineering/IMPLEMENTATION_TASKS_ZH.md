@@ -1,6 +1,6 @@
 # Vision Forum 实施任务、依赖与验收
 
-版本：v1.1，2026-09-16。配套：[工程主方案](VISION_FORUM_ENGINEERING_PLAN_ZH.md)、[数据与协议](DATA_AND_PROTOCOL_ZH.md)、[实施进度与验证](PROGRESS_ZH.md)。按顺序分为四部分：① F00–F01 整合基础；② F02–F04 可靠字幕；③ F05–F08 单场论坛；④ F09–F12 完整 Forum。具体状态在每个任务标题下更新，设计文档或局部测试通过不等于整个阶段通过。
+版本：v1.2，2026-09-16。配套：[工程主方案](VISION_FORUM_ENGINEERING_PLAN_ZH.md)、[数据与协议](DATA_AND_PROTOCOL_ZH.md)、[实施进度与验证](PROGRESS_ZH.md)。按顺序分为四部分：① F00–F01 整合基础；② F02–F04 可靠字幕；③ F05–F08 单场论坛；④ F09–F12 完整 Forum。具体状态在每个任务标题下更新，设计文档或局部测试通过不等于整个阶段通过。
 
 ## 1. 执行约定
 
@@ -62,7 +62,7 @@ F11 的构建脚手架在 F01 就启动；正式包在 F08–F10 功能完成后
 
 ### F01 — 源码导入与高风险技术验证
 
-依赖：F00。状态：进行中。受控导入、基础桌面适配、模型文件 probe、worker 协议测试已完成；隔离/并发/自动语种/干净机器/LAN 门槛仍待验证。详见[实际进度](PROGRESS_ZH.md)。
+依赖：F00。状态：进行中。受控导入、基础桌面适配、模型文件 probe、worker 协议测试已完成；本机隔离、并发/取消、语种对照和独立 Python/MLX 打包已有证据；第二台 Mac、原 Translator 应用人工共存和手机 LAN 信任仍待实测。详见[实际进度](PROGRESS_ZH.md)。
 
 修改/新增：`desktop/` 的 Hen workspace 基线、`desktop/forum-shell/`、锁文件、构建/资源脚本、`.gitignore`、`THIRD_PARTY_NOTICES.md`；`services/meeting-worker/` 最小握手程序。
 
@@ -76,7 +76,7 @@ F11 的构建脚手架在 F01 就启动；正式包在 F08–F10 功能完成后
 6. 构建最小 .app：无开发环境机器上启动 Rust + Python worker + 一个实际 MLX 请求；验证原生动态库/Metal 资源路径。固定可分发 Python 方案。
 7. 用两设备验证 LAN peer TLS 身份、手机 HTTPS/二维码访问方案的可行性。此处可用无内容的最小服务，不公开当前旧控制台。
 
-通过：固定语言模式/后端、并发策略、Python 打包、Dora 隔离和 LAN 信任部署的 ADR。高风险项没有通过时，不能先花大量工作重做全部 UI；可继续无依赖的数据契约工作。
+通过：固定语言模式/后端、并发策略、Python 打包、Dora 隔离和 LAN 信任部署的 ADR。高风险项没有通过时，不能先花大量工作重做全部 UI。2026-09-16 用户明确采用逐部分确认：F01 完整验收后汇报，用户确认后才进入第二部分；此前 F02-a 保留，不继续新的数据契约工作。
 
 ### F02 — 协议、SQLite 与会议状态机
 

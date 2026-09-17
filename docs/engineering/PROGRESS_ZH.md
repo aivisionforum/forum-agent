@@ -13,7 +13,7 @@
 | 第三步：做单场论坛产品 | F05–F08 | 分析 worker、模型调度、统一操作台、审核洞察、会议库、纪要与报告 | 待实施；当前只有 worker 握手入口和导入的翻译 UI |
 | 第四步：完成 Forum 版 | F09–F12 | 双轨与说话人、双会场、公开查询、正式安装、现场排练 | 待实施 |
 
-依赖顺序以任务表为准。F01 的语言、运行时隔离、并发和安装验证没有全部结束，因此不开始大规模 UI 重写或声称 M0 字幕里程碑通过。F02 的无模型数据契约与数据库事务可以独立推进，这是原方案允许的并行工作。
+2026-09-16 用户确认采用逐部分验收：当前只完成第一步 F00–F01。每部分完成后汇报，等待用户确认无误再进入下一部分；不再推进新的 F02/F03/F07 工作。此前已经落地的 F02-a 保留，但不代表第二步已开始验收。第一步全部门槛（含另一台 Mac 和手机）通过前，不标记完成。用户可提供 M5 Max、iPhone 和 Android 设备。
 
 ## 第一步已落地的内容
 
@@ -36,9 +36,9 @@
 - 预检脚本只检查文件，不再仅凭配置文件存在就修改共享模型目录的“下载完成”标记。模型初始化脚本统一使用 Rust 下载器。
 - 模型选择统一用于 readiness 和实际数据流；完整旧缓存只读复用，新下载固定到 `~/Library/Application Support/AI Vision Forum/models`。下载器在任何 repair/网络前拒绝外部目录、路径逃逸和符号链接；安装锁绑定模型根。25 项下载器测试通过，没有修改本机已有模型。
 
-开发 `.app` 已在本机成功构建，路径 `desktop/dist/AI Vision Forum.app`。bundle ID 为 `org.aivisionforum.agent`，资源齐全，arm64 与 Swift rpath 检查通过；`codesign --verify --deep --strict` 通过的是本地 ad-hoc 签名。未启动应用，未进行干净 Mac、正式签名或公证验收。实际 Tauri hook 的工作目录是 `ui/`，构建命令已按实测修正。
+开发 `.app` 已在本机成功构建，路径 `desktop/dist/AI Vision Forum.app`；跨设备测试目录为 `desktop/dist/Forum-F01-Mac-Test-20260916/`。bundle ID 为 `org.aivisionforum.agent`，资源齐全，arm64 与 Swift rpath 检查通过；`codesign --verify --deep --strict` 通过的是本地 ad-hoc 签名。未启动应用，未进行干净 Mac、正式签名或公证验收。实际 Tauri hook 的工作目录是 `ui/`，构建命令已按实测修正。
 
-前端 `svelte-check` 零错误/警告，11 项 UI 回归通过，Vite 构建通过。桌面 Rust 单测 35 项通过、1 项需要人工观察电源状态而忽略；Dora bridge 全部 32 项单测通过。这些测试不启动真实采音。
+前端 `svelte-check` 零错误/警告，11 项 UI 回归通过，Vite 构建通过。桌面 Rust 单测本次 36 项通过、1 项需要人工观察电源状态而忽略；Dora bridge 本次 38 项单测通过。这些测试不启动真实采音。
 
 ### F01：本机模型文件测试
 
@@ -72,17 +72,48 @@ ASR 使用现有 Qwen3-ASR-1.7B-8bit，OminiX-MLX 固定源码 revision `6aac996
 
 14 项真实子进程测试覆盖握手、版本拒绝、非法 JSON/ID、重复初始化、通知、超长/未闭合/超时帧及正常退出。wheel 已离线构建并装入临时独立环境，从工作区外启动成功。
 
-当前 capabilities 明确为空：`jobs.run/jobs.cancel` 返回未实现。未将协议握手包装为已实现洞察或纪要；独立 Python 解释器、MLX 原生库随 .app 分发及干净机器验证仍待完成。
+当前 capabilities 明确为空：`jobs.run/jobs.cancel` 返回未实现。后续补充至 24 项 worker/打包测试通过。
 
-### F01：独立 Dora 实例验证与明确失败项
+独立运行时已随 `.app` 打包：固定 Astral CPython 3.12.11、macOS 14+ arm64 wheels、MLX 0.32.2 与 mlx-lm 0.31.3，包含完整 URL/hash 清单及许可证，不复制 `.venv`。两个离线构建的 7,051 个文件/链接逐项一致。包内 checker 用标准库读 Mach-O，无需 Xcode/otool；环境隔离下真实 Metal 小矩阵与协议退出通过，显式诊断用已有 Qwen3-8B 完成推理。最终资源候选的真实生成约 3.405 秒，stdout 纯协议。
 
-新增显式 loopback daemon endpoint adapter，按实际依赖 `dora-node-api 0.4.1 / dora-message 0.7.0` 请求 NodeConfig，校验 flow UUID、node ID、回包大小与 deadline。生产 widget 尚未切换到该 adapter；上游 `DoraNode::init` 注册阶段仍需由独立进程 supervisor 限时管理。
+详见 [worker 本机证据](../../services/meeting-worker/packaging/LOCAL_VALIDATION.md)。实际桌面 `.app` 已完成构建、签名后默认 checker 和 `codesign --verify --deep --strict` 检查；这是本机 ad-hoc 开发包，第二台 Mac 尚待实测。
 
-真实测试启动两组私有 coordinator/daemon 和无音频 timer 节点，端口及 Zenoh 均显式限制在 loopback。相同 node ID 分别连接不同 flow UUID；A 收到 Stop 正常退出后，B 仍为 Running 并继续收到 5 个 tick。按自有 PID 核验监听端口；测试创建的 6 个长期进程全部退出。
+### F01：模型语言、并发与取消决策
 
-**生命周期门槛仍未通过：** 两个节点均收到 Stop 并以 0 退出，但 `dora stop` 没在 3 秒内返回完成确认；首次测试等到 12 秒也未完成。因此报告保留 `isolation_behaviors_passed=true`、`passed=false`。不能把停止事件已交付替代完整回收确认，更不能据此宣称生产 Translator 共存已经验收。
+新增 7 条合成文件（中、英、两种句内混说、交替发言、短句、静音），完成 Qwen 不同 hint、Whisper auto、临时 Qwen 原生 auto 变体对照。当前桌面继续显式语种；Whisper 作为 F03 自动模式候选，生产包尚未集成。8B 的合法 JSON 出现虚构行动项，后续不能跳过证据校验和人工审核。
 
-复现入口：[Dora spike 说明](../../desktop/moxin-dora-bridge/examples/README.md)。本次本地报告：`artifacts/local/f01-dora-isolation/1888e993-ad4a-4e25-bba9-d50604270902/report.json`；adapter 的 5 项测试通过。
+三进程并发均可执行，但中位耗时明显增加：ASR 639→986 ms、2B 299→509 ms、8B 7,530→11,625 ms。独立进程取消后退出并可重启；这不等于已实现生产任务调度/合作取消。详见[模型实验报告](F01_MODEL_FINDINGS_ZH.md)与 [ADR 0004](../adr/0004-f01-runtime-and-model-decisions.md)。没有开启麦克风、系统采音或下载新模型权重，未修改已有模型目录。
+
+### F01：独立 Dora 与直接持有的子进程
+
+此前严格 CLI-ACK 测试仍保留失败证据：官方 Dora 0.4.1 纯动态图即使 node/event stream 已 Drop，也可能不返回 `dora stop` ACK。另确认官方 spawner 将普通 executable 放入独立 PGID，只杀 daemon 组不能回收模型。
+
+现实现每实例独占 0700 目录、原生 arm64 CLI 校验、独占 loopback C/D 端口与 Zenoh 禁止自动发现。私有图把 executable 注册为 dynamic；桌面直接持有 ASR/翻译 Child，传入核验过 UUID/node ID/daemon PID/event port 的 NodeConfig。默认端口和共享 Dora 网络不参与启动、查询或停止。不支持的节点 hooks/args 等显式拒绝。
+
+CLI 命令与进程/线程退出均有等待期限。CLI ACK 与实际回收分别记录；未 ACK 但全部自有资源退出为 `StoppedByOwnedRuntimeFallback`。停止失败保留所有权和 worker handle，不提前发 Stopped。UI 的过渡状态提交与事件消费顺序已加锁，避免慢保存覆盖完成回执；单槽最新状态保证暂停轮询后仍能收到最终状态。
+
+真实生产 controller + TranslationListener + 本地合成 executable 的双实例探针已通过：
+
+- A 约 3,129 ms 完成回收后，B 仍继续从 36 增至 41 条字幕。
+- B 的自有 daemon 被 SIGKILL，且合成节点忽略 TERM；约 3,078 ms 仍完成自有节点回收。
+- C 的直接节点被 SIGKILL，`get_status` 报告子进程退出，随后完整回收。
+- 9 个自有 coordinator/daemon/node PID 消失、18 个原监听端口关闭，生产 listener 已 join。各次 `acknowledged=false`、`contained=true`，没有把超时伪装为优雅 ACK。
+
+证据：`artifacts/local/f01-owned-controller/9a1724fb-9521-480a-af47-cce571e102cb/report.json`，原始日志随证据保留；复现见[Dora probe 说明](../../desktop/moxin-dora-bridge/examples/README.md)。它不替代真实采音尾句、90 分钟会议、桌面宿主被强杀后恢复或原 Translator 应用的人工共存验收。
+
+### F01：真实模型二进制的无麦克风串联
+
+补充使用 production controller + 实际 Qwen ASR/2B binary + production TranslationListener，单次发送已有合成中文 PCM。等待模型 ready 后，收到原文“我们还没有批准这项预算，请在星期五下午三点前确认十二位嘉宾的名单。”，译文完整保留未批准、十二人及星期五下午三点。停止约 3,104 ms，`acknowledged=false/contained=true`；8 个自有模型流/peer PID 均退出，listener 已 join，独立 peer 在模型流关闭后从 68 继续到 71 条。
+
+首轮在 `start()` 返回后立即发送的帧未到达 ASR，失败证据保留；第二轮由探针等待两个模型日志 ready 后仅发送一次成功。`start()` 返回约 610 ms，模型 ready 约 2,016 ms；ready 后接收最终原译文约 1,598 ms。探针日志门控不是生产启动协议，不能把控制器成功返回当作采音就绪，更不能把这次文件结果称为 C1 实时达标。F03 必须实现启动就绪屏障与音频确认/重放，未在本轮提前开发。
+
+复现入口 `desktop/moxin-dora-bridge/examples/forum_model_binary_probe.rs`，完整证据位置见[模型报告第 8 节](F01_MODEL_FINDINGS_ZH.md)。没有打开音频设备或修改现有权重。
+
+### F01：跨设备测试准备
+
+已经准备[设备验收表](F01_DEVICE_TEST_ZH.md)、包内独立验证器及两个 `.command` 入口。HTTPS 探针仅提供合成双语句子，显式私有地址、限时配对、可信 TLS、cookie 和绝对请求期限；5 项本机 TLS 测试通过，包括慢请求无法延长服务期限、私钥失败清理、无令牌拒绝。
+
+**第二台 M5 Max、iPhone、Android 的实际结果仍待用户提供。** 只收到配对请求不算手机画面/信任通过；本机环境隔离也不能替代干净机器。第一部分尚未完成确认，不进入第二部分。
 
 ## 第二步已落地的内容：F02-a
 
@@ -101,10 +132,9 @@ ASR 使用现有 Qwen3-ASR-1.7B-8bit，OminiX-MLX 固定源码 revision `6aac996
 
 ## 下一步顺序与剩余门槛
 
-1. 完成 F01 的 Dora 隔离适配：私有实例的消息隔离已经用 timer 节点证明；先解决 Stop 完成确认超时，补有界进程监督与回收，再接生产音频节点。当前生产 controller 不再扫描或停止别的 flow；共享网络已有 flow 时拒绝启动。该保护不是完整实例隔离，也不代表已经能自动管理私有运行时。
-2. 完成 F01 的 Rust 实时推理 + Python 8B 并发、实际取消/重启、内存释放测试，确定机器资源预算；补自动中英/混说验证。
-3. 完成 Python/MLX 打包和干净 Mac 验证，以及真实两设备 LAN/TLS/手机访问可行性。这些需要相应运行环境；本机编译不能替代。
-4. 补齐 F02 的 actor、会议状态机与生成契约；然后按 F03→F04 接真实音频、durable ack、译文来源与可靠停止，交付 M0。
+1. 使用最终开发测试包在 M5 Max 完成独立 Python/Metal、桌面窗口和重开验收，并记录开发工具是否存在；另核验原 Translator 与 Forum 打开/关闭共存。
+2. 在 Mac 与手机完成 LAN TLS 信任、配对、同时观看、无令牌拒绝和停服测试；回收设备报告，按实际结果修复。
+3. 第一部分所有门槛确认后汇报，等待用户确认；获得确认后才补齐 F02 的 actor、会议状态机与生成契约，再按 F03→F04 接真实音频、durable ack、译文来源与可靠停止，交付 M0。
 
 F05 之后按任务表继续。F12 未通过之前，不新建 Minutes 产品仓库，不声称 Forum 完成。
 

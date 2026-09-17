@@ -1,0 +1,212 @@
+{
+  "status": "passed",
+  "resource_directory": "/private/tmp/forum-worker-f01-ready/AI Vision Forum.app/Contents/Resources/meeting-worker",
+  "validation_scope": "isolated subprocess on this Mac; NOT a second clean Mac acceptance",
+  "host": {
+    "macos": "27.0",
+    "architecture": "arm64"
+  },
+  "environment_keys": [
+    "HF_HOME",
+    "HF_HUB_DISABLE_IMPLICIT_TOKEN",
+    "HF_HUB_DISABLE_TELEMETRY",
+    "HF_HUB_OFFLINE",
+    "LANG",
+    "PATH",
+    "TMPDIR",
+    "TOKENIZERS_PARALLELISM",
+    "TRANSFORMERS_OFFLINE",
+    "XDG_CACHE_HOME"
+  ],
+  "cwd": "new temporary directory outside source tree",
+  "runtime": {
+    "python_version": "3.12.11",
+    "executable": "/private/tmp/forum-worker-f01-ready/AI Vision Forum.app/Contents/Resources/meeting-worker/python/bin/python3.12",
+    "prefix": "/private/tmp/forum-worker-f01-ready/AI Vision Forum.app/Contents/Resources/meeting-worker/python",
+    "base_prefix": "/private/tmp/forum-worker-f01-ready/AI Vision Forum.app/Contents/Resources/meeting-worker/python",
+    "sys_path": [
+      "/private/tmp/forum-worker-f01-ready/AI Vision Forum.app/Contents/Resources/meeting-worker/python/lib/python312.zip",
+      "/private/tmp/forum-worker-f01-ready/AI Vision Forum.app/Contents/Resources/meeting-worker/python/lib/python3.12",
+      "/private/tmp/forum-worker-f01-ready/AI Vision Forum.app/Contents/Resources/meeting-worker/python/lib/python3.12/lib-dynload",
+      "/private/tmp/forum-worker-f01-ready/AI Vision Forum.app/Contents/Resources/meeting-worker/python/lib/python3.12/site-packages"
+    ],
+    "isolated": 1,
+    "no_user_site": 1,
+    "openssl": "OpenSSL 3.0.16 11 Feb 2025",
+    "machine": "arm64",
+    "versions": {
+      "shellingham": "1.5.4",
+      "filelock": "3.32.6",
+      "click": "8.5.0",
+      "packaging": "26.3",
+      "mlx": "0.32.2",
+      "pygments": "2.21.0",
+      "mlx-lm": "0.31.3",
+      "hf-xet": "1.6.0",
+      "rich": "15.0.0",
+      "huggingface-hub": "1.31.0",
+      "forum-meeting-worker": "0.1.0",
+      "sentencepiece": "0.2.2",
+      "numpy": "2.4.6",
+      "tokenizers": "0.23.2",
+      "httpcore": "1.0.9",
+      "transformers": "5.17.0",
+      "fsspec": "2026.7.0",
+      "safetensors": "0.8.0",
+      "tqdm": "4.70.1",
+      "h11": "0.16.0",
+      "mdurl": "0.1.2",
+      "pyyaml": "6.0.3",
+      "idna": "3.19",
+      "certifi": "2026.7.22",
+      "jinja2": "3.1.6",
+      "markdown-it-py": "4.2.0",
+      "annotated-doc": "0.0.5",
+      "markupsafe": "3.0.3",
+      "mlx-metal": "0.32.2",
+      "httpx": "0.28.1",
+      "typing-extensions": "4.16.0",
+      "regex": "2026.9.10",
+      "typer": "0.27.2",
+      "protobuf": "7.36.1",
+      "anyio": "4.15.1"
+    }
+  },
+  "native_dependency_audit": {
+    "native_file_count": 33,
+    "native_files": [
+      "python/bin/python3.12",
+      "python/lib/libpython3.12.dylib",
+      "python/lib/python3.12/lib-dynload/_crypt.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/google/_upb/_message.abi3.so",
+      "python/lib/python3.12/site-packages/hf_xet/hf_xet.abi3.so",
+      "python/lib/python3.12/site-packages/markupsafe/_speedups.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/mlx/core.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/mlx/lib/libjaccl.dylib",
+      "python/lib/python3.12/site-packages/mlx/lib/libmlx.dylib",
+      "python/lib/python3.12/site-packages/numpy/_core/_multiarray_tests.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/_core/_multiarray_umath.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/_core/_operand_flag_tests.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/_core/_rational_tests.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/_core/_simd.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/_core/_struct_ufunc_tests.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/_core/_umath_tests.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/fft/_pocketfft_umath.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/linalg/_umath_linalg.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/linalg/lapack_lite.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/random/_bounded_integers.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/random/_common.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/random/_generator.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/random/_mt19937.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/random/_pcg64.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/random/_philox.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/random/_sfc64.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/random/bit_generator.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/numpy/random/mtrand.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/regex/_regex.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/safetensors/_safetensors_rust.abi3.so",
+      "python/lib/python3.12/site-packages/sentencepiece/_sentencepiece.cpython-312-darwin.so",
+      "python/lib/python3.12/site-packages/tokenizers/tokenizers.abi3.so",
+      "python/lib/python3.12/site-packages/yaml/_yaml.cpython-312-darwin.so"
+    ],
+    "audit_tool": "Python stdlib Mach-O/FAT parser (no developer tools)",
+    "architecture": "arm64",
+    "maximum_minimum_macos": "14.0",
+    "external_dependencies": "Apple system libraries or relative loader paths only"
+  },
+  "metal_matrix_check": {
+    "status": "passed",
+    "mlx_version": "0.32.2",
+    "device": "Device(gpu, 0)",
+    "device_info": {
+      "device_name": "Apple M4 Pro",
+      "max_recommended_working_set_size": 40200896512,
+      "memory_size": 51539607552,
+      "architecture": "applegpu_g16s",
+      "max_buffer_length": 30150672384,
+      "resource_limit": 499000
+    },
+    "operation": "float32 2x2 matmul + mx.eval + mx.synchronize(gpu)",
+    "actual": [
+      [
+        19.0,
+        22.0
+      ],
+      [
+        43.0,
+        50.0
+      ]
+    ],
+    "seconds": 0.19843062500149244,
+    "model_weights_loaded": false
+  },
+  "protocol_stdout_only": true,
+  "model_probe_requested": true,
+  "responses": [
+    {
+      "jsonrpc": "2.0",
+      "id": "init",
+      "result": {
+        "protocol_version": 1,
+        "build_version": "0.1.0",
+        "instance_id": "665d279c-b421-431f-9290-67a56e725b01",
+        "capabilities": {
+          "health": true,
+          "task_types": [],
+          "model_clients": []
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": "ping",
+      "result": {
+        "status": "ok",
+        "protocol_version": 1,
+        "instance_id": "665d279c-b421-431f-9290-67a56e725b01"
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": "unsupported",
+      "error": {
+        "code": -32601,
+        "message": "Analysis jobs are not implemented in this build.",
+        "data": {
+          "code": "CAPABILITY_UNAVAILABLE"
+        }
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": "probe",
+      "result": {
+        "diagnostic_only": true,
+        "model_path": "~/.cache/huggingface/hub/models--mlx-community--Qwen3-8B-4bit/snapshots/545dc4251c05440727734bcd94334791f6ab0192",
+        "text": "今天圆桌讨论决定先完成实时翻译，再验证会议摘要。",
+        "python_version": "3.12.11",
+        "python_executable": "/private/tmp/forum-worker-f01-ready/AI Vision Forum.app/Contents/Resources/meeting-worker/python/bin/python3.12",
+        "mlx_version": "0.32.2",
+        "mlx_lm_version": "0.31.3",
+        "model_load_seconds": 2.56453145800333,
+        "first_token_seconds": 3.106319083002745,
+        "total_seconds": 3.405318000000989,
+        "generation_tokens": 16,
+        "generation_tokens_per_second": 56.17978356568035,
+        "peak_memory_gb": 4.801063288,
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "jsonrpc": "2.0",
+      "id": "shutdown",
+      "result": {
+        "status": "shutting_down"
+      }
+    }
+  ],
+  "stderr": "forum_meeting_worker: starting build 0.1.0; analysis capabilities unavailable\n",
+  "redactions": [
+    "Local username replaced by ~ in probe.model_path; original report: /tmp/forum-worker-f01-ready-check.json"
+  ]
+}

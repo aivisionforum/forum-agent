@@ -7,7 +7,7 @@ use moxin_dora_bridge::dynamic_node_endpoint::request_dynamic_node_config;
 use std::{
     io::{BufRead, Write},
     net::SocketAddr,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 fn main() -> Result<()> {
@@ -30,7 +30,9 @@ fn main() -> Result<()> {
         _ => bail!("spike requires TCP node communication"),
     };
     let mut output = std::io::BufWriter::new(std::fs::File::create(&args[2])?);
-    let mut record = |value: serde_json::Value| -> Result<()> {
+    let mut record = |mut value: serde_json::Value| -> Result<()> {
+        value["observed_at_unix_ms"] =
+            serde_json::json!(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis());
         serde_json::to_writer(&mut output, &value)?;
         writeln!(output)?;
         output.flush()?;
@@ -70,6 +72,16 @@ fn main() -> Result<()> {
             Some(Event::Stop(cause)) => {
                 record(
                     serde_json::json!({"event": "stop", "dataflow_id": node.dataflow_id(), "cause": format!("{cause:?}"), "ticks": ticks}),
+                )?;
+                // Record that both official Drop implementations returned. This
+                // distinguishes missing client shutdown from daemon bookkeeping.
+                drop(events);
+                record(
+                    serde_json::json!({"event": "event_stream_drop_completed", "dataflow_id": flow_id}),
+                )?;
+                drop(node);
+                record(
+                    serde_json::json!({"event": "node_drop_completed", "dataflow_id": flow_id}),
                 )?;
                 return Ok(());
             }

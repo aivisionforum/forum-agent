@@ -95,9 +95,10 @@ def _valid_id(value: object) -> bool:
 class Protocol:
     """One initialized host connection, with no analysis work queue yet."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, allow_model_probe: bool = False) -> None:
         self.configuration: dict | None = None
         self.stopping = False
+        self.allow_model_probe = allow_model_probe
 
     def handle(self, frame: bytes) -> dict | None:
         try:
@@ -132,7 +133,10 @@ class Protocol:
         def success(result: dict) -> dict:
             return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
-        if method not in {"initialize", "health.ping", "shutdown", "jobs.run", "jobs.cancel"}:
+        known = {"initialize", "health.ping", "shutdown", "jobs.run", "jobs.cancel"}
+        if self.allow_model_probe:
+            known.add("diagnostics.model_probe")
+        if method not in known:
             return fail(-32601, "METHOD_NOT_FOUND", "Method is not supported.")
         if method == "initialize":
             if self.configuration is not None:
@@ -170,6 +174,14 @@ class Protocol:
             return fail(-32002, "NOT_INITIALIZED", "Initialize the connection first.")
         if method in {"jobs.run", "jobs.cancel"}:
             return fail(-32601, "CAPABILITY_UNAVAILABLE", "Analysis jobs are not implemented in this build.")
+        if method == "diagnostics.model_probe":
+            # Imports are lazy: normal lifecycle connections never import MLX.
+            from .model_probe import ProbeError, model_probe
+
+            try:
+                return success(model_probe(params))
+            except ProbeError as exc:
+                return fail(exc.number, exc.code, str(exc))
         if not isinstance(params, dict) or params:
             return fail(-32602, "INVALID_PARAMS", "This method accepts no parameters.")
         if method == "health.ping":

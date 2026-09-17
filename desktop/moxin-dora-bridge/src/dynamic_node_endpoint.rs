@@ -1,10 +1,10 @@
-//! Experimental explicit-daemon adapter for the F01 isolation spike.
+//! Explicit-daemon adapter for an exclusively owned Forum runtime.
 //!
 //! Unlike `DoraNode::init_from_node_id`, this never chooses a default port. It
 //! uses the official dora-node-api 0.4.1 / dora-message 0.7.0 request types and
 //! framing. It only fetches a bounded, identity-checked config. `DoraNode::init`
-//! still has upstream unbounded registration calls, so the spike invokes that
-//! step in a separately supervised process. Production bridges do not call this.
+//! still has upstream unbounded registration calls. Production retains each
+//! worker handle and tears down its owned daemon to unblock failed shutdowns.
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use dora_message::{
@@ -110,6 +110,73 @@ pub fn request_dynamic_node_config(
         }
     }
     Ok(config)
+}
+
+/// Production bridges fail closed without an explicitly owned context.
+/// The registration step belongs to a retained worker thread; it must not run
+/// on the UI thread. A caller may not replace the worker after a join timeout.
+pub fn init_from_shared(
+    shared: Option<&crate::shared_state::SharedDoraState>,
+    node_id: NodeId,
+) -> Result<(dora_node_api::DoraNode, dora_node_api::EventStream)> {
+    let context = shared
+        .and_then(|state| state.dynamic_node_context.read().clone())
+        .ok_or_else(|| anyhow!("No owned Dora endpoint; refusing default-port connection"))?;
+    let config = request_owned_node_config(&context, node_id)?;
+    dora_node_api::DoraNode::init(config).map_err(|error| anyhow!("Dora registration: {error:#}"))
+}
+
+/// Resolve the same verified config for directly supervised binary nodes.
+pub fn request_owned_node_config(
+    context: &crate::owned_runtime::DynamicNodeContext,
+    node_id: NodeId,
+) -> Result<NodeConfig> {
+    let config = request_dynamic_node_config(
+        context.daemon_addr,
+        context.dataflow_id,
+        node_id,
+        Duration::from_secs(2),
+    )?;
+    let Some(DaemonCommunication::Tcp { socket_addr }) = &config.daemon_communication else {
+        bail!("Owned dynamic nodes require TCP communication");
+    };
+    verify_event_listener(context.daemon_pid, *socket_addr)?;
+    Ok(config)
+}
+
+fn verify_event_listener(pid: u32, address: SocketAddr) -> Result<()> {
+    use std::{fs, os::unix::fs::DirBuilderExt, process::Command};
+    ensure!(
+        pid > 1 && address.ip().is_loopback(),
+        "invalid owned daemon identity"
+    );
+    let directory = std::env::temp_dir().join(format!("forum-endpoint-{}", uuid::Uuid::new_v4()));
+    fs::DirBuilder::new().mode(0o700).create(&directory)?;
+    let result = (|| {
+        let mut command = Command::new("/usr/sbin/lsof");
+        command.args([
+            "-nP",
+            "-a",
+            "-p",
+            &pid.to_string(),
+            "-iTCP",
+            "-sTCP:LISTEN",
+            "-Fn",
+        ]);
+        let output =
+            crate::owned_process::run_bounded(command, &directory, Duration::from_secs(2))?;
+        let expected = format!("n{address}");
+        ensure!(
+            output.status.success()
+                && std::str::from_utf8(&output.stdout)?
+                    .lines()
+                    .any(|line| line == expected),
+            "dynamic-node event port is not owned by the expected daemon PID"
+        );
+        Ok(())
+    })();
+    let _ = fs::remove_dir(&directory);
+    result
 }
 
 fn remaining(deadline: Instant) -> Result<Duration> {

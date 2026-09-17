@@ -11,6 +11,8 @@ pub mod dispatcher;
 pub mod dynamic_node_endpoint;
 pub mod error;
 pub mod parser;
+pub mod owned_process;
+pub mod owned_runtime;
 pub mod shared_state;
 
 // Widget-specific bridges
