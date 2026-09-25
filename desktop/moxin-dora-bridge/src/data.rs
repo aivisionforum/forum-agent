@@ -57,6 +57,10 @@ impl EventMetadata {
 
 #[derive(Debug, Clone)]
 pub struct SentenceUnit {
+    /// Durable source identity; absent only for synthetic/legacy captions.
+    pub segment_id: Option<forum_contracts::Uuid>,
+    pub source_revision: Option<u32>,
+    pub language_texts: HashMap<String, String>,
     pub source_text: String,
     pub translation: String,
     pub source_language: String,

@@ -11,6 +11,7 @@ pub struct AppPreferences {
     pub app_language: String,
     pub accent_theme: String,
     pub translation_recording_enabled: bool,
+    pub meeting_speakers_enabled: bool,
     pub translation_auto_save_transcript: bool,
     pub translation_periodic_save_transcript: bool,
     pub translation_transcript_file_name: String,
@@ -25,9 +26,6 @@ pub struct AppPreferences {
     pub translation_anchor_position_preset: String,
     pub translation_final_interval_seconds: u64,
     pub translation_keep_awake: bool,
-    pub experimental_spoken_translation_enabled: bool,
-    pub experimental_spoken_translation_output_device: Option<String>,
-    pub experimental_spoken_translation_voice: Option<String>,
 }
 
 impl Default for AppPreferences {
@@ -36,6 +34,7 @@ impl Default for AppPreferences {
             app_language: "zh".into(),
             accent_theme: "neon-blue".into(),
             translation_recording_enabled: true,
+            meeting_speakers_enabled: false,
             translation_auto_save_transcript: false,
             translation_periodic_save_transcript: false,
             translation_transcript_file_name: "transcript.md".into(),
@@ -50,9 +49,6 @@ impl Default for AppPreferences {
             translation_anchor_position_preset: "50".into(),
             translation_final_interval_seconds: DEFAULT_FINAL_INTERVAL_SECONDS,
             translation_keep_awake: true,
-            experimental_spoken_translation_enabled: false,
-            experimental_spoken_translation_output_device: None,
-            experimental_spoken_translation_voice: Some("apple-voice-1".into()),
         }
     }
 }
@@ -184,13 +180,32 @@ mod tests {
     }
 
     #[test]
-    fn spoken_translation_is_off_by_default() {
-        assert!(!AppPreferences::default().experimental_spoken_translation_enabled);
+    fn live_translation_keeps_the_screen_awake_by_default() {
+        assert!(AppPreferences::default().translation_keep_awake);
     }
 
     #[test]
-    fn live_translation_keeps_the_screen_awake_by_default() {
-        assert!(AppPreferences::default().translation_keep_awake);
+    fn legacy_tts_preferences_are_ignored_without_resetting_meeting_settings() {
+        let preferences: AppPreferences = serde_json::from_str(
+            r#"{
+            "experimental_spoken_translation_enabled": true,
+            "experimental_spoken_translation_voice": "apple-voice-1",
+            "experimental_spoken_translation_output_device": "Speakers",
+            "translation_source_language": "auto",
+            "translation_target_language": "bilingual",
+            "meeting_speakers_enabled": true
+        }"#,
+        )
+        .unwrap();
+        assert_eq!(preferences.translation_source_language, "auto");
+        assert_eq!(preferences.translation_target_language, "bilingual");
+        assert!(preferences.meeting_speakers_enabled);
+        let saved = serde_json::to_value(preferences).unwrap();
+        assert!(!saved
+            .as_object()
+            .unwrap()
+            .keys()
+            .any(|key| key.contains("spoken_translation")));
     }
 
     #[test]

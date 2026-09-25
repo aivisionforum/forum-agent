@@ -12,7 +12,8 @@ from forum_agent import replay
 from forum_agent.constants import (FIXTURE_WAV, INSIGHTS_HISTORY,
                                    INSIGHTS_JSON, MINUTES_MD,
                                    MSG_SESSION_RESET, SESSIONS_DIR,
-                                   TRANSCRIPT_JSONL, TRANSLATIONS_JSONL)
+                                   TRANSCRIPT_JSONL, TRANSLATIONS_JSONL,
+                                   TRANSLATION_DEMO)
 
 
 def archive_live(room: str) -> str | None:
@@ -158,7 +159,8 @@ class SessionManager:
         from forum_agent.server import hub
         archive_live(room)         # previous session -> data/sessions/<id>/
         engine(room).reset()       # fresh state for the new meeting
-        engine(room).start_auto()  # C4: auto-refresh while session runs
+        if not TRANSLATION_DEMO:
+            engine(room).start_auto()  # C4: auto-refresh while session runs
         # open subtitle/insight pages clear themselves for the new session
         hub.broadcast_from_thread(room, {"type": MSG_SESSION_RESET})
 
@@ -247,6 +249,8 @@ class SessionManager:
         """Minutes are what people expect right after a meeting ends, so
         draft them automatically in the background (progress shows via the
         activity registry on every page)."""
+        if TRANSLATION_DEMO:
+            return
         from forum_agent.insights import engine
 
         def _run() -> None:

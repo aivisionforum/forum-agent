@@ -7,9 +7,17 @@ struct State {
     live: bool,
     preparing: bool,
     pressure: Option<String>,
+    pressure_yield_at: Option<Instant>,
     background: bool,
     background_live_eligible: bool,
     shutdown: bool,
+}
+
+// Under sustained, recoverable backlog, reserve a bounded 2 s catch-up slice
+// out of each 8 s instead of starving live insight work indefinitely.
+fn catch_up_slice(state: &State, now: Instant) -> bool {
+    state.pressure_yield_at.is_some_and(|start| now >= start
+        && now.duration_since(start).as_millis() % 8000 < 2000)
 }
 
 #[derive(Clone, Default)]
@@ -55,12 +63,27 @@ impl ResourceBudget {
             state.live = false;
             state.preparing = false;
             state.pressure = None;
+            state.pressure_yield_at = None;
         }
         self.0 .1.notify_all();
     }
     pub fn set_pressure(&self, reason: Option<String>) {
         if let Ok(mut state) = self.0 .0.lock() {
             state.pressure = reason;
+            state.pressure_yield_at = None;
+        }
+    }
+    /// Brief ASR bursts allow concurrent insights. Sustained pressure gives
+    /// captions bounded catch-up slices while retaining analysis progress.
+    pub fn set_transient_pressure(&self, reason: String, grace: Duration) {
+        self.set_transient_pressure_at(reason, grace, Instant::now());
+    }
+    fn set_transient_pressure_at(&self, reason: String, grace: Duration, now: Instant) {
+        if let Ok(mut state) = self.0 .0.lock() {
+            if state.pressure.is_none() {
+                state.pressure_yield_at = Some(now + grace);
+            }
+            state.pressure = Some(reason);
         }
     }
     pub fn shutdown(&self) {
@@ -83,7 +106,8 @@ impl ResourceBudget {
         } else if state.live && !live_eligible {
             Some("等待采音及字幕收尾完成")
         } else {
-            state.pressure.as_deref()
+            state.pressure.as_deref().filter(|_| state.pressure_yield_at.is_none()
+                || !live_eligible || catch_up_slice(&state, Instant::now()))
         };
         if let Some(reason) = reason {
             return Err(reason.to_string());
@@ -94,6 +118,24 @@ impl ResourceBudget {
     }
 
     pub fn yield_reason(&self) -> Option<String> {
+        self.yield_reason_at(Instant::now())
+    }
+    /// Small live analysis can retain its model/KV state while ASR catches up.
+    /// Lifecycle transitions and hard storage failures still require exit.
+    pub fn pause_reason(&self) -> Option<String> {
+        self.pause_reason_at(Instant::now())
+    }
+    fn pause_reason_at(&self, now: Instant) -> Option<String> {
+        let state = self.0 .0.lock().ok()?;
+        if state.shutdown || state.preparing || (state.live && !state.background_live_eligible) {
+            return None;
+        }
+        state
+            .pressure
+            .clone()
+            .filter(|_| catch_up_slice(&state, now))
+    }
+    fn yield_reason_at(&self, now: Instant) -> Option<String> {
         let state = self.0 .0.lock().ok()?;
         if state.shutdown {
             Some("应用正在退出".into())
@@ -102,7 +144,10 @@ impl ResourceBudget {
         } else if state.live && !state.background_live_eligible {
             Some("实时字幕优先".into())
         } else {
-            state.pressure.clone()
+            state
+                .pressure
+                .clone()
+                .filter(|_| state.pressure_yield_at.is_none() || catch_up_slice(&state, now))
         }
     }
 }
@@ -143,5 +188,32 @@ mod tests {
         drop(insight);
         gate.finish_live();
         assert!(gate.admit(false).is_ok());
+    }
+    #[test]
+    fn transient_backlog_allows_concurrency_and_sustained_backlog_has_bounded_pause() {
+        let gate = ResourceBudget::default();
+        let permit = gate.admit(true).unwrap();
+        let now = Instant::now();
+        gate.set_transient_pressure_at("ASR backlog".into(), Duration::from_secs(6), now);
+        assert!(gate.yield_reason_at(now + Duration::from_secs(5)).is_none());
+        assert!(gate.pause_reason_at(now + Duration::from_secs(5)).is_none());
+        gate.set_transient_pressure_at(
+            "larger backlog".into(),
+            Duration::from_secs(6),
+            now + Duration::from_secs(5),
+        );
+        assert!(gate.yield_reason_at(now + Duration::from_secs(6)).is_some());
+        assert!(gate.pause_reason_at(now + Duration::from_secs(6)).is_some());
+        assert!(gate.pause_reason_at(now + Duration::from_secs(8)).is_none());
+        assert!(gate.yield_reason_at(now + Duration::from_secs(8)).is_none());
+        assert!(gate.pause_reason_at(now + Duration::from_secs(14)).is_some());
+        gate.set_pressure(None);
+        assert!(gate.yield_reason_at(now + Duration::from_secs(7)).is_none());
+        drop(permit);
+        gate.set_transient_pressure("brief burst".into(), Duration::from_secs(6));
+        let _live_analysis = gate.admit(true).unwrap();
+        gate.set_pressure(Some("storage failure".into()));
+        assert_eq!(gate.yield_reason().as_deref(), Some("storage failure"));
+        assert!(gate.pause_reason().is_none());
     }
 }

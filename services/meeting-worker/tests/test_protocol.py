@@ -59,7 +59,7 @@ class WorkerProtocolTests(unittest.TestCase):
         self.assertEqual(initialized["protocol_version"], 1)
         self.assertEqual(initialized["build_version"], "0.1.0")
         self.assertEqual(initialized["capabilities"], {
-            "health": True, "task_types": ["insight", "minutes", "event_report", "suggested_questions", "redaction_review", "closing_brief"], "model_clients": ["local-mlx"],
+            "health": True, "cooperative_pause": True, "task_types": ["insight", "minutes", "event_report", "suggested_questions", "redaction_review", "closing_brief"], "model_clients": ["local-mlx"],
         })
         self.assertEqual(messages[1]["result"]["status"], "ok")
         self.assertEqual(messages[2]["error"]["data"]["code"], "INVALID_PARAMS")

@@ -152,6 +152,9 @@ pub struct TranslationRequested {
     pub target_language: String,
     pub direction_epoch: u64,
     pub source_spans: Vec<SourceSpan>,
+    /// Earlier source for disambiguation only; it is not translated/claimed again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub context_spans: Vec<SourceSpan>,
     pub input_text: String,
     pub normalization_version: String,
     pub backend: String,
@@ -183,7 +186,10 @@ impl TranslationRequested {
             return Err(ValidationError::Invalid("input_text"));
         }
         let mut seen = Vec::<&SourceSpan>::new();
-        for span in &self.source_spans {
+        if self.context_spans.len() > 4 || self.context_spans.iter().map(|s| s.quote.chars().count()).sum::<usize>() > 720 {
+            return Err(ValidationError::Invalid("translation_context_budget"));
+        }
+        for span in self.source_spans.iter().chain(&self.context_spans) {
             non_nil(span.segment_id, "segment_id")?;
             if span.end_utf8 <= span.start_utf8
                 || span.quote.len() != span.end_utf8 - span.start_utf8

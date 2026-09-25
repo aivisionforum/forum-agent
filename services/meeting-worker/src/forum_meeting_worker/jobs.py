@@ -21,6 +21,7 @@ class Jobs:
         self.process = None
         self.identity = None
         self.cancelled = threading.Event()
+        self.paused = False
 
     def start(self, request_id, params, configuration):
         validate_run(params, configuration)
@@ -42,9 +43,22 @@ class Jobs:
         return {'job_id': params['job_id'], 'attempt': params['attempt'], 'status': 'cancel_requested'}
 
     def _signal_cancel(self):
+        self._signal(b'!')
+
+    def set_paused(self, params):
+        require(isinstance(params, dict) and set(params) == {'job_id', 'attempt', 'paused'}, 'Flow control requires job_id, attempt and paused.')
+        uuid(params['job_id']); integer(params['attempt'], 1, 1000)
+        require(type(params['paused']) is bool, 'paused must be a boolean.')
+        with self.lock:
+            require(self.identity == (params['job_id'], params['attempt']), 'Flow control identifies another attempt.')
+            self.paused = params['paused']
+            self._signal(b'P' if self.paused else b'R')
+        return {'job_id': params['job_id'], 'attempt': params['attempt'], 'status': 'flow_requested'}
+
+    def _signal(self, command):
         if self.process is not None and self.process.stdin:
             try:
-                self.process.stdin.write(b'!')
+                self.process.stdin.write(command)
                 self.process.stdin.flush()
             except (BrokenPipeError, OSError):
                 pass
@@ -79,6 +93,8 @@ class Jobs:
                 self.process = process
                 if self.cancelled.is_set():
                     self._signal_cancel()
+                elif self.paused:
+                    self._signal(b'P')
             pending = bytearray()
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout, selectors.EVENT_READ)
@@ -103,7 +119,7 @@ class Jobs:
                             require(final is None, 'Duplicate compute result.', 'WORKER_EXITED')
                             final = value
                         else:
-                            require(method in ('jobs.progress', 'jobs.checkpoint') and final is None, 'Invalid compute notification.', 'WORKER_EXITED')
+                            require(method in ('jobs.progress', 'jobs.checkpoint', 'jobs.flow') and final is None, 'Invalid compute notification.', 'WORKER_EXITED')
                             self.emit({'jsonrpc': '2.0', **value})
                     require(len(pending) <= 1024 * 1024, 'Compute frame too large.', 'INVALID_MODEL_OUTPUT')
             require(process.wait(timeout=max(0.01, deadline - time.monotonic())) == 0,

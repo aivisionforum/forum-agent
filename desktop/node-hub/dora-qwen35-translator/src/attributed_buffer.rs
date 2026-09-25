@@ -215,6 +215,11 @@ impl AttributedBuffer {
                 .last()
             {
                 end = boundary;
+            } else if let Some((boundary, _)) = graphemes.iter().take(max_graphemes)
+                .filter(|(_, g)| g.chars().all(char::is_whitespace)).last() {
+                // Preserve whole words when a long source has no punctuation.
+                // Non-spaced scripts still use the bounded grapheme fallback.
+                if text[..*boundary].trim().len() > 0 { end = *boundary; }
             }
             // Keep source trailing whitespace with the preceding text, rather
             // than leaving a whitespace-only coverage fragment behind.
@@ -347,6 +352,16 @@ mod tests {
         let mut buf = AttributedBuffer::new(JoinMode::Space);
         buf.append(span(Uuid::new_v4(), "不要", 0)).unwrap();
         assert_eq!(buf.take_chunk(160).unwrap().unwrap().input_text, "不要");
+    }
+    #[test]
+    fn long_unpunctuated_speech_preserves_word_boundaries_and_exact_coverage() {
+        let mut buf = AttributedBuffer::new(JoinMode::Space);
+        let text = "monetizing intellectual property";
+        buf.append(span(Uuid::new_v4(), text, 0)).unwrap();
+        let first = buf.take_chunk(18).unwrap().unwrap();
+        assert_eq!(first.input_text, "monetizing ");
+        let second = buf.take_chunk(40).unwrap().unwrap();
+        assert_eq!(first.input_text + &second.input_text, text);
     }
     #[test]
     fn duplicate_and_overlap_do_not_mutate_buffer() {

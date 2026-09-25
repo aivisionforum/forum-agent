@@ -1,10 +1,12 @@
 //! F01 text-only smoke probe using the production MLX worker, without Dora or audio.
 //! Reads a JSON case array from a local file (or stdin with `-`). Never downloads weights.
 #[cfg(target_os = "macos")]
-#[path = "../src/backend_mlx.rs"]
+#[path = "../src/backend_python.rs"]
 mod backend_mlx;
 #[path = "../src/generation_control.rs"]
 mod generation_control;
+#[path = "../src/translation_prompt.rs"]
+mod translation_prompt;
 
 // The binary's private wire types are reproduced here only to call its unchanged backend.
 #[derive(Debug)]
@@ -62,6 +64,8 @@ fn main() -> anyhow::Result<()> {
         source_language: String,
         target_language: String,
         text: String,
+        #[serde(default)]
+        context: String,
         #[serde(default)]
         cancel_after_streams: Option<usize>,
     }
@@ -155,6 +159,16 @@ fn main() -> anyhow::Result<()> {
         .context("model did not become ready")?
         .map_err(|error| anyhow!(error))?;
     let load_ms = load_start.elapsed().as_secs_f64() * 1000.0;
+    // Optional local benchmark barrier: all model processes load before timing.
+    if let Some(path) = std::env::var_os("FORUM_TRANSLATION_PROBE_BARRIER") {
+        let path = PathBuf::from(path);
+        std::fs::write(path.with_extension("translation-ready"), b"ready")?;
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while !path.is_file() {
+            ensure!(Instant::now() < deadline, "benchmark start barrier timed out");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
     let mut failed = false;
     for (index, case) in cases.into_iter().enumerate() {
         let commit_id = i64::try_from(index + 1)?;
@@ -163,16 +177,8 @@ fn main() -> anyhow::Result<()> {
             target_language: case.target_language.clone(),
             epoch: 0,
         };
-        let target_display = if case.target_language == "zh" {
-            "Chinese"
-        } else {
-            "English"
-        };
-        // These are the current main.rs build_system_prompt/build_translation_user_prompt.
-        let system_prompt = format!(
-            "/no_think You are a translation engine. Translate the source text into {target_display}. Output only the translated text. Do not include source/translation labels, do not explain, do not repeat the source."
-        );
-        let user_prompt = format!("Source:\n{}", case.text);
+        let system_prompt = translation_prompt::system(&case.target_language);
+        let user_prompt = translation_prompt::user(&case.text, &case.context);
         let observed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
         let started = Instant::now();
         let control = generation_control::GenerationControl::new(Duration::from_secs(45), true);
@@ -275,8 +281,9 @@ fn main() -> anyhow::Result<()> {
                 "max_tokens": 256,
                 "model_path": model_dir,
                 "model_revision": null,
-                "runtime_source_revision": "6aac996db8b71fb7dae7a2409c46b4f2ade93092",
-                "scope": "direct MLX worker only; no ASR, Dora, UI, audio, concurrency or meeting-quality validation"
+                "runtime_source_revision": std::env::var("FORUM_PROBE_SOURCE_REVISION").ok(),
+                "backend": "hy-mt2-mlx",
+                "scope": "direct production MLX worker; external coordinator may run other models concurrently; no Dora/UI or live meeting-quality validation"
             }),
         )?;
         writeln!(results)?;

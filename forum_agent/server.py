@@ -119,6 +119,8 @@ async def api_status() -> dict:
     from forum_agent import activity, preflight
     from forum_agent.constants import MINUTES_MD, REPORT_MD
     status["ram_warning"] = preflight.warning
+    from forum_agent.constants import TRANSLATION_DEMO
+    status["translation_demo"] = TRANSLATION_DEMO
     status["activity"] = activity.current()
     status["report_exists"] = Path(REPORT_MD).exists()
     status["minutes_exists"] = Path(

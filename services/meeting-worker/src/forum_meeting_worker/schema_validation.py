@@ -53,11 +53,15 @@ class ContractValidator:
             if separator is None:
                 raise ContractError("unsupported normalization")
             spans = payload["source_spans"]
-            for i, span in enumerate(spans):
+            context = payload.get("context_spans", [])
+            if len(context) > 4 or sum(len(s["quote"]) for s in context) > 720:
+                raise ContractError("translation context budget exceeded")
+            all_spans = spans + context
+            for i, span in enumerate(all_spans):
                 if (span["end_utf8"] <= span["start_utf8"]
                         or len(span["quote"].encode("utf-8")) != span["end_utf8"] - span["start_utf8"]):
                     raise ContractError("invalid UTF-8 source range")
-                for prior in spans[:i]:
+                for prior in all_spans[:i]:
                     if (prior["segment_id"] == span["segment_id"]
                             and prior["segment_revision"] == span["segment_revision"]
                             and prior["start_utf8"] < span["end_utf8"]

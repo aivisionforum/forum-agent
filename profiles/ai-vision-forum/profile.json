@@ -82,7 +82,7 @@
     "selection_status": "candidates_pending_F01_manifest_and_benchmarks",
     "asr": "mlx-community/Qwen3-ASR-1.7B-8bit",
     "asr_comparison": "mlx-community/whisper-large-v3-turbo",
-    "translation": "mlx-community/Qwen3.5-2B-MLX-4bit",
+    "translation": "mlx-community/Hy-MT2-1.8B-4bit",
     "live_insights": "mlx-community/Qwen3-8B-4bit",
     "minutes_and_report_standard": "mlx-community/Qwen3-8B-4bit",
     "optional_post_session_batch": "mlx-community/Qwen2.5-32B-Instruct-4bit",

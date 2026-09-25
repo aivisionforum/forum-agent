@@ -14,6 +14,14 @@
     type ArtifactVisibilityCommand, type ExportFormat } from './lib/forum/client';
   import { recoverMeeting, type RuntimeState } from './lib/api';
 
+  export let requestedSession: string | null = null;
+  export let requestVersion = 0;
+  let handledRequest = 0;
+  $: if (requestVersion !== handledRequest) {
+    handledRequest = requestVersion;
+    if (requestedSession) selectSession(requestedSession);
+    tab = 'insights';
+  }
   export let running = false;
   export let active = true;
   const dispatch = createEventDispatcher<{ runtime: RuntimeState }>();
@@ -195,8 +203,6 @@
     finally { if (!destroyed) importBusy = false; }
   }
   function openDisplay() { void mutate(() => client.displayInfo(selected), info => { displayUrl = info.url; displayExpires = info.expiresAt; }); }
-  function startClosing(language: 'zh' | 'en') { if (!selectedArtifact || running) return;const a=selectedArtifact;void mutate(() => client.transport.call('start_closing_readout',{artifactId:a.artifact_id,expectedRevision:a.revision,language}),()=>{notice='正在朗读已审核公开版。';}); }
-  function stopClosing() { void mutate(() => client.transport.call('stop_closing_readout'),()=>{notice='闭幕朗读已停止。';}); }
   function recover() { void mutate(() => recoverMeeting(selected), result => dispatch('runtime',result)); }
   function translationsFor(id:string) { return transcript?.translations.filter(t => t.request.source_spans[0]?.segment_id === id) ?? []; }
   function combinedElsewhere(id:string) { return transcript?.translations.some(t => t.request.source_spans[0]?.segment_id !== id && t.request.source_spans.some(s => s.segment_id === id)) ?? false; }
@@ -230,7 +236,7 @@
         <div class="selected-heading"><div><h3>{summary?.session.title ?? '所选会议'}</h3><span>{summary ? sessionStatus[summary.status.state] ?? summary.status.state : ''}</span></div><button disabled={!writable || actionBusy} on:click={openDisplay}>打开只读大屏 ↗</button></div>
         {#if displayUrl}<div class="display-link"><a href={displayUrl} target="_blank" rel="noopener noreferrer">点击打开本场大屏 ↗</a><span>只显示人工发布内容 · 有效至 {new Date(displayExpires).toLocaleTimeString()}</span></div>{/if}
         <nav class="workspace-tabs" aria-label="会议内容"><button class:active={tab === 'transcript'} on:click={() => { tab = 'transcript'; void loadTranscript(); }}>原文与译文</button><button class:active={tab === 'jobs'} on:click={() => { tab = 'jobs'; void loadAnalysis(); }}>分析任务</button><button class:active={tab === 'insights'} on:click={() => { tab = 'insights'; void loadAnalysis(); }}>洞察与审核</button><button class:active={tab === 'documents'} on:click={() => { tab = 'documents'; void loadAnalysis(); }}>纪要与报告</button></nav>
-        <div class="create-bar"><label><span>生成会议成果</span><select bind:value={createKind}>{#each Object.entries(kindLabels).filter(([kind])=>kind!=='closing_brief') as [kind,label]}<option value={kind}>{label}</option>{/each}</select></label><button class="primary" disabled={!writable || actionBusy || (createKind === 'event_report' && reportSessions.length === 0)} on:click={createJob}>＋ 创建任务</button><p>每 3 分钟自动生成洞察，停止后自动排队生成纪要；实时翻译优先。</p></div>
+        <div class="create-bar"><label><span>生成会议成果</span><select bind:value={createKind}>{#each Object.entries(kindLabels).filter(([kind])=>kind!=='closing_brief') as [kind,label]}<option value={kind}>{label}</option>{/each}</select></label><button class="primary" disabled={!writable || actionBusy || (createKind === 'event_report' && reportSessions.length === 0)} on:click={createJob}>＋ 创建任务</button><p>约每 30 秒更新洞察并保留已有重点，停止后自动排队生成纪要；实时翻译优先。</p></div>
         {#if createKind === 'event_report'}<fieldset class="report-picker"><legend>明确选择报告来源（仅使用已发布资料）</legend>{#each sessions.filter(s => s.session.event_id === summary?.session.event_id) as item}<label><input type="checkbox" bind:group={reportSessions} value={item.session.session_id} />{item.session.title}</label>{/each}<small>没有已发布纪要或洞察时，不会自动回退为草稿。</small></fieldset>{/if}
         {#if analysis?.notice}<p class="message error" role="status">{analysis.notice}</p>{/if}
         {#if error}<div class="message error" role="alert">{error}<button on:click={() => error = ''} aria-label="关闭错误提示">×</button></div>{/if}
@@ -249,7 +255,7 @@
           <div class="pagination"><span>{analysisBusy ? '正在更新任务…' : afterJobs ? '历史任务页' : '任务状态自动更新'}</span><button disabled={analysisBusy} on:click={() => {afterJobs=null;void loadAnalysis();}}>最新任务</button><button disabled={analysisBusy || !analysis?.next_jobs} on:click={() => loadAnalysis('jobs')}>下一页 →</button></div>
         {:else}
           {#if artifacts.length}<div class="artifact-picker"><label>选择版本成果<select bind:value={selectedArtifactId} on:change={() => artifactGeneration++}>{#if heldArtifact && !artifacts.some(a => a.artifact_id === heldArtifact?.artifact_id)}<option value={heldArtifact.artifact_id}>{heldArtifact.content.title} · v{heldArtifact.revision} · 当前查看</option>{/if}{#each artifacts as artifact}<option value={artifact.artifact_id}>{artifact.content.title} · v{artifact.revision} · {reviewLabels[artifact.review]} · {publicationLabels[artifact.publication]}</option>{/each}</select></label></div>{/if}
-          {#if selectedArtifact}{#key selectedArtifact.artifact_id}<ArtifactDetail bind:this={artifactView} artifact={selectedArtifact} {running} busy={actionBusy || !writable} on:startClosing={e => startClosing(e.detail)} on:stopClosing={stopClosing} on:edit={e => edit(e.detail)} on:review={e => review(e.detail)} on:publish={e => publish(e.detail)} on:hide={e => hide(e.detail)} on:evidence={e => showEvidence(e.detail)} on:export={e => download(e.detail)} />{/key}
+          {#if selectedArtifact}{#key selectedArtifact.artifact_id}<ArtifactDetail bind:this={artifactView} artifact={selectedArtifact} busy={actionBusy || !writable} on:edit={e => edit(e.detail)} on:review={e => review(e.detail)} on:publish={e => publish(e.detail)} on:hide={e => hide(e.detail)} on:evidence={e => showEvidence(e.detail)} on:export={e => download(e.detail)} />{/key}
           {:else}<div class="empty-state"><h3>{tab === 'insights' ? '让讨论形成可核查的洞察' : '把整场讨论整理成完整纪要'}</h3><p>从上方创建任务。模型完成后先生成私有草稿，审核后才能公开。</p></div>{/if}
           <div class="pagination"><span>{analysisBusy ? '正在更新…' : afterArtifacts ? '历史成果页' : '显示当前成果'}</span><button disabled={analysisBusy} on:click={() => {afterArtifacts=null;void loadAnalysis();}}>最新成果</button><button disabled={analysisBusy || !analysis?.next_artifacts} on:click={() => loadAnalysis('artifacts')}>下一页 →</button></div>
         {/if}

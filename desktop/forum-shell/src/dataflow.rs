@@ -20,15 +20,22 @@ pub fn render_translation_dataflow(
 
     let template_path = resolve_template(resource_dir)
         .ok_or_else(|| "translation_qwen35.yml was not found".to_string())?;
-    let template = fs::read_to_string(&template_path)
-        .map_err(|error| format!("Could not read translation dataflow: {error}"))?;
+    let transcription_only = options.target_language == "none";
+    let template = if transcription_only {
+        include_str!("../dataflow/transcription.yml").to_string()
+    } else {
+        fs::read_to_string(&template_path)
+            .map_err(|error| format!("Could not read translation dataflow: {error}"))?
+    };
 
     let asr_path = resolve_binary("dora-qwen3-asr").ok_or_else(|| {
         "dora-qwen3-asr is missing; build it before starting translation".to_string()
     })?;
-    let translator_path = resolve_binary("dora-qwen35-translator").ok_or_else(|| {
-        "dora-qwen35-translator is missing; build it before starting translation".to_string()
-    })?;
+    let translator_path = if transcription_only { PathBuf::new() } else {
+        resolve_binary("dora-qwen35-translator").ok_or_else(|| {
+            "dora-qwen35-translator is missing; build it before starting translation".to_string()
+        })?
+    };
 
     let (start_frames, end_frames, end_ms, question_end_ms, min_segment_ms, start_rms, end_rms) =
         match options.source_language {
@@ -51,7 +58,7 @@ pub fn render_translation_dataflow(
     // Explicit values travel in the graph as well as the CLI environment, so
     // an already-running Dora daemon cannot select a different model directory.
     let asr_model_path = yaml_path(options.asr_model_path)?;
-    let translator_model_path = yaml_path(options.translator_model_path)?;
+    let translator_model_path = if transcription_only { String::new() } else { yaml_path(options.translator_model_path)? };
     let rendered = template
         .replace("__ASR_MODEL_PATH__", &asr_model_path)
         .replace("__TRANSLATOR_MODEL_PATH__", &translator_model_path)
@@ -258,11 +265,6 @@ mod tests {
                 translator_model_path: Path::new("/test \"quoted\"/translator"),
             },
         );
-        if let Some(previous) = previous_binary_dir {
-            env::set_var("FORUM_AGENT_DORA_BIN_DIR", previous);
-        } else {
-            env::remove_var("FORUM_AGENT_DORA_BIN_DIR");
-        }
         let rendered = rendered.expect("translation dataflow should render");
         let content = fs::read_to_string(rendered).expect("rendered dataflow should be readable");
         assert!(!content.contains("__TRANSLATION_SRC_LANG__"));
@@ -274,11 +276,33 @@ mod tests {
         assert!(!content.contains("__TRANSLATOR_MODEL_PATH__"));
         assert!(content.contains(r#"QWEN3_ASR_MODEL_PATH: "/test model dir/asr""#));
         assert!(content.contains(r#"QWEN35_TRANSLATOR_MODEL_PATH: "/test \"quoted\"/translator""#));
+        // A source-only graph has no translator process, even without a usable model path.
+        for language in ["zh", "en"] {
+            let path = render_translation_dataflow(None, RenderOptions {
+                source_language: language, target_language: "none", system_audio: false,
+                max_segment_ms: 3000, asr_model_path: Path::new("/test model dir/asr"),
+                translator_model_path: Path::new("unused"),
+            }).unwrap();
+            let source_only = fs::read_to_string(path).unwrap();
+            assert!(source_only.contains(&format!("LANGUAGE: \"{language}\"")));
+            assert!(source_only.contains("TARGET_LANGUAGE: \"none\""));
+            assert!(source_only.contains("- id: asr"));
+            assert!(source_only.contains("- id: moxin-translation-listener"));
+            assert!(!source_only.contains("- id: translator"));
+            assert!(!source_only.contains("QWEN35_TRANSLATOR_MODEL_PATH"));
+            assert!(!source_only.contains("translator/"));
+            assert!(!source_only.contains("__ASR"));
+        }
+        if let Some(previous) = previous_binary_dir {
+            env::set_var("FORUM_AGENT_DORA_BIN_DIR", previous);
+        } else {
+            env::remove_var("FORUM_AGENT_DORA_BIN_DIR");
+        }
         let _ = fs::remove_dir_all(binary_dir);
     }
 
     #[test]
-    fn native_speech_keeps_tts_out_of_the_dora_graph() {
+    fn translation_graph_contains_no_speech_synthesis() {
         let template = resolve_template(None).expect("translation template should resolve");
         let content = fs::read_to_string(template).expect("template should be readable");
         assert!(!content.contains("qwen-tts"));

@@ -1,7 +1,7 @@
 //! Production Forum mode: request and results cross the durable local core IPC.
 //! Dora keeps process ownership; transient text inputs never create work here.
 use crate::{
-    backend, build_system_prompt, build_translation_user_prompt,
+    backend,
     durable_queue::{AcknowledgedResult, AttemptKey, DurableQueue, PASSTHROUGH_BACKEND},
     generation_control::GenerationControl,
     DirectionMeta, TranslationTask, TranslationWorkerEvent,
@@ -203,8 +203,8 @@ pub fn run(mut node: DoraNode, mut events: EventStream, mut config: RuntimeConfi
                             request_tx.send(TranslationTask {
                                 commit_id: sequence,
                                 source_text: request.input_text.clone(),
-                                system_prompt: build_system_prompt(&request.target_language),
-                                user_prompt: build_translation_user_prompt(&request.input_text),
+                                system_prompt: crate::translation_prompt::system(&request.target_language),
+                                user_prompt: crate::translation_prompt::user(&request.input_text, &request.context_spans.iter().map(|s| s.quote.as_str()).collect::<Vec<_>>().join(" ")),
                                 direction: DirectionMeta {
                                     source_language: "durable-source".into(),
                                     target_language: request.target_language.clone(),

@@ -158,8 +158,8 @@ def validate_lifecycle_replies(requests: list[dict], replies: list[dict]) -> dic
             raise ValueError("Worker lifecycle error must contain an object business code.")
     by_id = {reply["id"]: reply for reply in replies}
     if by_id["init"].get("result", {}).get("capabilities") != {
-            "health": True, "task_types": ANALYSIS_TASK_TYPES, "model_clients": ["local-mlx"]}:
-        raise ValueError("Worker must advertise its six implemented task types and local-mlx client.")
+            "health": True, "cooperative_pause": True, "task_types": ANALYSIS_TASK_TYPES, "model_clients": ["local-mlx"]}:
+        raise ValueError("Worker must advertise cooperative pause, its six task types and local-mlx client.")
     if by_id["ping"].get("result", {}).get("status") != "ok":
         raise ValueError("Worker health check failed.")
     actual_errors = {}
@@ -316,15 +316,22 @@ def check(root: Path, model: Path | None, timeout: float, max_tokens: int) -> di
             raise ValueError("MLX Metal matrix check did not pass.")
         asr = None
         if manifest.get("asr_adapter"):
-            # Exercise every automatic-ASR import from this candidate, including
-            # native numba/scipy/torch; no model weights or audio are loaded.
+            # Check both new model implementations from the candidate runtime;
+            # no model weights or audio are loaded.
             checked = subprocess.run([str(python), "-I", "-B", "-c",
-                "import mlx_whisper, scipy, numba, torch, tiktoken, json; "
+                "import mlx_qwen3_asr, mlx_lm.models.hunyuan_v1_dense, json; "
                 "print(json.dumps({'imports': 'passed', 'models_loaded': False}))"],
                 capture_output=True, text=True, env=env, cwd=scratch, timeout=60)
             if checked.returncode != 0:
                 raise ValueError(f"Automatic ASR dependency import failed: {checked.stderr[-2000:]}")
             asr = json.loads(checked.stdout)
+        for key, relative in [("asr_adapter", "asr/asr_worker.py"), ("translation_adapter", "translation/translation_worker.py")]:
+            adapter = manifest.get(key)
+            if adapter:
+                script = root / relative
+                if hashlib.sha256(script.read_bytes()).hexdigest() != adapter["script_sha256"]:
+                    raise ValueError(f"{key} source differs from its manifest")
+                compile(script.read_text(), str(script), "exec")
         requests = lifecycle_requests(scratch, manifest)
         args = [str(root / "bin/meeting-worker")]
         if model is not None:

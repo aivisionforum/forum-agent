@@ -521,6 +521,16 @@
       "sha256": "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897",
       "size": 131087,
       "metadata_url": "https://pypi.org/pypi/urllib3/2.7.0/json"
+    },
+    {
+      "name": "mlx-qwen3-asr",
+      "version": "0.4.4",
+      "role": "runtime",
+      "filename": "mlx_qwen3_asr-0.4.4-py3-none-any.whl",
+      "url": "https://files.pythonhosted.org/packages/52/34/739a65c4ce4c5de51e53a943fe75d8702a6259286cedef8f8eb7356e42d4/mlx_qwen3_asr-0.4.4-py3-none-any.whl",
+      "sha256": "37e7db641c93e7eff9880af856d7492800e5559006671b5fa837184166d35630",
+      "size": 182115,
+      "metadata_url": "https://pypi.org/pypi/mlx-qwen3-asr/0.4.4/json"
     }
   ],
   "minimum_macos": "14.0",

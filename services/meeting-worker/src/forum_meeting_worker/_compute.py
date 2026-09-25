@@ -14,12 +14,12 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from forum_meeting_worker.analysis import execute
+from forum_meeting_worker.flow import ComputeFlow
 from forum_meeting_worker.job_io import JobError, canonical, strict_json
 from forum_meeting_worker.model_probe import library_stdout_to_stderr
 
 
 def main():
-    cancelled = threading.Event()
     pending = bytearray()
     while b'\n' not in pending:
         chunk = os.read(0, 65536)
@@ -27,8 +27,6 @@ def main():
             return 2
         pending.extend(chunk)
     line, _, extra = pending.partition(b'\n')
-    if extra:
-        cancelled.set()
     envelope = strict_json(line)
     deadline = envelope['deadline_monotonic']
     protocol_fd = os.dup(1)
@@ -39,18 +37,20 @@ def main():
         while data:
             data = data[os.write(protocol_fd, data):]
     def control():
-        # Fixed cancellation byte protocol internal to our two processes.
-        # EOF also cancels, so disconnected parent never leaves useful work.
+        # Private P/R/! flow protocol. EOF cancels even while paused.
         # Never hold BufferedReader's lock in a daemon thread: CPython would
         # abort at interpreter shutdown while this read waits for input.
-        os.read(0, 1)
-        cancelled.set()
+        while True:
+            command = os.read(0, 64)
+            flow.receive(command)
+            if not command:
+                return
+    identity = {key: envelope['params'][key] for key in ('job_id', 'attempt')}
+    flow = ComputeFlow(deadline, lambda paused: emit('jobs.flow', identity | {'paused': paused}))
+    if extra:
+        flow.receive(extra)
     threading.Thread(target=control, daemon=True).start()
-    def check():
-        if cancelled.is_set():
-            raise JobError('CANCELLED', 'Analysis was cancelled.')
-        if time.monotonic() >= deadline:
-            raise JobError('DEADLINE_EXCEEDED', 'Analysis total budget expired.')
+    check = flow.check
     try:
         with library_stdout_to_stderr():
             result = execute(envelope['params'], envelope['configuration'], check, emit,

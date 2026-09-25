@@ -42,9 +42,8 @@ test('uses one resizable subtitle window without a fullscreen mode setting', () 
 });
 
 test('normalizes no-translation controls to source-only captions', () => {
-  assert.ok(app.includes("settings.subtitleSplit = true"));
   assert.ok(app.includes("disabled={settings.targetLanguage === 'none'}"));
-  assert.ok(app.includes("tr('选择“不翻译”时无法调整此选项。'"));
+  assert.ok(app.includes("tr('纯中文或纯英文模式只显示原文。'"));
   assert.ok(app.includes("tr('双语', 'DUAL')"));
   assert.ok(app.includes("tr('仅译文', 'TRANSLATION')"));
   assert.ok(app.includes("tr('逐句双行', 'SENTENCE PAIRS')"));
@@ -65,15 +64,6 @@ test('forces captions to the bottom when the compact tier hides the footer', () 
     overlayCss,
     /\.overlay-shell\.chrome-tier-4\s*\{[^}]*--caption-anchor:\s*100%/s
   );
-});
-
-test('keeps the language swap available during live translation with pending feedback', () => {
-  assert.ok(app.includes('swapTranslationDirection(settings)'));
-  assert.ok(app.includes('directionSwitchPending'));
-  assert.ok(app.includes('将在下一句切换'));
-  assert.ok(api.includes("invoke<DirectionSwitchState>('swap_translation_direction'"));
-  assert.ok(api.includes("listen<DirectionSwitchState>('direction-switch-state'"));
-  assert.ok(!app.includes('<button disabled={running} class="swap-button"'));
 });
 
 test('offers an enabled-by-default screen wake lock for live translation', () => {

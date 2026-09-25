@@ -30,12 +30,12 @@ struct Recognition {
     detected_language: Option<String>,
 }
 enum Recognizer {
-    Whisper(JsonLineProcess),
+    Qwen(JsonLineProcess),
     Fixed(crate::backend::AsrEngine),
 }
 impl Recognizer {
     fn load() -> Result<(Self, String, String)> {
-        if std::env::var("ASR_SOURCE_LANGUAGE").as_deref() == Ok("auto") {
+        if std::env::var_os("FORUM_ASR_PYTHON").is_some() || std::env::var("ASR_SOURCE_LANGUAGE").as_deref() == Ok("auto") {
             let absolute = |name: &str| -> Result<PathBuf> {
                 let path = PathBuf::from(
                     std::env::var(name).with_context(|| format!("{name} required for auto ASR"))?,
@@ -45,13 +45,13 @@ impl Recognizer {
             };
             let python = absolute("FORUM_ASR_PYTHON")?;
             let script = absolute("FORUM_ASR_SCRIPT")?;
-            let model = absolute("FORUM_WHISPER_MODEL_PATH")?;
+            let model = absolute("FORUM_ASR_MODEL_PATH")?;
             ensure!(
                 python.is_file()
                     && script.is_file()
                     && model.join("config.json").is_file()
-                    && model.join("weights.safetensors").is_file(),
-                "Whisper requires existing local runtime/model files"
+                    && model.join("model.safetensors").is_file(),
+                "Qwen requires existing local runtime/model files"
             );
             let fingerprint = verified_model_fingerprint(&model)?;
             let mut command = Command::new(python);
@@ -72,13 +72,13 @@ impl Recognizer {
             ensure!(
                 ready["type"] == "ready"
                     && ready["protocol_version"] == 1
-                    && ready["backend"] == "mlx-whisper",
-                "Whisper adapter did not become ready: {}",
+                    && ready["backend"] == "mlx-qwen3-asr",
+                "Qwen adapter did not become ready: {}",
                 ready.get("error").unwrap_or(&json!("invalid readiness"))
             );
             Ok((
-                Self::Whisper(process),
-                "mlx-whisper-python".into(),
+                Self::Qwen(process),
+                "mlx-qwen3-asr-python".into(),
                 fingerprint,
             ))
         } else {
@@ -93,30 +93,30 @@ impl Recognizer {
     }
     fn transcribe(&mut self, samples: &[f32], language: &str) -> Result<Recognition> {
         match self {
-            Self::Whisper(process) => {
+            Self::Qwen(process) => {
                 ensure!(
-                    language == "auto",
-                    "Whisper automatic adapter requires configured language auto"
+                    matches!(language, "auto" | "en" | "zh"),
+                    "Qwen automatic adapter requires configured language auto"
                 );
                 let id = forum_contracts::Uuid::new_v4();
                 let result = process.request(
-                    &json!({"id":id,"samples":samples,"sample_rate":16000,"language":"auto"}),
+                    &json!({"id":id,"samples":samples,"sample_rate":16000,"language":language}),
                     Duration::from_secs(60),
                 )?;
-                ensure!(result["id"] == json!(id), "Whisper response ID mismatch");
+                ensure!(result["id"] == json!(id), "Qwen response ID mismatch");
                 ensure!(
                     result["status"] != "failed",
-                    "Whisper failed: {}",
+                    "Qwen failed: {}",
                     result["error"]
                 );
                 ensure!(
                     matches!(result["status"].as_str(), Some("success" | "empty")),
-                    "invalid Whisper result status"
+                    "invalid Qwen result status"
                 );
                 Ok(Recognition {
                     text: result["text"]
                         .as_str()
-                        .context("Whisper result text missing")?
+                        .context("Qwen result text missing")?
                         .into(),
                     detected_language: result["detected_language"].as_str().map(str::to_owned),
                 })

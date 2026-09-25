@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::result::Result;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -166,7 +166,7 @@ impl ModelSetup {
             )),
             effective_config_hash: String::new(),
             projection_policy_hash: sha(canonical_json(&profile["publication"]).as_bytes()),
-            generation: json!({"temperature":0.0,"max_output_tokens":1024,"safety_tokens":128,"max_retries":1,"context_limit":8192}),
+            generation: json!({"temperature":0.0,"max_output_tokens":if kind == AnalysisKind::Insight {768} else {1024},"safety_tokens":128,"max_retries":1,"context_limit":8192}),
         };
         config.effective_config_hash = config.computed_hash();
         Ok(config)
@@ -185,26 +185,19 @@ struct Inner {
     stopped: AtomicBool,
     contained: AtomicBool,
     lifecycle_persisted: AtomicBool,
-    notice: Mutex<Option<String>>,
+    notice: Mutex<HashMap<Option<Uuid>, String>>,
     automatic: Mutex<Automatic>,
 }
 #[derive(Default)]
 struct Automatic {
     live: Option<(Uuid, Instant)>,
-    precompute: VecDeque<Uuid>,
 }
 impl Automatic {
     fn next_job(&mut self, now: Instant) -> Option<(Uuid, AnalysisKind)> {
-        while let Some(id) = self.precompute.pop_front() {
-            if self.live.as_ref().is_some_and(|(live, _)| *live == id) {
-                return Some((id, AnalysisKind::Minutes));
-            }
-        }
         if let Some((id, last)) = self.live.as_mut() {
-            if now.duration_since(*last) >= Duration::from_secs(180) {
+            if now.duration_since(*last) >= Duration::from_secs(12) {
                 *last = now;
                 let id = *id;
-                self.precompute.push_back(id);
                 return Some((id, AnalysisKind::Insight));
             }
         }
@@ -234,7 +227,7 @@ impl AnalysisManager {
             stopped: AtomicBool::new(false),
             contained: AtomicBool::new(true),
             lifecycle_persisted: AtomicBool::new(true),
-            notice: Mutex::new(None),
+            notice: Mutex::new(HashMap::new()),
             automatic: Mutex::new(Automatic::default()),
         });
         let worker_inner = inner.clone();
@@ -282,7 +275,6 @@ impl AnalysisClient {
             {
                 auto.live = None;
             }
-            auto.precompute.retain(|session| *session != id);
         }
         // Persist before the runtime declares shutdown complete, even after the
         // analysis thread stopped. A later launch can create the actual job.
@@ -292,12 +284,19 @@ impl AnalysisClient {
             }
             Err(error) => {
                 self.0.lifecycle_persisted.store(false, Ordering::Release);
-                *self.0.notice.lock() = Some(format!("会后纪要请求未能保存：{error}"));
+                self.0
+                    .notice
+                    .lock()
+                    .insert(Some(id), format!("会后纪要请求未能保存：{error}"));
             }
         }
     }
-    pub fn notice(&self) -> Option<String> {
-        self.0.notice.lock().clone()
+    pub fn notice(&self, session: Uuid) -> Option<String> {
+        let notices = self.0.notice.lock();
+        notices
+            .get(&None)
+            .or_else(|| notices.get(&Some(session)))
+            .cloned()
     }
     fn setup(&self, batch: bool) -> Result<ModelSetup, String> {
         let mut models = self.0.models.lock();
@@ -315,16 +314,7 @@ impl AnalysisClient {
                 | AnalysisKind::SuggestedQuestions
                 | AnalysisKind::RedactionReview
         );
-        let precompute = request.automatic
-            && request.kind == AnalysisKind::Minutes
-            && self
-                .0
-                .automatic
-                .lock()
-                .live
-                .as_ref()
-                .is_some_and(|(id, _)| request.session_ids.as_slice() == [*id]);
-        let config = self.setup(batch && !precompute)?.config(request.kind)?;
+        let config = self.setup(batch)?.config(request.kind)?;
         let create = CreateAnalysisJob {
             request_id: request.request_id,
             session_ids: request.session_ids,
@@ -334,13 +324,18 @@ impl AnalysisClient {
             max_attempts: 3,
             automatic: request.automatic,
         };
-        self.0
+        let job = self
+            .0
             .core
             .call(move |store| match request.public_selections {
                 Some(selected) => store.create_selected_analysis_job(&create, &selected),
                 None => store.create_analysis_job(&create),
             })
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        for id in &job.session_ids {
+            self.0.notice.lock().remove(&Some(*id));
+        }
+        Ok(job)
     }
     pub fn cancel(&self, action: JobAction) -> Result<AnalysisJob, String> {
         self.0
@@ -362,16 +357,25 @@ fn run_loop(inner: Arc<Inner>) {
         .core
         .call(|s| s.interrupt_running_analysis_jobs("应用重新启动，分析进程需恢复".into()));
     let mut next_intent = Instant::now();
+    let mut resume_after = HashMap::<Uuid, Instant>::new();
     while !inner.stopped.load(Ordering::Acquire) {
         if Instant::now() >= next_intent {
             next_intent = Instant::now() + Duration::from_secs(1);
             let intents = inner
                 .core
-                .call(|s| s.pending_analysis_stop_intents(8))
+                .call(|s| s.pending_analysis_stop_intents(100))
                 .unwrap_or_default();
             for (id, marker) in intents {
                 if inner.stopped.load(Ordering::Acquire) {
                     break;
+                }
+                if inner
+                    .core
+                    .call(move |s| s.ack_empty_analysis_stop_intent(id, marker))
+                    .unwrap_or(false)
+                {
+                    inner.notice.lock().remove(&Some(id));
+                    continue;
                 }
                 match client.create(JobRequest {
                     request_id: Uuid::new_v4(),
@@ -385,23 +389,32 @@ fn run_loop(inner: Arc<Inner>) {
                             .core
                             .call(move |s| s.ack_analysis_stop_intent(id, marker))
                         {
-                            *inner.notice.lock() =
-                                Some(format!("纪要已入队，但自动请求确认失败：{error}"));
+                            inner.notice.lock().insert(
+                                Some(id),
+                                format!("纪要已入队，但自动请求确认失败：{error}"),
+                            );
                         } else {
-                            *inner.notice.lock() = None;
+                            inner.notice.lock().remove(&Some(id));
                         }
                     }
                     Err(error) => {
-                        *inner.notice.lock() =
-                            Some(format!("自动纪要请求已保存，等待运行条件：{error}"));
+                        inner
+                            .notice
+                            .lock()
+                            .insert(Some(id), format!("本场纪要等待运行条件：{error}"));
                         next_intent = Instant::now() + Duration::from_secs(30);
-                        break;
                     }
                 }
             }
         }
         let automatic = inner.automatic.lock().next_job(Instant::now());
-        if let Some((id, kind)) = automatic {
+        if let Some((id, kind)) = automatic.filter(|(id, _)| {
+            let id = *id;
+            inner
+                .core
+                .call(move |s| s.automatic_insight_ready(id))
+                .unwrap_or(false)
+        }) {
             if let Err(error) = client.create(JobRequest {
                 request_id: Uuid::new_v4(),
                 session_ids: vec![id],
@@ -409,10 +422,13 @@ fn run_loop(inner: Arc<Inner>) {
                 automatic: true,
                 public_selections: None,
             }) {
-                *inner.notice.lock() = Some(format!("自动会议分析尚未入队：{error}"));
+                inner
+                    .notice
+                    .lock()
+                    .insert(Some(id), format!("自动会议分析尚未入队：{error}"));
                 log::warn!("自动会议分析未入队：{error}");
             } else {
-                *inner.notice.lock() = None;
+                inner.notice.lock().remove(&Some(id));
             }
         }
         let jobs = inner
@@ -426,6 +442,13 @@ fn run_loop(inner: Arc<Inner>) {
             }
             let id = job.job_id;
             let attempt = job.attempt;
+            if resume_after
+                .get(&id)
+                .is_some_and(|until| Instant::now() < *until)
+            {
+                continue;
+            }
+            resume_after.remove(&id);
             if now_ms() >= job.deadline_at_ms {
                 let _ = inner.core.call(move |s| {
                     s.fail_analysis_job(id, attempt, "DEADLINE_EXCEEDED: 排队已超过总预算".into())
@@ -436,7 +459,7 @@ fn run_loop(inner: Arc<Inner>) {
                 && (matches!(
                     job.kind,
                     AnalysisKind::Insight | AnalysisKind::SuggestedQuestions
-                ) || job.kind == AnalysisKind::Minutes && job.automatic);
+                ));
             let permit = match inner.budget.admit(live_eligible) {
                 Ok(p) => p,
                 Err(reason) => {
@@ -476,9 +499,17 @@ fn run_loop(inner: Arc<Inner>) {
                         .call(move |s| s.complete_analysis_cancel(id, attempt));
                 }
                 Ok(Execution::Interrupted(reason)) => {
-                    let _ = inner
-                        .core
-                        .call(move |s| s.interrupt_analysis_job(id, attempt, reason));
+                    if requeue_after_preemption(
+                        &inner.core,
+                        id,
+                        attempt,
+                        reason,
+                        !inner.stopped.load(Ordering::Acquire),
+                    )
+                    .unwrap_or(false)
+                    {
+                        resume_after.insert(id, Instant::now() + Duration::from_secs(10));
+                    }
                 }
                 Ok(Execution::Uncontained(reason)) => {
                     let _ = inner
@@ -486,7 +517,10 @@ fn run_loop(inner: Arc<Inner>) {
                         .call(move |s| s.interrupt_analysis_job(id, attempt, reason));
                     // Never grant new models while owned process exit is uncertain.
                     inner.contained.store(false, Ordering::Release);
-                    *inner.notice.lock() = Some("后台进程退出尚未确认，已暂停新的模型任务".into());
+                    inner
+                        .notice
+                        .lock()
+                        .insert(None, "后台进程退出尚未确认，已暂停新的模型任务".into());
                     std::mem::forget(permit);
                     inner.stopped.store(true, Ordering::Release);
                     break;
@@ -511,6 +545,35 @@ enum Execution {
     Cancelled,
     Interrupted(String),
     Uncontained(String),
+}
+
+// Called only after execute has confirmed its worker process exited. Attempts
+// remain bounded by the persisted job limit and reuse only core checkpoints.
+fn requeue_after_preemption(
+    core: &CoreHandle,
+    id: Uuid,
+    attempt: u32,
+    reason: String,
+    resume: bool,
+) -> Result<bool, String> {
+    core.call(move |store| {
+        let job = store.interrupt_analysis_job(id, attempt, reason.clone())?;
+        if !resume || job.state != AnalysisJobState::Interrupted || job.attempt >= job.max_attempts
+        {
+            return Ok(false);
+        }
+        let next = store.retry_analysis_job(id, attempt)?;
+        store.wait_analysis_job(
+            id,
+            next.attempt,
+            format!(
+                "字幕优先，稍后自动继续（{}/{}）：{reason}",
+                next.attempt, next.max_attempts
+            ),
+        )?;
+        Ok(true)
+    })
+    .map_err(|e| e.to_string())
 }
 
 fn execute(inner: &Inner, job: &AnalysisJob, setup: &ModelSetup) -> Result<Execution, String> {
@@ -549,7 +612,9 @@ fn execute(inner: &Inner, job: &AnalysisJob, setup: &ModelSetup) -> Result<Execu
             .map_err(|e| e.to_string())?;
         let handshake_deadline = Instant::now() + Duration::from_secs(5);
         let ready = loop {
-            if inner.stopped.load(Ordering::Acquire) || inner.budget.yield_reason().is_some() {
+            if inner.stopped.load(Ordering::Acquire)
+                || (inner.budget.yield_reason().is_some() && inner.budget.pause_reason().is_none())
+            {
                 return Ok(Execution::Interrupted(
                     inner
                         .budget
@@ -570,6 +635,7 @@ fn execute(inner: &Inner, job: &AnalysisJob, setup: &ModelSetup) -> Result<Execu
         if ready["id"] != "init"
             || ready.get("error").is_some()
             || ready["result"]["protocol_version"] != 1
+            || ready["result"]["capabilities"]["cooperative_pause"] != true
         {
             return Err("UNSUPPORTED_PROTOCOL: 分析进程握手失败".into());
         }
@@ -581,17 +647,26 @@ fn execute(inner: &Inner, job: &AnalysisJob, setup: &ModelSetup) -> Result<Execu
         let run_id = format!("run-{id}-{attempt}");
         worker.send(&json!({"jsonrpc":"2.0","id":run_id,"method":"jobs.run","params":{"job_id":id,"attempt":attempt,"kind":job.kind,"session_ids":job.session_ids,"snapshot":{"id":job.snapshot_id,"relative_path":"input.json","sha256":job.snapshot_sha256,"input_cursor":snapshot.snapshot.input_cursor},"model_profile":job.config.model_profile,"prompt_version":job.config.prompt_version,"remaining_budget_ms":remaining,"config":job.config,"confirmed_checkpoints":{"relative_path":"checkpoints.json","sha256":sha(&checkpoint_bytes)}}}),Duration::from_secs(1)).map_err(|e|e.to_string())?;
         let mut last_state = Instant::now() - Duration::from_secs(1);
+        let mut pause_requested = false;
+        let mut last_progress = job.progress.clone();
         loop {
             if Instant::now() >= deadline {
                 return Err("DEADLINE_EXCEEDED: 分析任务超过含排队的总预算".into());
             }
-            if inner.stopped.load(Ordering::Acquire) || inner.budget.yield_reason().is_some() {
+            let pause_reason = inner.budget.pause_reason();
+            if inner.stopped.load(Ordering::Acquire)
+                || (inner.budget.yield_reason().is_some() && pause_reason.is_none())
+            {
                 let reason = inner
                     .budget
                     .yield_reason()
                     .unwrap_or_else(|| "应用正在退出".into());
                 let _=worker.send(&json!({"jsonrpc":"2.0","id":"cancel","method":"jobs.cancel","params":{"job_id":id,"attempt":attempt}}),Duration::from_millis(250));
                 return Ok(Execution::Interrupted(reason));
+            }
+            if pause_requested != pause_reason.is_some() {
+                pause_requested = pause_reason.is_some();
+                worker.send(&json!({"jsonrpc":"2.0","method":"jobs.set_paused","params":{"job_id":id,"attempt":attempt,"paused":pause_requested}}),Duration::from_millis(250)).map_err(|e|e.to_string())?;
             }
             if last_state.elapsed() >= Duration::from_millis(200) {
                 last_state = Instant::now();
@@ -604,6 +679,16 @@ fn execute(inner: &Inner, job: &AnalysisJob, setup: &ModelSetup) -> Result<Execu
                     let _=worker.send(&json!({"jsonrpc":"2.0","id":"cancel","method":"jobs.cancel","params":{"job_id":id,"attempt":attempt}}),Duration::from_millis(250));
                     return Ok(Execution::Cancelled);
                 }
+                if job.automatic
+                    && inner
+                        .core
+                        .call(|s| Ok(s.next_analysis_jobs(100)?.iter().any(|j| !j.automatic)))
+                        .unwrap_or(false)
+                {
+                    return Ok(Execution::Interrupted(
+                        "手动请求优先，稍后继续后台任务".into(),
+                    ));
+                }
             }
             let Some(message) = worker
                 .poll(Duration::from_millis(100))
@@ -611,7 +696,24 @@ fn execute(inner: &Inner, job: &AnalysisJob, setup: &ModelSetup) -> Result<Execu
             else {
                 continue;
             };
-            if message["method"] == "jobs.progress" {
+            if message["method"] == "jobs.flow" {
+                let p = &message["params"];
+                if p["job_id"] != id.to_string()
+                    || p["attempt"] != attempt
+                    || !p["paused"].is_boolean()
+                {
+                    return Err("INVALID_MODEL_OUTPUT: 暂停状态身份不一致".into());
+                }
+                let mut progress = last_progress.clone();
+                if p["paused"] == true {
+                    progress.phase = "paused".into();
+                    progress.wait_reason = Some("字幕优先，已保留生成进度，空闲后自动继续".into());
+                }
+                inner
+                    .core
+                    .call(move |s| s.update_analysis_progress(id, attempt, progress))
+                    .map_err(|e| e.to_string())?;
+            } else if message["method"] == "jobs.progress" {
                 let p = &message["params"];
                 if p["job_id"] != id.to_string() || p["attempt"] != attempt {
                     return Err("INVALID_MODEL_OUTPUT: 进度任务身份不一致".into());
@@ -630,6 +732,7 @@ fn execute(inner: &Inner, job: &AnalysisJob, setup: &ModelSetup) -> Result<Execu
                     total_units: p["total_units"].as_u64().unwrap_or(0).min(u32::MAX as u64) as u32,
                     wait_reason: None,
                 };
+                last_progress = progress.clone();
                 inner
                     .core
                     .call(move |s| s.update_analysis_progress(id, attempt, progress))
@@ -713,7 +816,7 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
 mod tests {
     use super::*;
     #[test]
-    fn cadence_queues_insight_then_current_session_minutes_only() {
+    fn cadence_generates_only_insights_during_capture() {
         let first = Uuid::new_v4();
         let second = Uuid::new_v4();
         let now = Instant::now();
@@ -721,22 +824,19 @@ mod tests {
             live: Some((first, now)),
             ..Default::default()
         };
-        assert!(automatic.next_job(now + Duration::from_secs(179)).is_none());
+        assert!(automatic.next_job(now + Duration::from_secs(11)).is_none());
         assert_eq!(
-            automatic.next_job(now + Duration::from_secs(180)),
+            automatic.next_job(now + Duration::from_secs(12)),
             Some((first, AnalysisKind::Insight))
         );
+        assert!(automatic.next_job(now + Duration::from_secs(13)).is_none());
+        assert!(automatic.next_job(now + Duration::from_secs(14)).is_none());
         assert_eq!(
-            automatic.next_job(now + Duration::from_secs(181)),
-            Some((first, AnalysisKind::Minutes))
-        );
-        assert!(automatic.next_job(now + Duration::from_secs(182)).is_none());
-        assert_eq!(
-            automatic.next_job(now + Duration::from_secs(360)),
+            automatic.next_job(now + Duration::from_secs(24)),
             Some((first, AnalysisKind::Insight))
         );
-        automatic.live = Some((second, now + Duration::from_secs(360)));
-        assert!(automatic.next_job(now + Duration::from_secs(361)).is_none());
+        automatic.live = Some((second, now + Duration::from_secs(24)));
+        assert!(automatic.next_job(now + Duration::from_secs(25)).is_none());
     }
     #[test]
     fn stop_after_analysis_shutdown_is_durable_without_model_setup() {

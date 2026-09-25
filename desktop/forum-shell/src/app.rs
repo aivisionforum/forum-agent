@@ -1,8 +1,7 @@
 use crate::{
-    apple_speech::{self, AppleSpeech},
     dataflow::{render_translation_dataflow, RenderOptions},
     meeting::MeetingOptions,
-    models::{AutomaticAsrPaths, ModelPaths},
+    models::{translation_runtime_env, AutomaticAsrPaths, ModelPaths},
     power_activity::WakeLock,
     preferences::{self, AppPreferences},
     runtime::{RuntimeEvent, TranslationRuntime},
@@ -29,7 +28,7 @@ const OVERLAY_MIN_INNER_WIDTH: f64 = 560.0;
 include!("analysis_commands.rs");
 include!("forum_commands.rs");
 include!("part4_commands.rs");
-const OVERLAY_MIN_INNER_HEIGHT: f64 = 96.0;
+const OVERLAY_MIN_INNER_HEIGHT: f64 = 560.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,11 +45,10 @@ pub struct TranslationSettings {
     anchor_position_preset: String,
     final_interval_seconds: u64,
     keep_awake_during_translation: bool,
-    spoken_translation_enabled: bool,
-    spoken_translation_output_device: Option<String>,
-    spoken_translation_voice: Option<String>,
     #[serde(default = "recording_default")]
     recording_enabled: bool,
+    #[serde(default)]
+    speakers_enabled: bool,
     auto_save_transcript: bool,
     periodic_save_transcript: bool,
     transcript_file_name: String,
@@ -76,12 +74,8 @@ impl From<&AppPreferences> for TranslationSettings {
             anchor_position_preset: preferences.translation_anchor_position_preset.clone(),
             final_interval_seconds: preferences.translation_final_interval_seconds,
             keep_awake_during_translation: preferences.translation_keep_awake,
-            spoken_translation_enabled: preferences.experimental_spoken_translation_enabled,
-            spoken_translation_output_device: preferences
-                .experimental_spoken_translation_output_device
-                .clone(),
-            spoken_translation_voice: preferences.experimental_spoken_translation_voice.clone(),
             recording_enabled: preferences.translation_recording_enabled,
+            speakers_enabled: preferences.meeting_speakers_enabled,
             auto_save_transcript: preferences.translation_auto_save_transcript,
             periodic_save_transcript: preferences.translation_periodic_save_transcript,
             transcript_file_name: preferences.translation_transcript_file_name.clone(),
@@ -109,11 +103,8 @@ impl TranslationSettings {
         preferences.translation_final_interval_seconds =
             preferences::sanitize_final_interval_seconds(self.final_interval_seconds);
         preferences.translation_keep_awake = self.keep_awake_during_translation;
-        preferences.experimental_spoken_translation_enabled = self.spoken_translation_enabled;
-        preferences.experimental_spoken_translation_output_device =
-            self.spoken_translation_output_device.clone();
-        preferences.experimental_spoken_translation_voice = self.spoken_translation_voice.clone();
         preferences.translation_recording_enabled = self.recording_enabled;
+        preferences.meeting_speakers_enabled = self.speakers_enabled && self.recording_enabled;
         preferences.translation_auto_save_transcript = self.auto_save_transcript;
         preferences.translation_periodic_save_transcript = self.periodic_save_transcript;
         preferences.translation_transcript_file_name = self.transcript_file_name.clone();
@@ -126,8 +117,6 @@ impl TranslationSettings {
 struct SettingsPayload {
     settings: TranslationSettings,
     input_devices: Vec<String>,
-    output_devices: Vec<String>,
-    installed_apple_voices: Vec<apple_speech::SystemVoice>,
     subtitle_preview_visible: bool,
     running: bool,
     runtime_status: String,
@@ -167,6 +156,10 @@ impl Default for RuntimeState {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Sentence {
+    source_language: String,
+    language_texts: std::collections::HashMap<String, String>,
+    segment_id: Option<forum_contracts::Uuid>,
+    source_revision: Option<u32>,
     source_text: String,
     translation: String,
 }
@@ -183,6 +176,8 @@ struct TranslatingSentence {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OverlayState {
+    session_id: Option<forum_contracts::Uuid>,
+    runtime_message: String,
     active: bool,
     status: String,
     source_language: String,
@@ -201,6 +196,7 @@ struct OverlayState {
 #[serde(rename_all = "camelCase")]
 struct ModelStatus {
     core_ready: bool,
+    asr_ready: bool,
     translation_ready: bool,
     automatic_asr_ready: bool,
     automatic_asr_detail: String,
@@ -212,67 +208,9 @@ struct ModelStatus {
     core_download_bytes: u64,
 }
 
-#[derive(Default)]
-struct SpokenTranslationCursor {
-    session_id: Option<forum_contracts::Uuid>,
-    seen: std::collections::HashSet<moxin_dora_bridge::data::DurableTranslationIdentity>,
-    legacy_completed_count: u64,
-}
-
-impl SpokenTranslationCursor {
-    fn consume(&mut self, update: &TranslationUpdate, enabled: bool) -> Vec<String> {
-        self.consume_for_target(update, enabled, None)
-    }
-    fn consume_for_target(
-        &mut self,
-        update: &TranslationUpdate,
-        enabled: bool,
-        target: Option<&str>,
-    ) -> Vec<String> {
-        if let Some(batch) = &update.durable_deliveries {
-            if self.session_id != Some(batch.session_id) {
-                self.session_id = Some(batch.session_id);
-                self.seen.clear();
-                self.legacy_completed_count = 0;
-            }
-            let mut text = Vec::new();
-            for delivery in &batch.items {
-                // Mark seen even while output is disabled. Enabling speech
-                // later must not replay an old snapshot or a late UI refresh.
-                if self.seen.insert(delivery.identity.clone())
-                    && enabled
-                    && !delivery.source_segment_ids.is_empty()
-                    && !delivery.text.trim().is_empty()
-                    && target.is_none_or(|language| language == delivery.target_language)
-                {
-                    text.push(delivery.text.clone());
-                }
-            }
-            return text;
-        }
-        if update.completed_count < self.legacy_completed_count {
-            self.legacy_completed_count = 0;
-        }
-        let count = update
-            .completed_count
-            .saturating_sub(self.legacy_completed_count) as usize;
-        self.legacy_completed_count = update.completed_count;
-        if !enabled {
-            return Vec::new();
-        }
-        update
-            .history
-            .iter()
-            .skip(update.history.len().saturating_sub(count))
-            .map(|sentence| sentence.translation.clone())
-            .collect()
-    }
-}
-
 struct AppState {
+    audio_inputs: crate::audio_inputs::AudioInputs,
     activity_gate:Mutex<()>,
-    closing_readout:Mutex<Option<(forum_contracts::Uuid,forum_contracts::Revision)>>,
-    closing_speech:AppleSpeech,
     exiting: std::sync::atomic::AtomicBool,
     exit_ready: std::sync::atomic::AtomicBool,
     preferences: Mutex<AppPreferences>,
@@ -283,10 +221,7 @@ struct AppState {
     display: Result<forum_gateway::DisplayGateway, String>,
     runtime_state: Mutex<RuntimeState>,
     resource_dir: Option<PathBuf>,
-    voice_preview_process: Mutex<Option<Child>>,
-    apple_speech: AppleSpeech,
     wake_lock: WakeLock,
-    spoken_translations: Mutex<SpokenTranslationCursor>,
     model_download_process: Mutex<Option<(String, Child)>>,
     subtitle_preview_visible: Mutex<bool>,
     usage: Arc<UsageTracker>,
@@ -315,9 +250,8 @@ impl AppState {
         let speakers=runtime.repository().map(|repo|crate::speaker_manager::SpeakerManager::new(repo.core.clone(),preferences::preferences_dir(),resource_dir.clone(),runtime.resource_budget()));
         let usage = UsageTracker::load(preferences::preferences_dir().join("usage.json"));
         let state = Self {
+            audio_inputs: crate::audio_inputs::AudioInputs::new(),
             activity_gate:Mutex::new(()),
-            closing_readout:Mutex::new(None),
-            closing_speech:AppleSpeech::new(),
             exiting: std::sync::atomic::AtomicBool::new(false),
             exit_ready: std::sync::atomic::AtomicBool::new(false),
             preferences: Mutex::new(preferences),
@@ -328,10 +262,7 @@ impl AppState {
             display,
             runtime_state: Mutex::new(RuntimeState::default()),
             resource_dir,
-            voice_preview_process: Mutex::new(None),
-            apple_speech: AppleSpeech::new(),
             wake_lock: WakeLock::new(),
-            spoken_translations: Mutex::new(SpokenTranslationCursor::default()),
             model_download_process: Mutex::new(None),
             subtitle_preview_visible: Mutex::new(true),
             usage,
@@ -424,6 +355,11 @@ impl AppState {
     fn show_subtitle_preview(&self, settings: &TranslationSettings) {
         let history = (0..2)
             .map(|index| SentenceUnit {
+                segment_id: None,
+                source_revision: None,
+                language_texts: if settings.target_language == "bilingual" {
+                    ["zh", "en"].into_iter().map(|lang| (lang.to_string(), Self::sample_text(lang, index).to_string())).collect()
+                } else { Default::default() },
                 source_text: Self::sample_text(&settings.source_language, index).to_string(),
                 translation: if settings.target_language == "none" {
                     String::new()
@@ -470,6 +406,8 @@ impl AppState {
 
         let (source_language, target_language) = shared.translation_lang_pair.read();
         let update = shared.translation.read();
+        let session_id = update.as_ref().and_then(|u| u.durable_deliveries.as_ref().map(|b| b.session_id))
+            .or_else(|| active.then(|| self.runtime.current_session_id()).flatten());
         let (history, pending_source_text) = update
             .map(|update| {
                 (
@@ -477,6 +415,10 @@ impl AppState {
                         .history
                         .into_iter()
                         .map(|sentence| Sentence {
+                            segment_id: sentence.segment_id,
+                            source_revision: sentence.source_revision,
+                            source_language: sentence.source_language,
+                            language_texts: sentence.language_texts,
                             source_text: sentence.source_text,
                             translation: sentence.translation,
                         })
@@ -500,6 +442,8 @@ impl AppState {
                 complete: stream.complete,
             });
         OverlayState {
+            session_id,
+            runtime_message: self.runtime_state.lock().message.clone(),
             active,
             status,
             source_language,
@@ -538,7 +482,6 @@ impl AppState {
     }
 
     fn poll_runtime_events(&self) -> RuntimeState {
-        self.check_closing_publication();
         // Serialize draining and applying events across IPC and the event bridge.
         let mut state = self.runtime_state.lock();
         let events = self.runtime.poll_events();
@@ -547,14 +490,22 @@ impl AppState {
                 RuntimeEvent::Started(id) => {
                     state.running = true;
                     state.status = "listening".into();
-                    state.message = format!("Local translation connected · {id}");
+                    state.message = "正在收音，字幕持续更新".into();
+                    if self.preferences.lock().meeting_speakers_enabled {
+                        if let (Ok(manager), Ok(session)) = (&self.speakers, forum_contracts::Uuid::parse_str(&id)) {
+                            if let Err(error) = manager.client().enable(session, None) {
+                                log::warn!("自动启用匿名标签失败：{error}");
+                                state.message = format!("字幕正常；匿名标签未启用：{error}");
+                            }
+                        }
+                    }
                 }
                 RuntimeEvent::Stopped {
                     session_id,
                     incomplete,
                     translation_pending,
                 } => {
-                    self.apple_speech.stop();
+
                     self.wake_lock.stop();
                     if state.running {
                         if let Err(error) = self.usage.stop() {
@@ -591,14 +542,14 @@ impl AppState {
                     state.message = message;
                 }
                 RuntimeEvent::ShutdownFailed(message) => {
-                    self.apple_speech.stop();
+
                     // Keep Stop available and prevent replacing a still-owned session.
                     state.running = true;
                     state.status = "error".into();
                     state.message = message;
                 }
                 RuntimeEvent::Error(message) => {
-                    self.apple_speech.stop();
+
                     self.wake_lock.stop();
                     if state.running {
                         if let Err(error) = self.usage.stop() {
@@ -618,38 +569,6 @@ impl AppState {
             }
         }
         state.clone()
-    }
-
-    fn queue_completed_translations_for_speech(&self) {
-        let Some(update) = self.runtime.shared_state().translation.read() else {
-            return;
-        };
-        let runtime = self.runtime_state.lock().clone();
-        let direction = self.direction_switch_state();
-        let enabled = runtime.running
-            && !matches!(
-                runtime.status.as_str(),
-                "stopping" | "draining" | "idle" | "error"
-            )
-            && !direction.pending
-            && self
-                .preferences
-                .lock()
-                .experimental_spoken_translation_enabled;
-        let texts = self.spoken_translations.lock().consume_for_target(
-            &update,
-            enabled,
-            Some(&direction.active_target_language),
-        );
-        for text in texts {
-            self.apple_speech.speak(text);
-        }
-    }
-
-    fn mark_current_translations_seen(&self) {
-        if let Some(update) = self.runtime.shared_state().translation.read() {
-            self.spoken_translations.lock().consume(&update, false);
-        }
     }
 
     fn save_transcript_if_needed(&self) -> Result<(), String> {
@@ -710,10 +629,11 @@ impl AppState {
             });
         let automatic = AutomaticAsrPaths::resolve(self.resource_dir.as_deref());
         ModelStatus {
+            asr_ready: ModelPaths::resolve_current_for_mode(false).is_ok_and(|paths| paths.ready_for_mode(false, false)),
             automatic_asr_ready: automatic.is_ok(),
             automatic_asr_detail: automatic
                 .err()
-                .unwrap_or_else(|| "Whisper 自动识别已准备".into()),
+                .unwrap_or_else(|| "Qwen3-ASR 自动识别已准备".into()),
             translation_ready: ModelPaths::resolve_current()
                 .is_ok_and(|paths| paths.ready_for(true)),
             core_ready: core_models_ready(),
@@ -808,23 +728,14 @@ fn resolve_windows_bootstrap_script() -> Option<PathBuf> {
 }
 
 #[tauri::command]
-fn get_settings(state: State<'_, AppState>) -> SettingsPayload {
+fn get_settings(app: tauri::AppHandle, state: State<'_, AppState>) -> SettingsPayload {
     let preferences = state.preferences.lock().clone();
     let runtime_state = state.poll_runtime_events();
-    let output_devices = apple_speech::output_device_names();
-    let mut settings = TranslationSettings::from(&preferences);
-    if settings
-        .spoken_translation_output_device
-        .as_ref()
-        .is_some_and(|selected| !output_devices.contains(selected))
-    {
-        settings.spoken_translation_output_device = None;
-    }
     SettingsPayload {
-        settings,
-        input_devices: input_devices(),
-        output_devices,
-        installed_apple_voices: apple_speech::available_voices(),
+        settings: TranslationSettings::from(&preferences),
+        input_devices: state.audio_inputs.get_or_start(&preferences.translation_input_device, input_devices, move |devices| {
+            let _ = app.emit("input-devices", devices);
+        }),
         subtitle_preview_visible: *state.subtitle_preview_visible.lock(),
         running: runtime_state.running,
         runtime_status: runtime_state.status,
@@ -929,17 +840,8 @@ fn update_settings(
     state: State<'_, AppState>,
     settings: TranslationSettings,
 ) -> Result<(), String> {
-    if settings.spoken_translation_enabled {
-        apple_speech::ensure_voice_available(
-            &settings.target_language,
-            settings
-                .spoken_translation_voice
-                .as_deref()
-                .unwrap_or("apple-voice-1"),
-        )?;
-    }
     let running = state.runtime_state.lock().running;
-    let (speech_settings_changed, keep_awake_changed) = {
+    let keep_awake_changed = {
         let mut preferences = state.preferences.lock();
         if running
             && (preferences.translation_source_language != settings.source_language
@@ -956,17 +858,11 @@ fn update_settings(
                     .into(),
             );
         }
-        let speech_changed = preferences.experimental_spoken_translation_enabled
-            != settings.spoken_translation_enabled
-            || preferences.experimental_spoken_translation_voice
-                != settings.spoken_translation_voice
-            || preferences.experimental_spoken_translation_output_device
-                != settings.spoken_translation_output_device;
         let keep_awake_changed =
             preferences.translation_keep_awake != settings.keep_awake_during_translation;
         settings.apply_to(&mut preferences);
         preferences::save(&preferences)?;
-        (speech_changed, keep_awake_changed)
+        keep_awake_changed
     };
     state.sync_shared_state();
     if keep_awake_changed && running {
@@ -975,18 +871,6 @@ fn update_settings(
         } else {
             state.wake_lock.stop();
         }
-    }
-    if speech_settings_changed && state.runtime_state.lock().running {
-        state.mark_current_translations_seen();
-        state.apple_speech.configure(
-            settings.spoken_translation_enabled,
-            &settings.target_language,
-            settings
-                .spoken_translation_voice
-                .as_deref()
-                .unwrap_or("apple-voice-1"),
-            settings.spoken_translation_output_device.as_deref(),
-        );
     }
     apply_native_identity(&app, &settings)?;
     apply_overlay_window(&app, &settings)?;
@@ -1010,16 +894,6 @@ fn swap_translation_direction(
         return Err("Choose a target language before swapping live translation".into());
     }
 
-    if settings.spoken_translation_enabled {
-        apple_speech::ensure_voice_available(
-            &settings.target_language,
-            settings
-                .spoken_translation_voice
-                .as_deref()
-                .unwrap_or("apple-voice-1"),
-        )?;
-    }
-
     let shared = state.runtime.shared_state();
     let requested = shared.translation_direction_request.read();
     let active = shared.translation_direction_active.read();
@@ -1038,11 +912,6 @@ fn swap_translation_direction(
         }
         preferences.translation_source_language = settings.source_language.clone();
         preferences.translation_target_language = settings.target_language.clone();
-        preferences.experimental_spoken_translation_enabled = settings.spoken_translation_enabled;
-        preferences.experimental_spoken_translation_voice =
-            settings.spoken_translation_voice.clone();
-        preferences.experimental_spoken_translation_output_device =
-            settings.spoken_translation_output_device.clone();
         preferences::save(&preferences)?;
     }
 
@@ -1051,11 +920,6 @@ fn swap_translation_direction(
         settings.target_language,
         next_epoch,
     ))?;
-
-    // Pause spoken output while the old epoch drains. The new target voice is
-    // configured after the requested direction reaches a speech boundary.
-    state.apple_speech.stop();
-    state.mark_current_translations_seen();
 
     Ok(state.direction_switch_state())
 }
@@ -1085,26 +949,15 @@ fn begin_translation(
     if state.runtime_state.lock().running {
         return Err("请先完成上一场的停止或恢复".into());
     }
-    state.stop_closing_readout()?;
     if let Ok(speakers)=&state.speakers{speakers.client().disable();}
-    stop_preview_process(&state);
-    if settings.spoken_translation_enabled {
-        apple_speech::ensure_voice_available(
-            &settings.target_language,
-            settings
-                .spoken_translation_voice
-                .as_deref()
-                .unwrap_or("apple-voice-1"),
-        )?;
+    let translate = settings.target_language != "none";
+    let models = ModelPaths::resolve_current_for_mode(translate)?;
+    if !models.ready_for_mode(settings.source_language == "auto", translate) {
+        return Err(if translate { "双语会议模型不完整，请检查模型路径或下载本地模型" } else { "语音识别模型不完整，请检查 ASR 模型路径或下载本地模型" }.into());
     }
-    let models = ModelPaths::resolve_current()?;
-    if !models.ready_for(settings.source_language == "auto") {
-        return Err("The selected core models are incomplete. Check explicit model paths or download the Forum models before starting live translation".into());
-    }
-    let mut model_env = models.env_vars()?;
-    if settings.source_language == "auto" {
-        model_env.extend(AutomaticAsrPaths::resolve(state.resource_dir.as_deref())?.env_vars()?);
-    }
+    let mut model_env = models.env_vars_for_mode(translate)?;
+    model_env.extend(AutomaticAsrPaths::resolve(state.resource_dir.as_deref())?.env_vars()?);
+    if translate { model_env.extend(translation_runtime_env(state.resource_dir.as_deref())?); }
     {
         let mut preferences = state.preferences.lock();
         settings.apply_to(&mut preferences);
@@ -1134,16 +987,6 @@ fn begin_translation(
     shared.translation_window_visible.set(true);
     shared.translation_overlay_active.set(true);
     shared.translation_overlay_status.set("warming".into());
-    state.spoken_translations.lock().legacy_completed_count = 0;
-    state.apple_speech.configure(
-        settings.spoken_translation_enabled,
-        &settings.target_language,
-        settings
-            .spoken_translation_voice
-            .as_deref()
-            .unwrap_or("apple-voice-1"),
-        settings.spoken_translation_output_device.as_deref(),
-    );
     if settings.keep_awake_during_translation {
         state.wake_lock.start()?;
     } else {
@@ -1196,9 +1039,8 @@ fn begin_translation(
 
 #[tauri::command]
 fn stop_translation(state: State<'_, AppState>) -> Result<RuntimeState, String> {
-    state.apple_speech.stop();
+
     state.wake_lock.stop();
-    state.mark_current_translations_seen();
     // Submit while holding the event consumer's state lock. Slow transcript I/O
     // happens afterwards and must never overwrite a completed shutdown receipt.
     {
@@ -1246,7 +1088,6 @@ fn recover_meeting(
     settings.target_language = setup.options.target_language;
     settings.recording_enabled = setup.options.recording_enabled;
     settings.final_interval_seconds = setup.options.max_segment_ms / 1000;
-    settings.spoken_translation_enabled = false;
     // replay_only is carried separately; the capture bridge returns before
     // initializing CPAL/ScreenCaptureKit, regardless of this saved source kind.
     settings.input_device = if setup.options.dual_audio {
@@ -1262,6 +1103,35 @@ fn recover_meeting(
 #[tauri::command]
 fn get_usage(state: State<'_, AppState>) -> UsageSnapshot {
     state.usage.snapshot()
+}
+
+#[tauri::command]
+fn show_meeting_window(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let window = app.get_webview_window("overlay").ok_or("实时会议窗口不可用")?;
+    window.show().map_err(|e| e.to_string())?;
+    window.unminimize().map_err(|e| e.to_string())?;
+    state.runtime.shared_state().translation_window_visible.set(true);
+    window.set_focus().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn show_meeting_workspace(app: tauri::AppHandle, session_id: Option<String>, view: Option<String>) -> Result<(), String> {
+    let view = if view.as_deref() == Some("settings") { "settings" } else { "forum" };
+    let session_id = session_id.map(|id| forum_contracts::Uuid::parse_str(&id))
+        .transpose().map_err(|e| e.to_string())?.map(|id| id.to_string());
+    if app.get_webview_window("main").is_none() {
+        // Bootstrap the route when the main webview does not yet have listeners.
+        let mut config = app.config().app.windows.iter().find(|c| c.label == "main")
+            .ok_or("主窗口配置不可用")?.clone();
+        config.url = WebviewUrl::App(format!("index.html?view={view}&session={}",
+            session_id.as_deref().unwrap_or("")).into());
+        let window = WebviewWindowBuilder::from_config(&app, &config)
+            .map_err(|e| e.to_string())?.build().map_err(|e| e.to_string())?;
+        window.show().map_err(|e| e.to_string())?;
+        return window.set_focus().map_err(|e| e.to_string());
+    }
+    show_or_create_main_window(&app)?;
+    app.emit_to("main", if view == "settings" { "open-live-settings" } else { "open-forum-session" }, session_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1295,75 +1165,8 @@ fn toggle_subtitle_preview(state: State<'_, AppState>) -> Result<bool, String> {
     Ok(next)
 }
 
-fn stop_preview_process(state: &AppState) {
-    if let Some(mut child) = state.voice_preview_process.lock().take() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-}
-
-#[tauri::command]
-fn preview_spoken_voice(
-    state: State<'_, AppState>,
-    voice: String,
-    language: String,
-) -> Result<(), String> {
-    stop_preview_process(&state);
-    let sample = match language.as_str() {
-        "zh" => "欢迎使用AI Vision Forum，这是苹果系统音色试听。",
-        "ja" => "AI Vision Forum リアルタイム翻訳のシステム音声プレビューです。",
-        "fr" => "Bienvenue dans AI Vision Forum, voici un aperçu de la voix système Apple.",
-        _ => "Welcome to AI Vision Forum. This is an Apple system voice preview.",
-    };
-    let output_device = state
-        .preferences
-        .lock()
-        .experimental_spoken_translation_output_device
-        .clone();
-    let child = apple_speech::preview(&voice, &language, output_device.as_deref(), sample)?;
-
-    *state.voice_preview_process.lock() = Some(child);
-    Ok(())
-}
-
-#[tauri::command]
-fn stop_spoken_voice_preview(state: State<'_, AppState>) {
-    stop_preview_process(&state);
-}
-
-#[tauri::command]
-fn list_apple_voices() -> Vec<apple_speech::SystemVoice> {
-    apple_speech::available_voices()
-}
-
-#[tauri::command]
-fn open_apple_voice_settings() -> Result<(), String> {
-    Command::new("open")
-        .arg("x-apple.systempreferences:com.apple.Accessibility-Settings.extension?LiveSpeech")
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("Could not open Apple voice settings: {error}"))
-}
-
-#[tauri::command]
-fn list_output_devices() -> Vec<String> {
-    apple_speech::output_device_names()
-}
-
-#[tauri::command]
-fn preview_apple_voice(
-    state: State<'_, AppState>,
-    name: String,
-    locale: String,
-) -> Result<(), String> {
-    stop_preview_process(&state);
-    let child = apple_speech::preview_named(&name, &locale)?;
-    *state.voice_preview_process.lock() = Some(child);
-    Ok(())
-}
-
 fn input_devices() -> Vec<String> {
-    let mut devices = vec!["__system_audio__".into(), "__default_microphone__".into(), "__dual_audio__".into()];
+    let mut devices = crate::audio_inputs::default_inputs();
     if let Ok(discovered) = cpal::default_host().input_devices() {
         devices.extend(discovered.filter_map(|device| device.name().ok()));
     }
@@ -1383,11 +1186,11 @@ fn input_devices() -> Vec<String> {
 fn create_overlay(app: &tauri::App) -> tauri::Result<WebviewWindow> {
     let overlay = WebviewWindowBuilder::new(app, "overlay", WebviewUrl::App("overlay.html".into()))
         .title(crate::identity::PRODUCT_NAME)
-        .inner_size(960.0, 640.0)
+        .inner_size(1180.0, 720.0)
         .min_inner_size(OVERLAY_MIN_INNER_WIDTH, OVERLAY_MIN_INNER_HEIGHT)
         .resizable(true)
         .decorations(false)
-        .always_on_top(true)
+        .always_on_top(false)
         .visible(true)
         .center()
         .build()?;
@@ -1401,7 +1204,10 @@ fn create_overlay(app: &tauri::App) -> tauri::Result<WebviewWindow> {
                 .runtime
                 .shared_state()
                 .translation_window_visible
-                .set(true);
+                .set(false);
+            if let Some(window) = app_handle.get_webview_window("overlay") {
+                let _ = window.hide();
+            }
         }
     });
     Ok(overlay)
@@ -1535,27 +1341,11 @@ fn start_event_bridge(app_handle: tauri::AppHandle) {
 
             let direction_state = state.direction_switch_state();
             if last_direction_state.as_ref() != Some(&direction_state) {
-                if runtime_state.running && !direction_state.pending {
-                    let preferences = state.preferences.lock().clone();
-                    state.apple_speech.configure(
-                        preferences.experimental_spoken_translation_enabled,
-                        &direction_state.active_target_language,
-                        preferences
-                            .experimental_spoken_translation_voice
-                            .as_deref()
-                            .unwrap_or("apple-voice-1"),
-                        preferences
-                            .experimental_spoken_translation_output_device
-                            .as_deref(),
-                    );
-                }
                 if has_main_window {
                     let _ = app_handle.emit_to("main", "direction-switch-state", &direction_state);
                 }
                 last_direction_state = Some(direction_state);
             }
-            // Apply the target voice before enqueuing a newly committed result.
-            state.queue_completed_translations_for_speech();
 
             if state.take_overlay_dirty() {
                 let overlay_state = state.overlay_state();
@@ -1597,10 +1387,10 @@ pub fn run(args: Args) {
                 if initial_settings.keep_awake_during_translation {
                     state.wake_lock.start().map_err(anyhow::Error::msg)?;
                 }
-                let mut model_env=ModelPaths::resolve_current().and_then(|models|models.env_vars()).map_err(anyhow::Error::msg)?;
-                if initial_settings.source_language=="auto" {
-                    model_env.extend(AutomaticAsrPaths::resolve(state.resource_dir.as_deref()).and_then(|paths|paths.env_vars()).map_err(anyhow::Error::msg)?);
-                }
+                let translate = initial_settings.target_language != "none";
+                let mut model_env=ModelPaths::resolve_current_for_mode(translate).and_then(|models|models.env_vars_for_mode(translate)).map_err(anyhow::Error::msg)?;
+                model_env.extend(AutomaticAsrPaths::resolve(state.resource_dir.as_deref()).and_then(|paths|paths.env_vars()).map_err(anyhow::Error::msg)?);
+                if translate { model_env.extend(translation_runtime_env(state.resource_dir.as_deref()).map_err(anyhow::Error::msg)?); }
                 state
                     .runtime
                     .start(
@@ -1641,7 +1431,7 @@ pub fn run(args: Args) {
             revoke_display,
             get_public_snapshot,
             get_lan_state,create_lan_identity,start_lan,stop_lan,create_participant_access,create_peer_invite,pair_forum_peer,revoke_lan_access,disconnect_forum_peer,get_public_sessions,search_public_content,
-            join_forum_event,start_closing_readout,stop_closing_readout,
+            join_forum_event,
             get_speaker_status,get_speaker_assignments,enable_session_speakers,disable_session_speakers,correct_speaker_assignment,
             get_model_status,
             start_model_download,
@@ -1655,14 +1445,10 @@ pub fn run(args: Args) {
             get_meeting_transcript,
             recover_meeting,
             get_overlay_state,
+            show_meeting_window,
+            show_meeting_workspace,
             open_transcript_history,
             toggle_subtitle_preview,
-            preview_spoken_voice,
-            stop_spoken_voice_preview,
-            list_apple_voices,
-            open_apple_voice_settings,
-            list_output_devices,
-            preview_apple_voice
         ])
         .build(tauri::generate_context!())
         .expect("failed to build AI Vision Forum")
@@ -1692,9 +1478,8 @@ pub fn run(args: Args) {
                 if let Ok(analysis) = &state.analysis { analysis.shutdown(); }
                 if let Ok(lan)=&state.forum_lan{lan.shutdown();}
                 if let Ok(speakers)=&state.speakers{speakers.shutdown();}
-                state.closing_speech.stop();
                 state.runtime.begin_shutdown();
-                state.apple_speech.stop();
+
                 state.wake_lock.stop();
                 if state.usage.snapshot().running {
                     if let Err(error) = state.usage.stop() {
@@ -1707,7 +1492,7 @@ pub fn run(args: Args) {
                     loop {
                         let state=handle.state::<AppState>();
                         let analysis_done=state.analysis.as_ref().map_or(true,|a|a.shutdown_complete());
-                        if state.runtime.shutdown_complete() && analysis_done && state.forum_lan.as_ref().map_or(true,|lan|lan.shutdown_complete()) && state.speakers.as_ref().map_or(true,|s|s.shutdown_complete()) && state.stop_closing_readout().is_ok() {
+                        if state.runtime.shutdown_complete() && analysis_done && state.forum_lan.as_ref().map_or(true,|lan|lan.shutdown_complete()) && state.speakers.as_ref().map_or(true,|s|s.shutdown_complete()) {
                             state.exit_ready.store(true, Ordering::Release);
                             handle.exit(0);break;
                         }
@@ -1728,152 +1513,9 @@ pub fn run(args: Args) {
 mod tests {
     use super::*;
 
-    fn speech_delivery(text: &str) -> moxin_dora_bridge::data::DurableTranslationDelivery {
-        use moxin_dora_bridge::data::*;
-        DurableTranslationDelivery {
-            identity: DurableTranslationIdentity {
-                translation_id: forum_contracts::Uuid::new_v4(),
-                revision: 1,
-                attempt: 1,
-            },
-            source_segment_ids: vec![forum_contracts::Uuid::new_v4()],
-            target_language: "en".into(),
-            text: text.into(),
-        }
-    }
-    fn speech_update(
-        session_id: forum_contracts::Uuid,
-        items: Vec<moxin_dora_bridge::data::DurableTranslationDelivery>,
-        count: u64,
-    ) -> TranslationUpdate {
-        TranslationUpdate {
-            completed_count: count,
-            durable_deliveries: Some(moxin_dora_bridge::data::DurableTranslationBatch {
-                session_id,
-                items,
-            }),
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn durable_speech_uses_late_result_identity_not_last_rows_or_counts() {
-        let session = forum_contracts::Uuid::new_v4();
-        let first = speech_delivery("later source");
-        let late = speech_delivery("earlier source, late result");
-        let mut cursor = SpokenTranslationCursor::default();
-        assert_eq!(
-            cursor.consume(&speech_update(session, vec![first.clone()], 200), true),
-            vec!["later source"]
-        );
-        // A decreasing/reused count and a completely different UI window do
-        // not requeue a seen result or choose the last unrelated caption row.
-        let update = speech_update(session, vec![late.clone(), first], 199);
-        assert_eq!(
-            cursor.consume(&update, true),
-            vec!["earlier source, late result"]
-        );
-        assert!(cursor.consume(&update, true).is_empty());
-        assert!(cursor
-            .consume(&speech_update(session, vec![], 0), true)
-            .is_empty());
-        assert!(cursor
-            .consume(&speech_update(session, vec![late], 1), true)
-            .is_empty());
-    }
-
-    #[test]
-    fn disabled_speech_consumes_deliveries_without_replaying_on_enable() {
-        let session = forum_contracts::Uuid::new_v4();
-        let old = speech_delivery("old");
-        let new = speech_delivery("new");
-        let mut cursor = SpokenTranslationCursor::default();
-        assert!(cursor
-            .consume(&speech_update(session, vec![old.clone()], 1), false)
-            .is_empty());
-        assert!(cursor
-            .consume(&speech_update(session, vec![old.clone()], 1), true)
-            .is_empty());
-        assert_eq!(
-            cursor.consume(&speech_update(session, vec![old, new], 2), true),
-            vec!["new"]
-        );
-    }
-
-    #[test]
-    fn late_previous_direction_is_not_spoken_with_the_new_target_voice() {
-        let session = forum_contracts::Uuid::new_v4();
-        let old = speech_delivery("old English");
-        let mut current = speech_delivery("新的中文");
-        current.target_language = "zh".into();
-        let update = speech_update(session, vec![old, current], 2);
-        let mut cursor = SpokenTranslationCursor::default();
-        assert_eq!(
-            cursor.consume_for_target(&update, true, Some("zh")),
-            vec!["新的中文"]
-        );
-        assert!(cursor
-            .consume_for_target(&update, true, Some("en"))
-            .is_empty());
-    }
-
-    #[test]
-    fn durable_speech_distinguishes_revision_attempt_and_resets_only_for_new_session() {
-        let session = forum_contracts::Uuid::new_v4();
-        let original = speech_delivery("original");
-        let mut revised = original.clone();
-        revised.identity.revision = 2;
-        revised.text = "revised".into();
-        let mut retried = revised.clone();
-        retried.identity.attempt = 2;
-        retried.text = "retried".into();
-        let mut cursor = SpokenTranslationCursor::default();
-        assert_eq!(
-            cursor.consume(
-                &speech_update(session, vec![original.clone(), revised, retried], 3),
-                true
-            ),
-            vec!["original", "revised", "retried"]
-        );
-        assert!(cursor
-            .consume(&speech_update(session, vec![original.clone()], 1), true)
-            .is_empty());
-        assert_eq!(
-            cursor.consume(
-                &speech_update(forum_contracts::Uuid::new_v4(), vec![original], 1),
-                true
-            ),
-            vec!["original"]
-        );
-        assert_eq!(cursor.seen.len(), 1);
-    }
-
-    #[test]
-    fn preview_speech_keeps_explicit_legacy_count_fallback() {
-        let mut cursor = SpokenTranslationCursor::default();
-        let mut update = TranslationUpdate {
-            history: vec![SentenceUnit {
-                source_text: "preview".into(),
-                translation: "sample".into(),
-                source_language: "zh".into(),
-                target_language: "en".into(),
-                direction_epoch: 0,
-            }],
-            completed_count: 1,
-            ..Default::default()
-        };
-        assert_eq!(cursor.consume(&update, true), vec!["sample"]);
-        assert!(cursor.consume(&update, true).is_empty());
-        update.completed_count = 0;
-        cursor.consume(&update, false);
-        update.completed_count = 1;
-        assert_eq!(cursor.consume(&update, true), vec!["sample"]);
-    }
-
     #[test]
     fn settings_round_trip_preserves_translation_preferences() {
         let original = AppPreferences {
-            experimental_spoken_translation_output_device: Some("Studio Display Speakers".into()),
             translation_only: true,
             translation_final_interval_seconds: 6,
             ..AppPreferences::default()
@@ -1903,10 +1545,6 @@ mod tests {
             original.translation_keep_awake,
             updated.translation_keep_awake
         );
-        assert_eq!(
-            original.experimental_spoken_translation_output_device,
-            updated.experimental_spoken_translation_output_device
-        );
     }
 
     #[test]
@@ -1924,8 +1562,8 @@ mod tests {
     }
 
     #[test]
-    fn overlay_window_allows_a_constrained_vertical_viewport() {
+    fn meeting_window_reserves_space_for_captions_and_insights() {
         assert_eq!(OVERLAY_MIN_INNER_WIDTH, 560.0);
-        assert_eq!(OVERLAY_MIN_INNER_HEIGHT, 96.0);
+        assert_eq!(OVERLAY_MIN_INNER_HEIGHT, 560.0);
     }
 }

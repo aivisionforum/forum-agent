@@ -1,83 +1,39 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
+  import MeetingAssistantSettings from './components/MeetingAssistantSettings.svelte';
   import ForumWorkspace from './ForumWorkspace.svelte';
   import logoUrl from '../../icons/logo-mark.png';
   import { productName, developmentVersion } from './lib/product';
+  import { meetingMode, settingsForMeetingMode, type MeetingMode } from './lib/meeting-mode';
   import {
     getSettings,
+    showMeetingWindow,
+    listenWorkspace,
+    listenLiveSettings,
     isTauri,
     getModelStatus,
     getUsage,
-    getDirectionSwitchState,
-    listenDirectionSwitchState,
     listenRuntime,
-    listAppleVoices,
-    listOutputDevices,
-    openAppleVoiceSettings,
+    listenInputDevices,
     openTranscriptHistory,
-    previewSpokenVoice,
     startTranslation,
     startModelDownload,
-    stopSpokenVoicePreview,
     stopTranslation,
-    swapTranslationDirection,
     toggleSubtitlePreview,
     updateSettings,
     type AccentTheme,
     type RuntimeState,
-    type DirectionSwitchState,
     type ModelStatus,
     type UsageSnapshot,
     type SettingsPayload,
     type TranslationSettings
   } from './lib/api';
 
-  type SpokenVoice = {
-    id: string;
-    name: string;
-    locale: string;
-  };
-
-  type RequiredAppleVoice = SpokenVoice & {
-    target: 'zh' | 'en';
-    languageZh: string;
-    languageEn: string;
-  };
-
   const languages = [
     { code: 'zh', zh: '中文', en: 'Chinese' },
-    { code: 'en', zh: '英语', en: 'English' },
-    { code: 'ja', zh: '日语', en: 'Japanese' },
-    { code: 'fr', zh: '法语', en: 'French' }
+    { code: 'en', zh: '英语', en: 'English' }
   ] as const;
   const fontSizes = ['16', '20', '24', '30', '36', '44', '52', '64', '80', '96', '120', '160'];
-  const chineseSpokenVoices: SpokenVoice[] = [
-    { id: 'apple-voice-1', name: 'Yue (Premium)', locale: 'zh_CN' },
-    { id: 'apple-voice-2', name: 'Tingting', locale: 'zh_CN' }
-  ];
-  const englishSpokenVoices: SpokenVoice[] = [1, 2, 3, 4, 5].map((number) => ({
-    id: `apple-voice-${number}`,
-    name: `Voice ${number}`,
-    locale: 'en_US'
-  }));
-  const requiredAppleVoices: RequiredAppleVoice[] = [
-    {
-      target: 'zh',
-      id: 'apple-voice-1',
-      name: 'Yue (Premium)',
-      locale: 'zh_CN',
-      languageZh: '普通话（中国大陆）',
-      languageEn: 'Mandarin Chinese (Mainland China)'
-    },
-    {
-      target: 'en',
-      id: 'apple-voice-4',
-      name: 'Voice 4',
-      locale: 'en_US',
-      languageZh: '英语（美国）',
-      languageEn: 'English (United States)'
-    }
-  ];
   const accentThemes: Array<{ id: AccentTheme; zh: string; en: string; color: string }> = [
     { id: 'neon-blue', zh: '电光蓝', en: 'BLUE', color: '#0003FE' },
     { id: 'neon-orange', zh: '霓虹橙', en: 'ORANGE', color: '#FF5705' },
@@ -90,25 +46,19 @@
   let running = false;
   let runtimeStatus = 'idle';
   let runtimeMessage = 'Local AI is ready';
-  let directionSwitchPending = false;
   let advancedOpen = false;
+  let workspaceSession: string | null = new URLSearchParams(window.location.search).get('session') || null;
+  let workspaceRequest = new URLSearchParams(window.location.search).get('view') === 'forum' ? 1 : 0;
   let workspaceVisible = new URLSearchParams(window.location.search).get('view') === 'forum';
   let appSettingsOpen = false;
   let subtitlePreviewVisible = true;
   let subtitlePreviewBusy = false;
-  let previewingVoice = '';
-  let previewTimer: number | null = null;
   let busy = false;
   let errorMessage = '';
   let modelStatus: ModelStatus | null = null;
   let modelTimer: number | null = null;
   let usage: UsageSnapshot | null = null;
   let usageTimer: number | null = null;
-  let refreshingOutputDevices = false;
-  let refreshingAppleVoices = false;
-  let voiceInstallGuide: RequiredAppleVoice | null = null;
-  let voiceCheckTimer: number | null = null;
-  let voiceGuideCloseTimer: number | null = null;
 
   const isEnglish = () => settings?.appLanguage === 'en';
   const tr = (zh: string, en: string) => (isEnglish() ? en : zh);
@@ -129,7 +79,7 @@
 
   function languageName(code: string): string {
     if (code === 'none') return tr('不翻译', 'No translation');
-    if (code === 'auto') return tr('自动识别（Whisper）', 'Auto detect (Whisper)');
+    if (code === 'auto') return tr('中英自动识别', 'Automatic Chinese / English');
     if (code === 'bilingual') return tr('中文和英文', 'Chinese + English');
     const language = languages.find((item) => item.code === code);
     return language ? (isEnglish() ? language.en : language.zh) : code.toUpperCase();
@@ -142,197 +92,27 @@
     return value;
   }
 
-  function requiredVoiceForTarget(target: string): RequiredAppleVoice | null {
-    return requiredAppleVoices.find((voice) => voice.target === target) ?? null;
+  async function chooseMeetingMode(mode: MeetingMode) {
+    if (!settings || running) return;
+    settings = settingsForMeetingMode(settings, mode);
+    await persist();
+  }
+  async function focusAssistantSettings() {
+    workspaceVisible = false;
+    await tick();
+    document.getElementById('meeting-assistant-settings')?.scrollIntoView({behavior:'smooth',block:'center'});
   }
 
-  function isAppleVoiceInstalled(name: string, locale: string): boolean {
-    return payload?.installedAppleVoices.some((voice) => voice.name === name && voice.locale === locale) ?? false;
-  }
-
-  function hasWrongLocaleVariant(voice: RequiredAppleVoice): boolean {
-    if (isAppleVoiceInstalled(voice.name, voice.locale)) return false;
-    return payload?.installedAppleVoices.some((installed) => (
-      installed.name === voice.name && installed.locale !== voice.locale
-    )) ?? false;
-  }
-
-  function voiceStatusLabel(voice: RequiredAppleVoice): string {
-    if (isAppleVoiceInstalled(voice.name, voice.locale)) return tr('已安装', 'INSTALLED');
-    if (hasWrongLocaleVariant(voice)) return tr('已安装其他语言版本', 'WRONG LANGUAGE INSTALLED');
-    return tr('未安装', 'NOT INSTALLED');
-  }
-
-  function voiceLanguageName(voice: RequiredAppleVoice): string {
-    return isEnglish() ? voice.languageEn : voice.languageZh;
-  }
-
-  function voicesForTarget(target: string): ReadonlyArray<SpokenVoice> {
-    const candidates = target === 'zh' ? chineseSpokenVoices : target === 'en' ? englishSpokenVoices : [];
-    return candidates.filter((voice) => isAppleVoiceInstalled(voice.name, voice.locale));
-  }
-
-  function syncVoiceToTarget(): boolean {
-    if (!settings) return false;
-    const available = voicesForTarget(settings.targetLanguage);
-    const required = requiredVoiceForTarget(settings.targetLanguage);
-    let changed = false;
-    if (available.length === 0) {
-      changed = settings.spokenTranslationEnabled || settings.spokenTranslationVoice !== null || changed;
-      settings.spokenTranslationEnabled = false;
-      settings.spokenTranslationVoice = null;
-      return changed;
-    }
-    const current = settings.spokenTranslationVoice;
-    if (current && available.some((voice) => voice.id === current)) return changed;
-    settings.spokenTranslationVoice = required && available.some((voice) => voice.id === required.id)
-      ? required.id
-      : available[0]?.id ?? null;
-    return true;
-  }
-
-  async function persist(): Promise<void> {
+  async function persist(rethrow: unknown = false): Promise<void> {
+    if (settings && !settings.recordingEnabled) settings.speakersEnabled = false;
     if (!settings) return;
     errorMessage = '';
     try {
       await updateSettings(settings);
     } catch (error) {
       errorMessage = String(error);
+      if (rethrow === true) throw error;
     }
-  }
-
-  async function refreshOutputDevices(): Promise<void> {
-    if (!payload || !settings || refreshingOutputDevices) return;
-    refreshingOutputDevices = true;
-    try {
-      const devices = await listOutputDevices();
-      if (devices.length > 0) {
-        payload.outputDevices = devices;
-        payload = { ...payload };
-        if (
-          settings.spokenTranslationOutputDevice !== null &&
-          !devices.includes(settings.spokenTranslationOutputDevice)
-        ) {
-          settings.spokenTranslationOutputDevice = null;
-          settings = { ...settings };
-          await persist();
-        }
-      }
-    } catch (error) {
-      errorMessage = String(error);
-    } finally {
-      refreshingOutputDevices = false;
-    }
-  }
-
-  async function refreshAppleVoiceStatus(): Promise<void> {
-    if (!payload || !settings || refreshingAppleVoices) return;
-    refreshingAppleVoices = true;
-    errorMessage = '';
-    try {
-      const voices = await listAppleVoices();
-      payload.installedAppleVoices = voices;
-      payload = { ...payload };
-      if (syncVoiceToTarget()) {
-        settings = { ...settings };
-        await persist();
-      }
-      if (
-        voiceInstallGuide &&
-        isAppleVoiceInstalled(voiceInstallGuide.name, voiceInstallGuide.locale)
-      ) {
-        stopVoiceAutoCheck();
-        if (voiceGuideCloseTimer === null) {
-          voiceGuideCloseTimer = window.setTimeout(() => {
-            voiceInstallGuide = null;
-            voiceGuideCloseTimer = null;
-          }, 1200);
-        }
-      }
-    } catch (error) {
-      errorMessage = String(error);
-    } finally {
-      refreshingAppleVoices = false;
-    }
-  }
-
-  function stopVoiceAutoCheck(): void {
-    if (voiceCheckTimer !== null) {
-      window.clearInterval(voiceCheckTimer);
-      voiceCheckTimer = null;
-    }
-  }
-
-  function startVoiceAutoCheck(): void {
-    stopVoiceAutoCheck();
-    voiceCheckTimer = window.setInterval(() => void refreshAppleVoiceStatus(), 1800);
-  }
-
-  function closeVoiceInstallGuide(): void {
-    stopVoiceAutoCheck();
-    if (voiceGuideCloseTimer !== null) {
-      window.clearTimeout(voiceGuideCloseTimer);
-      voiceGuideCloseTimer = null;
-    }
-    voiceInstallGuide = null;
-  }
-
-  async function openAppleVoiceDownloads(voice: RequiredAppleVoice): Promise<void> {
-    voiceInstallGuide = voice;
-    startVoiceAutoCheck();
-    try {
-      await openAppleVoiceSettings();
-    } catch (error) {
-      errorMessage = String(error);
-    }
-  }
-
-  async function reopenAppleVoiceDownloads(): Promise<void> {
-    if (voiceInstallGuide) await openAppleVoiceDownloads(voiceInstallGuide);
-  }
-
-  async function swapLanguages(): Promise<void> {
-    if (!settings || directionSwitchPending || settings.targetLanguage === 'none' || (running && settings.inputDevice === '__dual_audio__')) return;
-    const previous = { ...settings };
-    await stopVoicePreview();
-    const source = settings.sourceLanguage;
-    settings.sourceLanguage = settings.targetLanguage;
-    settings.targetLanguage = source;
-    syncVoiceToTarget();
-    settings = { ...settings };
-    if (!running) {
-      await persist();
-      return;
-    }
-
-    directionSwitchPending = true;
-    errorMessage = '';
-    try {
-      applyDirectionSwitchState(await swapTranslationDirection(settings));
-    } catch (error) {
-      settings = previous;
-      directionSwitchPending = false;
-      errorMessage = String(error);
-    }
-  }
-
-  function applyDirectionSwitchState(state: DirectionSwitchState): void {
-    directionSwitchPending = state.pending;
-    if (!settings) return;
-    settings.sourceLanguage = state.sourceLanguage as TranslationSettings['sourceLanguage'];
-    settings.targetLanguage = state.targetLanguage as TranslationSettings['targetLanguage'];
-    settings = { ...settings };
-  }
-
-  async function changeTargetLanguage(): Promise<void> {
-    await stopVoicePreview();
-    if (settings?.targetLanguage === 'none') {
-      settings.translationOnly = false;
-      settings.subtitleSplit = true;
-    }
-    syncVoiceToTarget();
-    settings = { ...settings! };
-    await persist();
   }
 
   async function adjustFont(direction: number): Promise<void> {
@@ -350,6 +130,7 @@
     errorMessage = '';
     try {
       const wasRunning = running;
+      if (!wasRunning) settings = settingsForMeetingMode(settings, meetingMode(settings));
       const state = wasRunning ? await stopTranslation() : await startTranslation(settings);
       applyRuntime(state);
       if (!wasRunning) subtitlePreviewVisible = false;
@@ -357,68 +138,6 @@
       errorMessage = String(error);
     } finally {
       busy = false;
-    }
-  }
-
-  function clearPreviewTimer(): void {
-    if (previewTimer !== null) {
-      window.clearTimeout(previewTimer);
-      previewTimer = null;
-    }
-  }
-
-  async function stopVoicePreview(): Promise<void> {
-    clearPreviewTimer();
-    previewingVoice = '';
-    try {
-      await stopSpokenVoicePreview();
-    } catch (error) {
-      errorMessage = String(error);
-    }
-  }
-
-  async function setSpokenTranslation(enabled: boolean): Promise<void> {
-    if (!settings) return;
-    if (enabled && voicesForTarget(settings.targetLanguage).length === 0) {
-      settings.spokenTranslationEnabled = false;
-      settings = { ...settings };
-      const required = requiredVoiceForTarget(settings.targetLanguage);
-      errorMessage = required
-        ? tr(`请先安装 ${required.name} 或任一兼容音色。`, `Install ${required.name} or another compatible voice first.`)
-        : tr('当前目标语言暂不支持译文播报。', 'Spoken translation is not supported for this target language.');
-      return;
-    }
-    if (!enabled) await stopVoicePreview();
-    settings.spokenTranslationEnabled = enabled;
-    settings = { ...settings };
-    await persist();
-  }
-
-  async function selectSpokenVoice(): Promise<void> {
-    await stopVoicePreview();
-    await persist();
-  }
-
-  async function playVoicePreview(): Promise<void> {
-    if (!settings?.spokenTranslationEnabled) return;
-    const voice = settings.spokenTranslationVoice ?? 'apple-voice-1';
-    if (previewingVoice === voice) {
-      await stopVoicePreview();
-      return;
-    }
-
-    errorMessage = '';
-    clearPreviewTimer();
-    try {
-      await previewSpokenVoice(voice, settings.targetLanguage);
-      previewingVoice = voice;
-      previewTimer = window.setTimeout(() => {
-        previewingVoice = '';
-        previewTimer = null;
-      }, 4600);
-    } catch (error) {
-      previewingVoice = '';
-      errorMessage = String(error);
     }
   }
 
@@ -490,60 +209,56 @@
   function runtimeDisplayMessage(): string {
     if (browserPreview) return tr('界面预览 · 合成字幕', 'UI preview · synthetic captions');
     if (['error', 'degraded', 'draining', 'stopping'].includes(runtimeStatus)) return runtimeMessage;
-    if (directionSwitchPending && settings) {
-      return tr(
-        `将在下一句切换：${languageName(settings.sourceLanguage)} → ${languageName(settings.targetLanguage)}`,
-        `Next sentence: ${languageName(settings.sourceLanguage)} → ${languageName(settings.targetLanguage)}`
-      );
-    }
-    if (runtimeStatus === 'listening') return tr('实时翻译进行中', 'Live translation active');
-    if (runtimeStatus === 'warming') return tr('正在启动本地翻译…', 'Starting local translation…');
+    if (runtimeStatus === 'listening') return settings?.targetLanguage === 'none' ? tr('正在转写 · 仅原文', 'Transcribing · source only') : tr('实时双语进行中', 'Bilingual meeting active');
+    if (runtimeStatus === 'warming') return tr('正在准备会议…', 'Preparing meeting…');
     return runtimeMessage || tr('本地 AI 已就绪', 'Local AI is ready');
   }
 
   onMount(() => {
     let unlisten: () => void = () => undefined;
-    let unlistenDirection: () => void = () => undefined;
-    const refreshVoicesOnFocus = () => {
-      if (payload && settings) void refreshAppleVoiceStatus();
-    };
-    const refreshVoicesWhenVisible = () => {
-      if (document.visibilityState === 'visible') refreshVoicesOnFocus();
-    };
-    window.addEventListener('focus', refreshVoicesOnFocus);
-    document.addEventListener('visibilitychange', refreshVoicesWhenVisible);
-    void getSettings().then((data) => {
-      payload = data;
-      settings = { ...data.settings };
+    let unlistenInputs = () => {};
+    let discoveredInputs: string[] | null = null;
+    let workspaceDisposed = false;
+    void listenInputDevices(devices => {
+      discoveredInputs = devices;
+      if (payload) payload = {...payload, inputDevices: devices};
+    }).then(cleanup => {
+      if (workspaceDisposed) cleanup(); else unlistenInputs = cleanup;
+      return getSettings();
+    }).then((data) => {
+      if (workspaceDisposed) return;
+      payload = {...data, inputDevices: discoveredInputs ?? data.inputDevices};
+      const normalized = settingsForMeetingMode(data.settings, meetingMode(data.settings));
+      settings = data.running ? {...data.settings} : normalized;
+      if (!data.running && JSON.stringify(settings) !== JSON.stringify(data.settings)) {
+        void updateSettings(settings).catch(e => errorMessage = String(e));
+      }
       applyAccentTheme(settings.accentTheme);
       subtitlePreviewVisible = data.subtitlePreviewVisible;
-      if (syncVoiceToTarget()) {
-        settings = { ...settings };
-        void updateSettings(settings);
-      }
       running = data.running;
       runtimeStatus = data.runtimeStatus;
       runtimeMessage = data.runtimeMessage;
     }).catch((error) => {
       errorMessage = String(error);
     });
+    let unlistenWorkspace = () => {};
+    let unlistenSettings = () => {};
+    void listenLiveSettings(() => void focusAssistantSettings()).then(cleanup => { if (workspaceDisposed) cleanup(); else unlistenSettings = cleanup; });
+    if (new URLSearchParams(window.location.search).get('view') === 'settings') void focusAssistantSettings();
+    void listenWorkspace(id => { workspaceSession = id; workspaceRequest++; workspaceVisible = true; })
+      .then(cleanup => { if (workspaceDisposed) cleanup(); else unlistenWorkspace = cleanup; });
     void listenRuntime(applyRuntime).then((cleanup) => { unlisten = cleanup; });
-    void listenDirectionSwitchState(applyDirectionSwitchState).then((cleanup) => { unlistenDirection = cleanup; });
-    void getDirectionSwitchState().then(applyDirectionSwitchState).catch((error) => { errorMessage = String(error); });
     void refreshModelStatus();
     void refreshUsage();
     usageTimer = window.setInterval(() => void refreshUsage(), 1000);
     return () => {
-      clearPreviewTimer();
+      workspaceDisposed = true;
+      unlistenWorkspace();
+      unlistenSettings();
+      unlistenInputs();
       if (modelTimer !== null) window.clearInterval(modelTimer);
       if (usageTimer !== null) window.clearInterval(usageTimer);
-      stopVoiceAutoCheck();
-      if (voiceGuideCloseTimer !== null) window.clearTimeout(voiceGuideCloseTimer);
-      window.removeEventListener('focus', refreshVoicesOnFocus);
-      document.removeEventListener('visibilitychange', refreshVoicesWhenVisible);
-      void stopSpokenVoicePreview();
       unlisten();
-      unlistenDirection();
     };
   });
 </script>
@@ -565,8 +280,8 @@
       <div class="header-actions">
         <div class:active={runtimeStatus === 'listening'} class="status-line">
           <span></span>{tr(
-            browserPreview ? '界面预览' : runtimeStatus === 'listening' ? '翻译中' : runtimeStatus === 'warming' ? '正在准备' : runtimeStatus === 'draining' ? '保存尾句中' : runtimeStatus === 'stopping' ? '正在停止' : runtimeStatus === 'degraded' ? '部分功能待恢复' : runtimeStatus === 'error' ? '需要处理' : '已停止',
-            browserPreview ? 'UI PREVIEW' : runtimeStatus === 'listening' ? 'TRANSLATING' : runtimeStatus === 'warming' ? 'WARMING UP' : runtimeStatus === 'draining' ? 'SAVING LAST SEGMENTS' : runtimeStatus === 'stopping' ? 'STOPPING' : runtimeStatus === 'degraded' ? 'RECOVERY NEEDED' : runtimeStatus === 'error' ? 'NEEDS ATTENTION' : 'STOPPED'
+            browserPreview ? '界面预览' : runtimeStatus === 'listening' ? '会议中' : runtimeStatus === 'warming' ? '正在准备' : runtimeStatus === 'draining' ? '保存尾句中' : runtimeStatus === 'stopping' ? '正在停止' : runtimeStatus === 'degraded' ? '部分功能待恢复' : runtimeStatus === 'error' ? '需要处理' : '已停止',
+            browserPreview ? 'UI PREVIEW' : runtimeStatus === 'listening' ? 'LIVE' : runtimeStatus === 'warming' ? 'WARMING UP' : runtimeStatus === 'draining' ? 'SAVING LAST SEGMENTS' : runtimeStatus === 'stopping' ? 'STOPPING' : runtimeStatus === 'degraded' ? 'RECOVERY NEEDED' : runtimeStatus === 'error' ? 'NEEDS ATTENTION' : 'STOPPED'
           )}
         </div>
         <button class="outline-button" on:click={() => openTranscriptHistory()}>{tr('转录记录', 'TRANSCRIPTS')}</button>
@@ -590,13 +305,7 @@
     {#if settings.sourceLanguage === 'auto' && !modelStatus?.automaticAsrReady && !browserPreview}
       <p role="status" class="error-message">{modelStatus?.automaticAsrDetail ?? tr('自动识别模型准备状态待检查', 'Checking automatic ASR readiness')}</p>
     {/if}
-    <div class="recording-choice">
-      <label><input type="checkbox" bind:checked={settings.recordingEnabled} disabled={running} on:change={persist} />
-        {tr('保存本场录音，支持异常恢复', 'Save session audio for recovery')}</label>
-      <span>{settings.recordingEnabled
-        ? tr('原文和译文会持续保存到本机。', 'Transcripts and translations are saved continuously on this Mac.')
-        : tr('原文和译文仍会保存；尚未识别的音频在退出后无法恢复。', 'Text is still saved; untranscribed audio cannot be recovered after exit.')}</span>
-    </div>
+
 
     <section class="control-grid">
       <div class="grid-row route-row">
@@ -606,44 +315,31 @@
           <span>{tr('输入路线', 'INPUT ROUTE')}</span>
         </div>
         <div class="row-controls route-controls">
-          <label class="route-field">
-            <span class="route-heading"><strong>{tr('源语言', 'SOURCE LANGUAGE')}</strong></span>
-            <select disabled={running} bind:value={settings.sourceLanguage} on:change={persist}>
-              <option value="auto">{tr('自动识别（Whisper）', 'Auto detect (Whisper)')}</option>
-              {#each languages as language}
-                <option value={language.code}>{isEnglish() ? language.en : language.zh}</option>
-              {/each}
-            </select>
-          </label>
-
-          <button title={running && settings.inputDevice === '__dual_audio__' ? tr('双轨录音中请先停止，再更改语言方向', 'Stop dual-track recording before changing language direction') : ''} disabled={(running && settings.inputDevice === '__dual_audio__') || directionSwitchPending || settings.targetLanguage === 'none' || settings.sourceLanguage === 'auto' || settings.targetLanguage === 'bilingual'} class="swap-button" aria-label={tr('交换语言', 'Swap languages')} on:click={swapLanguages}>⇄</button>
-
-          <label class="route-field">
-            <span class="route-heading"><strong>{tr('目标语言', 'TARGET LANGUAGE')}</strong></span>
-            <select disabled={running} bind:value={settings.targetLanguage} on:change={changeTargetLanguage}>
-              {#each languages as language}
-                <option value={language.code}>{isEnglish() ? language.en : language.zh}</option>
-              {/each}
-              <option value="bilingual">{tr('中文和英文', 'Chinese + English')}</option>
-              <option value="none">{tr('不翻译', 'No translation')}</option>
-            </select>
-          </label>
-
-          <label class="route-field audio-route-field">
-            <span class="route-heading"><strong>{tr('输入音频', 'AUDIO INPUT')}</strong></span>
+          <div class="meeting-language-mode">
+            <span class="control-label">{tr('会议语言', 'MEETING LANGUAGE')}</span>
+            <div class="segmented three" role="group" aria-label="会议语言模式">
+              <button class:active={meetingMode(settings) === 'mixed'} aria-pressed={meetingMode(settings) === 'mixed'} disabled={running} on:click={() => chooseMeetingMode('mixed')}>{tr('中英混合', 'CHINESE + ENGLISH')}</button>
+              <button class:active={meetingMode(settings) === 'zh'} aria-pressed={meetingMode(settings) === 'zh'} disabled={running} on:click={() => chooseMeetingMode('zh')}>{tr('纯中文', 'CHINESE ONLY')}</button>
+              <button class:active={meetingMode(settings) === 'en'} aria-pressed={meetingMode(settings) === 'en'} disabled={running} on:click={() => chooseMeetingMode('en')}>{tr('纯英文', 'ENGLISH ONLY')}</button>
+            </div>
+            <small>{meetingMode(settings) === 'mixed' ? tr('自动识别中英，显示双语字幕', 'Automatic Chinese / English with bilingual captions') : tr('仅语音识别，不运行翻译', 'Transcription only, no translation')}</small>
+          </div>
+          <label class="meeting-audio-input"><span class="control-label">{tr('输入音频', 'AUDIO INPUT')}</span>
             <select disabled={running} bind:value={settings.inputDevice} on:change={persist}>
-              {#each [...new Set(['__dual_audio__',...payload.inputDevices])] as device}
-                <option value={device}>{deviceName(device)}</option>
-              {/each}
+              {#each [...new Set(['__dual_audio__',...payload.inputDevices,settings.inputDevice].filter(Boolean))] as device}<option value={device}>{deviceName(device)}</option>{/each}
             </select>
           </label>
+          <div class="recording-choice">
+            <label><input type="checkbox" bind:checked={settings.recordingEnabled} disabled={running} on:change={persist} />{tr('保存录音', 'SAVE AUDIO')}</label>
+            <span>{settings.recordingEnabled ? tr('支持原文恢复与匿名标签', 'Enables recovery and speaker labels') : tr('仅保存文字，未识别音频无法恢复', 'Text is saved; pending audio cannot be recovered')}</span>
+          </div>
         </div>
       </div>
 
       <div class="grid-row subtitle-row">
         <div class="row-number">02</div>
         <div class="row-title">
-          <strong>{tr('字幕窗口', 'SUBTITLE WINDOW')}</strong>
+          <strong>{tr('实时会议窗口', 'LIVE MEETING WINDOW')}</strong>
           <span>{tr('显示方式', 'DISPLAY')}</span>
         </div>
         <div class="row-controls subtitle-controls">
@@ -658,86 +354,49 @@
 
           <div class="control-block layout-control">
             <span class="control-label">{tr('内容样式', 'LAYOUT')}</span>
-            <div
-              class="segmented two"
-              title={settings.targetLanguage === 'none' ? tr('选择“不翻译”时无法调整此选项。', 'This option cannot be changed when No translation is selected.') : undefined}
-            >
-              <button disabled={settings.targetLanguage === 'none'} class:active={!settings.subtitleSplit && settings.targetLanguage !== 'none'} on:click={async () => { settings!.subtitleSplit = false; settings = { ...settings! }; await persist(); }}>{tr('上下对照', 'STACKED')}</button>
-              <button disabled={settings.targetLanguage === 'none'} class:active={settings.subtitleSplit && settings.targetLanguage !== 'none'} on:click={async () => { settings!.subtitleSplit = true; settings = { ...settings! }; await persist(); }}>{tr('逐句双行', 'SENTENCE PAIRS')}</button>
-            </div>
+            {#if settings.targetLanguage === 'none'}
+              <div class="source-only-layout">{settings.sourceLanguage === 'en' ? tr('仅显示英文原文', 'English transcript') : tr('仅显示中文原文', 'Chinese transcript')}</div>
+            {:else}
+              <div class="segmented two">
+                <button class:active={!settings.subtitleSplit} on:click={async () => { settings!.subtitleSplit = false; settings = { ...settings! }; await persist(); }}>{tr('上下对照', 'STACKED')}</button>
+                <button class:active={settings.subtitleSplit} on:click={async () => { settings!.subtitleSplit = true; settings = { ...settings! }; await persist(); }}>{tr('逐句双行', 'SENTENCE PAIRS')}</button>
+              </div>
+            {/if}
           </div>
 
           <div class="control-block subtitle-action-control">
-            <span class="control-label">{tr('字幕调整', 'SUBTITLE TOOLS')}</span>
+            <span class="control-label tools-label">{tr('字幕调整', 'SUBTITLE TOOLS')}<button class="tools-settings" on:click={() => advancedOpen = true}>{tr('高级设置', 'ADVANCED')} ↗</button></span>
             <div class="subtitle-action-pair">
+              <button class="wide-outline" on:click={() => showMeetingWindow().catch(e => errorMessage = String(e))}>{tr('打开会议窗口', 'OPEN WINDOW')} ↗</button>
               <button class:active={subtitlePreviewVisible && !running} disabled={running || subtitlePreviewBusy} class="subtitle-preview-button" on:click={toggleTestSubtitles}>
                 {running ? tr('实时字幕中', 'LIVE') : subtitlePreviewVisible ? tr('清空字幕', 'CLEAR') : tr('测试字幕', 'TEST')}
               </button>
-              <button class="wide-outline" on:click={() => advancedOpen = true}>{tr('高级设置', 'ADVANCED')} <span>↗</span></button>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="grid-row voice-row">
-        <div class="row-number">03</div>
-        <div class="row-title">
-          <strong>{tr('译文播报', 'SPOKEN TRANSLATION')}</strong>
-          <span>{tr('音色与输出设备', 'VOICE + OUTPUT')}</span>
-        </div>
-        <div class="row-controls voice-controls">
-          <div class="control-block voice-toggle-control">
-            <span class="control-label">{tr('播报开关', 'SPEECH OUTPUT')}</span>
-            <div class="segmented two">
-              <button class:active={!settings.spokenTranslationEnabled} on:click={() => setSpokenTranslation(false)}>{tr('关', 'OFF')}</button>
-              <button disabled={requiredVoiceForTarget(settings.targetLanguage) === null} class:active={settings.spokenTranslationEnabled} on:click={() => setSpokenTranslation(true)}>{tr('开', 'ON')}</button>
-            </div>
-          </div>
-
-          <div class:is-disabled={!settings.spokenTranslationEnabled} class="control-block voice-picker-control">
-            <span class="control-label">{tr('播报音色', 'VOICE')} · {languageName(settings.targetLanguage)}</span>
-            <div class="voice-picker-row">
-              <select disabled={!settings.spokenTranslationEnabled} bind:value={settings.spokenTranslationVoice} on:change={selectSpokenVoice}>
-                {#if voicesForTarget(settings.targetLanguage).length === 0}
-                  <option value="">{tr('暂无已选音色', 'NO APPROVED VOICE')}</option>
-                {:else}
-                  {#each voicesForTarget(settings.targetLanguage) as voice}
-                    <option value={voice.id}>{voice.name}</option>
-                  {/each}
-                {/if}
-              </select>
-              <button aria-label={previewingVoice === (settings.spokenTranslationVoice ?? 'apple-voice-1') ? tr('停止试听', 'Stop preview') : tr('试听音色', 'Preview voice')} title={previewingVoice === (settings.spokenTranslationVoice ?? 'apple-voice-1') ? tr('停止试听', 'Stop preview') : tr('试听音色', 'Preview voice')} class:playing={previewingVoice === (settings.spokenTranslationVoice ?? 'apple-voice-1')} class="preview-button" type="button" disabled={!settings.spokenTranslationEnabled || voicesForTarget(settings.targetLanguage).length === 0} on:click={playVoicePreview}>
-                <span aria-hidden="true">{previewingVoice === (settings.spokenTranslationVoice ?? 'apple-voice-1') ? '■' : '▶'}</span>
-              </button>
-            </div>
-          </div>
-
-          <label class:is-disabled={!settings.spokenTranslationEnabled} class="control-block output-device-control">
-            <span class="control-label">{tr('输出设备', 'OUTPUT DEVICE')}</span>
-            <select disabled={!settings.spokenTranslationEnabled} bind:value={settings.spokenTranslationOutputDevice} on:mouseenter={refreshOutputDevices} on:focus={refreshOutputDevices} on:change={persist}>
-              <option value={null}>{tr('系统默认', 'SYSTEM DEFAULT')}</option>
-              {#each payload.outputDevices as device}<option value={device}>{device}</option>{/each}
-            </select>
-          </label>
-        </div>
+      <div class="grid-row assistant-row" id="meeting-assistant-settings">
+        <div class="row-number">03</div><div class="row-title"><strong>会议助理</strong><span>匿名标签 · 实时洞察</span></div>
+        <div class="row-controls"><MeetingAssistantSettings bind:settings save={() => persist(true)} {running} active={!workspaceVisible}/></div>
       </div>
     </section>
 
     <footer class="launch-area">
       <div class="launch-meta">
-        <span>{languageName(settings.sourceLanguage)} → {languageName(settings.targetLanguage)}</span>
+        <span>{settings.targetLanguage === 'none' ? tr(`${languageName(settings.sourceLanguage)} · 仅转写`, `${languageName(settings.sourceLanguage)} · transcription`) : tr('中英混合 · 双语字幕', 'Chinese + English · bilingual')}</span>
         <span>{deviceName(settings.inputDevice)}</span>
         {#if errorMessage}<strong class="error">{errorMessage}</strong>{:else}<span>{runtimeDisplayMessage()}</span>{/if}
         {#if usage && running}<strong class="session-timer">{formatDuration(usage.currentSessionSeconds)}</strong>{/if}
       </div>
       <button class:running class="launch-button" disabled={busy || browserPreview} on:click={toggleTranslation}>
         <span>{running ? '■' : '▶'}</span>
-        {browserPreview ? tr('界面预览 · 请在桌面应用中启动', 'UI PREVIEW · START IN DESKTOP APP') : busy ? tr('请稍候…', 'PLEASE WAIT…') : running ? tr('停止实时翻译', 'STOP LIVE TRANSLATION') : tr('启动实时翻译', 'START LIVE TRANSLATION')}
+        {browserPreview ? tr('界面预览 · 请在桌面应用中启动', 'UI PREVIEW · START IN DESKTOP APP') : busy ? tr('请稍候…', 'PLEASE WAIT…') : running ? tr('结束会议', 'END MEETING') : tr('开始会议', 'START MEETING')}
       </button>
     </footer>
     </div>
-    <div class="workspace-view" hidden={!workspaceVisible}><ForumWorkspace {running} active={workspaceVisible} on:runtime={(event) => applyRuntime(event.detail)} /></div>
-    {#if workspaceVisible}<div class="compact-live-strip"><span>{runtimeDisplayMessage()}</span>{#if running}<button class="stop" disabled={busy} on:click={toggleTranslation}>{tr('停止实时翻译', 'STOP LIVE TRANSLATION')}</button>{:else}<button on:click={() => workspaceVisible = false}>{tr('返回实时控制', 'LIVE CONTROLS')}</button>{/if}</div>{/if}
+    <div class="workspace-view" hidden={!workspaceVisible}><ForumWorkspace {running} active={workspaceVisible} requestedSession={workspaceSession} requestVersion={workspaceRequest} on:runtime={(event) => applyRuntime(event.detail)} /></div>
+    {#if workspaceVisible}<div class="compact-live-strip"><span>{runtimeDisplayMessage()}</span>{#if running}<button class="stop" disabled={busy} on:click={toggleTranslation}>{tr('结束会议', 'END MEETING')}</button>{:else}<button on:click={() => workspaceVisible = false}>{tr('返回实时控制', 'LIVE CONTROLS')}</button>{/if}</div>{/if}
   </main>
 
   {#if advancedOpen}
@@ -748,7 +407,7 @@
           <span>{tr('字幕显示内容', 'SUBTITLE CONTENT')}</span>
           <div
             class="segmented two modal-choice"
-            title={settings.targetLanguage === 'none' ? tr('选择“不翻译”时无法调整此选项。', 'This option cannot be changed when No translation is selected.') : undefined}
+            title={settings.targetLanguage === 'none' ? tr('纯中文或纯英文模式只显示原文。', 'Single-language meetings show the original transcript.') : undefined}
           >
             <button disabled={settings.targetLanguage === 'none'} class:active={!settings.translationOnly && settings.targetLanguage !== 'none'} on:click={async () => { settings!.translationOnly = false; settings = { ...settings! }; await persist(); }}>{tr('双语', 'DUAL')}</button>
             <button disabled={settings.targetLanguage === 'none'} class:active={settings.translationOnly && settings.targetLanguage !== 'none'} on:click={async () => { settings!.translationOnly = true; settings = { ...settings! }; await persist(); }}>{tr('仅译文', 'TRANSLATION')}</button>
@@ -810,40 +469,6 @@
               <div><strong>{tr('核心翻译模型', 'CORE TRANSLATION MODELS')}</strong><small>{formatDownloadSize(modelStatus.coreDownloadBytes)}</small></div>
               <button disabled={modelStatus.coreReady || modelStatus.downloading} on:click={() => downloadModels('core')}>{modelStatus.coreReady ? tr('已安装', 'INSTALLED') : tr('下载', 'DOWNLOAD')}</button>
             </div>
-            <section class="voice-requirements">
-              <header>
-                <div>
-                  <strong>{tr('推荐 Apple 音色', 'RECOMMENDED APPLE VOICES')}</strong>
-                  <small>{tr('当前译文语言只需一个可用音色；下列为推荐音色，也支持已安装的兼容候选。', 'THE CURRENT TARGET NEEDS ONE AVAILABLE VOICE · RECOMMENDED VOICES ARE SHOWN BELOW, AND INSTALLED COMPATIBLE VOICES ALSO WORK.')}</small>
-                </div>
-                <button disabled={refreshingAppleVoices} on:click={refreshAppleVoiceStatus}>{refreshingAppleVoices ? tr('检测中…', 'CHECKING…') : tr('重新检测', 'RECHECK')}</button>
-              </header>
-              <div class="voice-requirement-list">
-                {#each requiredAppleVoices as voice}
-                  <article
-                    class:current={settings.targetLanguage === voice.target}
-                    class:installed={isAppleVoiceInstalled(voice.name, voice.locale)}
-                    class="voice-requirement-card"
-                  >
-                    <div class="voice-card-copy">
-                      <span>{settings.targetLanguage === voice.target ? tr('当前译文语言', 'CURRENT TARGET') : tr('切换语言时推荐', 'RECOMMENDED WHEN SWITCHING')}</span>
-                      <strong>{voice.name}</strong>
-                      <small>{voiceLanguageName(voice)} · {voice.locale}</small>
-                    </div>
-                    <div class="voice-card-status">
-                      <span class:warning={hasWrongLocaleVariant(voice)} class:ready={isAppleVoiceInstalled(voice.name, voice.locale)}>
-                        {isAppleVoiceInstalled(voice.name, voice.locale) ? '✓ ' : ''}{voiceStatusLabel(voice)}
-                      </span>
-                      {#if !isAppleVoiceInstalled(voice.name, voice.locale)}
-                        <button on:click={() => openAppleVoiceDownloads(voice)}>{tr('前往系统设置安装', 'OPEN SYSTEM SETTINGS')}</button>
-                      {:else}
-                        <button disabled>{tr('可以使用', 'READY')}</button>
-                      {/if}
-                    </div>
-                  </article>
-                {/each}
-              </div>
-            </section>
             {#if modelStatus.downloading}
               <div class="model-progress"><span style={`width:${Math.round(modelStatus.progress * 100)}%`}></span></div>
               <p class="model-detail">{modelStatus.title} · {modelStatus.detail} · {Math.round(modelStatus.progress * 100)}%</p>
@@ -867,97 +492,7 @@
       </dialog>
     </div>
   {/if}
-  {#if voiceInstallGuide}
-    <div class="modal-backdrop voice-guide-backdrop">
-      <dialog open class="modal voice-guide-modal" aria-label={tr('安装 Apple 音色', 'Install Apple voice')}>
-        <header>
-          <div><span>VOICE</span><h2>{tr('安装推荐音色', 'INSTALL RECOMMENDED VOICE')}</h2></div>
-          <button on:click={closeVoiceInstallGuide}>×</button>
-        </header>
-        <div class="voice-guide-content">
-          <div class="voice-guide-target">
-            <div><small>{tr('需要安装', 'VOICE TO INSTALL')}</small><strong>{voiceInstallGuide.name}</strong></div>
-            <span>{voiceLanguageName(voiceInstallGuide)} · {voiceInstallGuide.locale}</span>
-          </div>
-          {#if isAppleVoiceInstalled(voiceInstallGuide.name, voiceInstallGuide.locale)}
-            <div class="voice-guide-success"><strong>✓ {tr('检测到正确音色', 'CORRECT VOICE DETECTED')}</strong><small>{tr('安装向导将自动关闭。', 'THIS GUIDE WILL CLOSE AUTOMATICALLY.')}</small></div>
-          {:else}
-            <ol>
-              <li>{tr('在系统设置中进入“辅助功能 → 实时语音”。', 'In System Settings, open Accessibility → Live Speech.')}</li>
-              <li>
-                {voiceInstallGuide.target === 'zh'
-                  ? tr('将系统语音语言选择为“普通话”，点击 Voice 右侧的 ⓘ 打开音色列表。', 'Set System Speech Language to Mandarin, then click the ⓘ beside Voice.')
-                  : tr('将系统语音语言选择为“英语”，点击 Voice 右侧的 ⓘ 打开音色列表。', 'Set System Speech Language to English, then click the ⓘ beside Voice.')}
-              </li>
-              <li>
-                {voiceInstallGuide.target === 'zh'
-                  ? tr('搜索 Yue，并下载 Yue (Premium)。', 'Search for Yue and download Yue (Premium).')
-                  : tr('搜索 Voice 4，并下载英语（美国）版本；不要选择其他国家或语言的 Voice 4。', 'Search for Voice 4 and download the English (United States) version, not another locale.')}
-              </li>
-            </ol>
-            <div class="voice-guide-visual-sequence" aria-hidden="true">
-              <section class="voice-guide-visual-card">
-                <div class="voice-guide-visual-heading">
-                  <span>02</span>
-                  <strong>{tr('点击信息按钮', 'CLICK THE INFO BUTTON')}</strong>
-                </div>
-                <div class="voice-guide-system-preview">
-                  <div class="voice-guide-window-dots"><i></i><i></i><i></i></div>
-                  <div class="voice-guide-preview-row">
-                    <span>System speech language</span>
-                    <strong>{voiceInstallGuide.target === 'zh' ? tr('普通话', 'Mandarin') : tr('英语', 'English')}</strong>
-                  </div>
-                  <div class="voice-guide-preview-row voice-guide-info-row">
-                    <span>Voice</span>
-                    <b class="voice-guide-info-icon">i</b>
-                    <svg class="voice-guide-pointer" viewBox="0 0 76 38">
-                      <path d="M4 31 C 25 31, 38 27, 58 14"></path>
-                      <path d="M51 12 L 64 10 L 59 22"></path>
-                    </svg>
-                  </div>
-                </div>
-              </section>
-              <section class="voice-guide-visual-card">
-                <div class="voice-guide-visual-heading">
-                  <span>03</span>
-                  <strong>{tr('搜索并选对地区', 'SEARCH THE EXACT VOICE')}</strong>
-                </div>
-                <div class="voice-guide-list-preview">
-                  <div class="voice-guide-search-preview">
-                    <svg viewBox="0 0 20 20">
-                      <circle cx="8.5" cy="8.5" r="5.5"></circle>
-                      <path d="M12.5 12.5 L17 17"></path>
-                    </svg>
-                    <strong>{voiceInstallGuide.target === 'zh' ? 'Yue' : 'Voice 4'}</strong>
-                  </div>
-                  <div class="voice-guide-result-preview">
-                    <div>
-                      <small>{voiceLanguageName(voiceInstallGuide)}</small>
-                      <strong>{voiceInstallGuide.name}</strong>
-                    </div>
-                    <span>↓</span>
-                  </div>
-                </div>
-              </section>
-            </div>
-            {#if hasWrongLocaleVariant(voiceInstallGuide)}
-              <p class="voice-guide-warning">{tr(`检测到其他语言版本的 ${voiceInstallGuide.name}，仍需安装 ${voiceInstallGuide.locale} 版本。`, `Another ${voiceInstallGuide.name} locale is installed. You still need the ${voiceInstallGuide.locale} version.`)}</p>
-            {/if}
-            <p class="voice-guide-waiting">{refreshingAppleVoices ? tr('正在自动检测安装状态…', 'CHECKING INSTALLATION…') : tr('安装后返回这里，App 会自动完成检测。', 'RETURN HERE AFTER INSTALLING; THE APP WILL DETECT IT AUTOMATICALLY.')}</p>
-          {/if}
-        </div>
-        <footer class="voice-guide-actions">
-          {#if isAppleVoiceInstalled(voiceInstallGuide.name, voiceInstallGuide.locale)}
-            <button class="primary" on:click={closeVoiceInstallGuide}>{tr('完成', 'DONE')}</button>
-          {:else}
-            <button on:click={reopenAppleVoiceDownloads}>{tr('再次打开系统设置', 'OPEN SYSTEM SETTINGS AGAIN')}</button>
-            <button class="primary" disabled={refreshingAppleVoices} on:click={refreshAppleVoiceStatus}>{refreshingAppleVoices ? tr('检测中…', 'CHECKING…') : tr('立即检测', 'CHECK NOW')}</button>
-          {/if}
-        </footer>
-      </dialog>
-    </div>
-  {/if}
-  {#if modelStatus && !modelStatus.coreReady && !(settings.sourceLanguage === 'auto' && modelStatus.automaticAsrReady && modelStatus.translationReady)}
+  {#if modelStatus && !(settings.targetLanguage === 'none' ? modelStatus.asrReady : settings.sourceLanguage === 'auto' ? modelStatus.automaticAsrReady && modelStatus.translationReady : modelStatus.coreReady)}
     <div class="modal-backdrop model-setup-backdrop">
       <section class="model-setup" aria-label={tr('下载本地模型', 'Download local models')}>
         <span class="brand-logo-tile"><span class="brand-logo" style={`--brand-mark:url("${logoUrl}")`} aria-hidden="true"></span></span>
@@ -984,7 +519,14 @@
 {/if}
 
 <style>
-  .recording-choice { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 14px 0; font-size: 13px; }
-  .recording-choice label { display: flex; align-items: center; gap: 8px; }
-  .recording-choice span { opacity: .65; }
+  .route-controls { display:grid;grid-template-columns:minmax(280px,1.35fr) minmax(190px,1fr);gap:8px 20px;align-items:start;padding-top:14px;padding-bottom:12px; }
+  .source-only-layout { min-height:42px;display:flex;align-items:center;padding:0 14px;border:1px solid var(--line);font-size:12px;color:var(--muted); }
+  .meeting-language-mode,.meeting-audio-input { display:flex;flex-direction:column;gap:8px;min-width:0; }
+  .meeting-language-mode .segmented { width:100%; }
+  .segmented.three { grid-template-columns:1.15fr 1fr 1fr; }
+  .meeting-language-mode small { color:#7c8a9b;font-size:11px;line-height:1.3; }
+  .recording-choice { grid-column:1/-1;display:flex;align-items:center;flex-wrap:wrap;gap:10px;padding:0;font-size:12px; }
+  .recording-choice label { display:flex;align-items:center;gap:7px; }
+  .recording-choice span { color:#8290a1;font-size:11px; }
+  .assistant-row .row-controls { min-width:0; }
 </style>

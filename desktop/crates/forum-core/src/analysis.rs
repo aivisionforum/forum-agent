@@ -142,6 +142,14 @@ fn hashes(config: &AnalysisConfig) -> Result<()> {
     Ok(())
 }
 
+fn insight_input_cursor(c: &Connection, session: Uuid) -> Result<u64> {
+    Ok(c.query_row("SELECT COALESCE(MAX(json_extract(s.body_json,'$.input_cursor')),0) FROM analysis_jobs j JOIN analysis_snapshots s ON s.id=json_extract(j.body_json,'$.snapshot_id') WHERE j.state IN ('succeeded','succeeded_partial') AND json_extract(j.body_json,'$.kind')='insight' AND EXISTS(SELECT 1 FROM json_each(j.body_json,'$.session_ids') WHERE value=?1)", [session.to_string()], |r| r.get(0))?)
+}
+
+fn new_insight_start(c: &Connection, session: Uuid, after: u64) -> Result<Option<u64>> {
+    Ok(c.query_row("SELECT MIN(json_extract(c.audio_json,'$.start_ms')) FROM segments s JOIN capture_segments c ON c.segment_id=s.id JOIN segment_revisions r ON r.segment_id=s.id AND r.revision=s.current_revision WHERE s.session_id=?1 AND r.created_seq>?2 AND json_extract(r.record_json,'$.payload.status')='success' AND length(trim(json_extract(r.record_json,'$.payload.text')))>0", params![session.to_string(),after], |r|r.get(0))?)
+}
+
 fn snapshot_for(
     c: &Connection,
     r: &CreateAnalysisJob,
@@ -294,8 +302,34 @@ fn snapshot_for(
         }
         if r.kind == AnalysisKind::Insight {
             let tail = s.segments.iter().map(|x| x.audio.end_ms).max().unwrap_or(0);
-            let begin = tail.saturating_sub(900_000);
-            s.segments.retain(|x| x.audio.end_ms > begin);
+            // The initial/manual pass covers the meeting from its beginning.
+            // Subsequent passes add every unconsumed source, with overlap;
+            // the live topic map composes all of these source-backed results.
+            let mut begin = 0;
+            let mut late_sources = HashSet::new();
+            if r.automatic {
+                // Analyze new committed text plus a short source-only overlap.
+                // Earlier insights remain separate evidence-backed artifacts.
+                let after = insight_input_cursor(c, ids[0])?;
+                let start = new_insight_start(c, ids[0], after)?
+                    .ok_or_else(|| invalid("analysis_no_new_input"))?;
+                begin = start.saturating_sub(15_000);
+                if after > 0 {
+                    // Late ASR finals and corrections can precede the rolling
+                    // window. Consume those revisions too, without replaying
+                    // the entire intervening meeting or repeatedly scheduling
+                    // the same unconsumed revision.
+                    let mut q = c.prepare("SELECT s.id FROM segments s JOIN segment_revisions r ON r.segment_id=s.id AND r.revision=s.current_revision WHERE s.session_id=?1 AND r.created_seq>?2 AND json_extract(r.record_json,'$.payload.status')='success' AND length(trim(json_extract(r.record_json,'$.payload.text')))>0")?;
+                    late_sources = q
+                        .query_map(params![ids[0].to_string(), after], |r| {
+                            r.get::<_, String>(0)
+                        })?
+                        .collect::<std::result::Result<HashSet<_>, _>>()?;
+                }
+            }
+            s.segments.retain(|x| {
+                x.audio.end_ms > begin || late_sources.contains(&x.segment_id.to_string())
+            });
             let gaps:u64=c.query_row("SELECT COUNT(*) FROM audio_gaps WHERE session_id=?1 AND json_extract(payload_json,'$.audio.end_ms')>?2 AND json_extract(payload_json,'$.audio.start_ms')<?3",params![ids[0].to_string(),begin,tail],|r|r.get(0))?;
             let imported: bool = c.query_row(
                 "SELECT EXISTS(SELECT 1 FROM legacy_imports WHERE session_id=?1)",
@@ -310,6 +344,11 @@ fn snapshot_for(
                         Some(TranscriptStatus::Success | TranscriptStatus::Empty)
                     )
                 });
+            // Freeze only committed ASR revisions. A pending tail is not an
+            // evidence dependency: its first final belongs to the next round.
+            // Keep input_complete=false so this partial view cannot be published
+            // as complete coverage of the meeting.
+            s.segments.retain(|x| x.revision.is_some());
         }
         if s.segments.is_empty() {
             return Err(invalid("analysis_empty_input"));
@@ -430,6 +469,44 @@ fn snapshot_current(c: &Connection, s: &AnalysisSnapshot) -> Result<bool> {
 }
 
 impl Store {
+    pub fn automatic_insight_ready(&self, session: Uuid) -> Result<bool> {
+        require_session(&self.connection, session)?;
+        let active: bool = self.connection.query_row("SELECT EXISTS(SELECT 1 FROM analysis_jobs WHERE state IN ('queued','waiting','running','cancel_requested') AND json_extract(body_json,'$.kind')='insight' AND EXISTS(SELECT 1 FROM json_each(body_json,'$.session_ids') WHERE value=?1))",[session.to_string()],|r|r.get(0))?;
+        Ok(!active
+            && new_insight_start(
+                &self.connection,
+                session,
+                insight_input_cursor(&self.connection, session)?,
+            )?
+            .is_some())
+    }
+
+    /// Refresh the entire private insight history only when an artifact changes.
+    /// Revisions, hides and source invalidations replace the cached view too.
+    pub fn live_insight_history(
+        &self,
+        session: Uuid,
+        known: u64,
+    ) -> Result<(u64, Option<Vec<ArtifactRecord>>)> {
+        require_session(&self.connection, session)?;
+        let current: u64 = self.connection.query_row("SELECT COALESCE(MAX(seq),0) FROM analysis_changes WHERE entity_kind='artifact' AND json_extract(body_json,'$.kind')='insight' AND EXISTS(SELECT 1 FROM json_each(body_json,'$.session_ids') WHERE value=?1)",[session.to_string()],|r|r.get(0))?;
+        if known != 0 && known == current {
+            return Ok((current, None));
+        }
+        let mut q = self.connection.prepare("SELECT body_json FROM analysis_artifacts WHERE json_extract(body_json,'$.kind')='insight' AND EXISTS(SELECT 1 FROM json_each(body_json,'$.session_ids') WHERE value=?1) ORDER BY created_at_ms DESC,id DESC")?;
+        let rows = q
+            .query_map([session.to_string()], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok((
+            current,
+            Some(
+                rows.into_iter()
+                    .map(|s| Ok(serde_json::from_str(&s)?))
+                    .collect::<Result<_>>()?,
+            ),
+        ))
+    }
+
     pub fn create_analysis_job(&mut self, r: &CreateAnalysisJob) -> Result<AnalysisJob> {
         self.create_analysis_job_selected(r, None)
     }
@@ -560,7 +637,7 @@ impl Store {
         if limit == 0 || limit > 100 {
             return Err(invalid("analysis_limit"));
         }
-        let mut s=self.connection.prepare("SELECT body_json FROM analysis_jobs WHERE state IN ('queued','waiting') ORDER BY created_at_ms,id LIMIT ?1")?;
+        let mut s=self.connection.prepare("SELECT body_json FROM analysis_jobs WHERE state IN ('queued','waiting') ORDER BY json_extract(body_json,'$.automatic'),created_at_ms,id LIMIT ?1")?;
         let rows = s
             .query_map([limit], |r| r.get::<_, String>(0))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -814,10 +891,25 @@ fn validate_content(s: &AnalysisSnapshot, content: &ArtifactContent) -> Result<A
         return Err(invalid("artifact_content"));
     }
     let mut claims = HashSet::new();
+    let mut topic_count = 0;
     let mut validation = ArtifactValidation::Valid;
     for sec in &content.sections {
         if sec.heading.len() > 2048 {
             return Err(invalid("artifact_heading"));
+        }
+        if sec.topics.len() > 5 {
+            return Err(invalid("artifact_topics"));
+        }
+        for topic in &sec.topics {
+            if topic.label.trim().is_empty() || topic.label.chars().count() > 12
+                || topic.evidence.is_empty() || topic.evidence.len() > 2
+            {
+                return Err(invalid("artifact_topic"));
+            }
+            for evidence in &topic.evidence {
+                validate_evidence(s, evidence)?;
+            }
+            topic_count += 1;
         }
         for claim in &sec.claims {
             if claim.claim_id.is_nil()
@@ -841,7 +933,7 @@ fn validate_content(s: &AnalysisSnapshot, content: &ArtifactContent) -> Result<A
             }
         }
     }
-    if claims.is_empty() {
+    if claims.is_empty() && topic_count == 0 {
         return Err(invalid("artifact_claims_empty"));
     }
     Ok(validation)
@@ -1894,6 +1986,30 @@ impl Store {
         rows.into_iter()
             .map(|(id, marker)| Ok((parse_uuid(&id)?, marker)))
             .collect()
+    }
+
+    /// A failed startup with no captured segments has nothing to summarize.
+    /// Consume only the observed marker; a later real Stop creates a new one.
+    pub fn ack_empty_analysis_stop_intent(&mut self, session: Uuid, marker: u64) -> Result<bool> {
+        if marker == 0 || marker > i64::MAX as u64 {
+            return Err(invalid("analysis_stop_intent_marker"));
+        }
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        require_session(&tx, session)?;
+        let captured: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM segments s JOIN capture_segments c ON c.segment_id=s.id WHERE s.session_id=?1)",
+            [session.to_string()], |r| r.get(0))?;
+        if captured {
+            return Ok(false);
+        }
+        tx.execute(
+            "DELETE FROM analysis_stop_intents WHERE session_id=?1 AND marker=?2",
+            params![session.to_string(), marker],
+        )?;
+        tx.commit()?;
+        Ok(true)
     }
 
     /// Compare-and-delete. A late/duplicate acknowledgement cannot consume a

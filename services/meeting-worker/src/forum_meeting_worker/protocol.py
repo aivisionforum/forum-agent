@@ -139,7 +139,7 @@ class Protocol:
         def success(result: dict) -> dict:
             return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
-        known = {"initialize", "health.ping", "shutdown", "jobs.run", "jobs.cancel", "jobs.checkpoint_ack"}
+        known = {"initialize", "health.ping", "shutdown", "jobs.run", "jobs.cancel", "jobs.set_paused", "jobs.checkpoint_ack"}
         if self.allow_model_probe:
             known.add("diagnostics.model_probe")
         if method not in known:
@@ -178,12 +178,12 @@ class Protocol:
                 "protocol_version": PROTOCOL_VERSION,
                 "build_version": __version__,
                 "instance_id": params["instance_id"],
-                "capabilities": {"health": True, "task_types": list(KINDS), "model_clients": ["local-mlx"]},
+                "capabilities": {"health": True, "cooperative_pause": True, "task_types": list(KINDS), "model_clients": ["local-mlx"]},
             })
 
         if self.configuration is None:
             return fail(-32002, "NOT_INITIALIZED", "Initialize the connection first.")
-        if method in {"jobs.run", "jobs.cancel", "jobs.checkpoint_ack"}:
+        if method in {"jobs.run", "jobs.cancel", "jobs.set_paused", "jobs.checkpoint_ack"}:
             from .job_io import JobError, require, uuid, integer, sha
             try:
                 if method == "jobs.run":
@@ -191,6 +191,8 @@ class Protocol:
                     return None
                 if method == "jobs.cancel":
                     return success(self.jobs.cancel(params))
+                if method == "jobs.set_paused":
+                    return success(self.jobs.set_paused(params))
                 require(isinstance(params, dict) and set(params) == {"job_id", "attempt", "step_index", "result_sha256"}, "Invalid checkpoint acknowledgement.")
                 uuid(params["job_id"]); integer(params["attempt"], 1, 1000)
                 integer(params["step_index"], 0, 4095); sha(params["result_sha256"])

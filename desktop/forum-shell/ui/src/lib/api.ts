@@ -30,10 +30,8 @@ export interface TranslationSettings {
   anchorPositionPreset: string;
   finalIntervalSeconds: number;
   keepAwakeDuringTranslation: boolean;
-  spokenTranslationEnabled: boolean;
-  spokenTranslationOutputDevice: string | null;
-  spokenTranslationVoice: string | null;
   recordingEnabled: boolean;
+  speakersEnabled: boolean;
   autoSaveTranscript: boolean;
   periodicSaveTranscript: boolean;
   transcriptFileName: string;
@@ -43,8 +41,6 @@ export interface TranslationSettings {
 export interface SettingsPayload {
   settings: TranslationSettings;
   inputDevices: string[];
-  outputDevices: string[];
-  installedAppleVoices: AppleSystemVoice[];
   subtitlePreviewVisible: boolean;
   running: boolean;
   runtimeStatus: string;
@@ -69,6 +65,7 @@ export interface DirectionSwitchState {
 
 export interface ModelStatus {
   coreReady: boolean;
+  asrReady?: boolean;
   translationReady?: boolean;
   automaticAsrReady?: boolean;
   automaticAsrDetail?: string;
@@ -90,6 +87,10 @@ export interface UsageSnapshot {
 }
 
 export interface Sentence {
+  sourceLanguage?: string;
+  languageTexts?: Record<string,string>;
+  segmentId?: string | null;
+  sourceRevision?: number | null;
   sourceText: string;
   translation: string;
 }
@@ -100,6 +101,8 @@ export interface TranslatingSentence extends Sentence {
 }
 
 export interface OverlayState {
+  sessionId?: string | null;
+  runtimeMessage?: string;
   active: boolean;
   status: string;
   sourceLanguage: string;
@@ -116,12 +119,6 @@ export interface OverlayState {
 
 export type AccentTheme = 'neon-blue' | 'neon-orange' | 'neon-pink' | 'neon-green';
 
-export interface AppleSystemVoice {
-  name: string;
-  locale: string;
-  sample: string;
-}
-
 export const previewSettings: SettingsPayload = {
   settings: {
     appLanguage: 'zh',
@@ -136,26 +133,14 @@ export const previewSettings: SettingsPayload = {
     anchorPositionPreset: '50',
     finalIntervalSeconds: 3,
     keepAwakeDuringTranslation: true,
-    spokenTranslationEnabled: false,
-    spokenTranslationOutputDevice: null,
-    spokenTranslationVoice: 'apple-voice-1',
     recordingEnabled: true,
+    speakersEnabled: false,
     autoSaveTranscript: false,
     periodicSaveTranscript: false,
     transcriptFileName: 'transcript.md',
     transcriptSaveDir: null
   },
   inputDevices: ['__dual_audio__', '__system_audio__', '__default_microphone__', 'MacBook Pro Microphone'],
-  outputDevices: ['MacBook Pro Speakers'],
-  installedAppleVoices: [
-    { name: 'Yue (Premium)', locale: 'zh_CN', sample: '你好！我叫月。' },
-    { name: 'Tingting', locale: 'zh_CN', sample: '你好！我叫婷婷。' },
-    { name: 'Voice 1', locale: 'en_US', sample: 'Hi, I’m Siri!' },
-    { name: 'Voice 2', locale: 'en_US', sample: 'Hi, I’m Siri!' },
-    { name: 'Voice 3', locale: 'en_US', sample: 'Hi, I’m Siri!' },
-    { name: 'Voice 4', locale: 'en_US', sample: 'Hi, I’m Siri!' },
-    { name: 'Voice 5', locale: 'en_US', sample: 'Hi, I’m Siri!' }
-  ],
   subtitlePreviewVisible: true,
   running: false,
   runtimeStatus: 'idle',
@@ -174,10 +159,14 @@ export const previewOverlay: OverlayState = {
   accentTheme: 'neon-blue',
   history: [
     {
+      segmentId: '00000000-0000-4000-8000-000000000002',
+      sourceRevision: 1,
       sourceText: '这是一段用于调整字幕大小和布局的测试内容。',
       translation: 'This sample helps you adjust subtitle size and layout.'
     },
     {
+      segmentId: '00000000-0000-4000-8000-000000000003',
+      sourceRevision: 1,
       sourceText: '请确认每句话都清晰、易读，并适合现场屏幕。',
       translation: 'Check that every sentence is clear, readable, and suitable for the venue screen.'
     }
@@ -205,6 +194,9 @@ export async function getModelStatus(): Promise<ModelStatus> {
   if (isTauri()) return invoke<ModelStatus>('get_model_status');
   return {
     coreReady: true,
+    asrReady: true,
+    translationReady: true,
+    automaticAsrReady: true,
     downloading: false,
     component: null,
     progress: 1,
@@ -322,30 +314,6 @@ export async function toggleSubtitlePreview(): Promise<boolean> {
   return browserSubtitlePreviewVisible;
 }
 
-export async function previewSpokenVoice(voice: string, language: string): Promise<void> {
-  if (isTauri()) await invoke('preview_spoken_voice', { voice, language });
-}
-
-export async function stopSpokenVoicePreview(): Promise<void> {
-  if (isTauri()) await invoke('stop_spoken_voice_preview');
-}
-
-export async function listAppleVoices(): Promise<AppleSystemVoice[]> {
-  return isTauri() ? invoke<AppleSystemVoice[]>('list_apple_voices') : [];
-}
-
-export async function openAppleVoiceSettings(): Promise<void> {
-  if (isTauri()) await invoke('open_apple_voice_settings');
-}
-
-export async function listOutputDevices(): Promise<string[]> {
-  return isTauri() ? invoke<string[]>('list_output_devices') : previewSettings.outputDevices;
-}
-
-export async function previewAppleVoice(name: string, locale: string): Promise<void> {
-  if (isTauri()) await invoke('preview_apple_voice', { name, locale });
-}
-
 export async function startWindowDrag(): Promise<void> {
   if (isTauri()) await getCurrentWindow().startDragging();
 }
@@ -353,6 +321,11 @@ export async function startWindowDrag(): Promise<void> {
 export async function listenRuntime(handler: (state: RuntimeState) => void): Promise<UnlistenFn> {
   if (!isTauri()) return () => undefined;
   return listen<RuntimeState>('runtime-state', ({ payload }) => handler(payload));
+}
+
+export async function listenInputDevices(handler: (devices: string[]) => void): Promise<UnlistenFn> {
+  if (!isTauri()) return () => undefined;
+  return listen<string[]>('input-devices', ({ payload }) => handler(payload));
 }
 
 export async function listenDirectionSwitchState(
@@ -386,4 +359,26 @@ export async function listenOverlay(handler: (state: OverlayState) => void): Pro
     return () => undefined;
   }
   return listen<OverlayState>('overlay-state', ({ payload }) => handler(payload));
+}
+
+export async function showMeetingWindow(): Promise<void> {
+  if (isTauri()) await invoke('show_meeting_window');
+}
+export async function showMeetingWorkspace(sessionId: string | null, view: 'forum' | 'settings' = 'forum'): Promise<void> {
+  if (isTauri()) await invoke('show_meeting_workspace', { sessionId, view });
+}
+export async function listenWorkspace(handler: (sessionId: string | null) => void): Promise<UnlistenFn> {
+  return isTauri() ? listen<string | null>('open-forum-session', ({payload}) => handler(payload)) : () => {};
+}
+export async function meetingWindowAction(action: 'close' | 'minimize' | 'fullscreen' | 'pin', pinned = false): Promise<void> {
+  if (!isTauri()) return;
+  const window = getCurrentWindow();
+  if (action === 'close') await window.close();
+  if (action === 'minimize') await window.minimize();
+  if (action === 'fullscreen') await window.setFullscreen(!(await window.isFullscreen()));
+  if (action === 'pin') await window.setAlwaysOnTop(pinned);
+}
+
+export async function listenLiveSettings(handler: () => void): Promise<UnlistenFn> {
+  return isTauri() ? listen('open-live-settings', handler) : () => {};
 }

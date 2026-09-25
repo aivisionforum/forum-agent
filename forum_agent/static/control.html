@@ -112,7 +112,7 @@
     auto-approve: new AI points go straight to the projector; the operator
     fixes mistakes live (edit / hide in the operator view). Uncheck for
     gatekeeper mode: nothing shows until a human approves it.</label>
-  <div style="color:#7f8c99;font-size:13px;margin-top:8px">
+  <div id="synthesis-note" style="color:#7f8c99;font-size:13px;margin-top:8px">
     While a session is live, insights auto-refresh every 3 minutes (each run
     takes ~30–60s — progress shows above). Minutes are drafted automatically
     when the session stops.
@@ -198,6 +198,10 @@ const PHASES = {
 let lastRunning = false;
 async function refresh() {
   const s = await (await fetch("/api/status")).json();
+  if (s.translation_demo) {
+    document.getElementById("synthesis-note").textContent =
+      "实时翻译演示模式：自动洞察和自动纪要已暂停。Translation demo: automatic insights and minutes are paused.";
+  }
   lastRunning = !!s.running;
   const mode = s.running ? s.mode : "idle";
   els.status.innerHTML = `Source: <b class="${mode}">${mode}</b>` +

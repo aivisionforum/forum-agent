@@ -345,6 +345,12 @@ def package(output: Path, cache: Path, offline: bool = False, with_asr: bool = F
             asr_launcher.chmod(0o755)
             asr_manifest = {"protocol_version": 1, "entrypoint": "bin/asr-worker",
                             "script_sha256": sha256(asr_source), "model_weights_included": False}
+        translation_directory = staged / "translation"
+        translation_directory.mkdir()
+        translation_source = REPO / "services/translation-worker/translation_worker.py"
+        shutil.copyfile(translation_source, translation_directory / "translation_worker.py")
+        translation_manifest = {"protocol_version": 1, "script": "translation/translation_worker.py",
+                                "script_sha256": sha256(translation_source), "model_weights_included": False}
         analysis_prompts = analysis_prompt_manifest(staged, source_hashes)
         manifest = {
             "owner": OWNER, "schema_version": 1, "target": lock["target"],
@@ -360,7 +366,7 @@ def package(output: Path, cache: Path, offline: bool = False, with_asr: bool = F
             "entrypoint": "bin/meeting-worker", "analysis_task_types": ANALYSIS_TASK_TYPES,
             "formal_product_acceptance": "not_evaluated", "analysis_prompts": analysis_prompts,
             "probe": "--allow-model-probe / diagnostics.model_probe (F01 only)",
-            "asr_adapter": asr_manifest, "contract_schema_sha256": schema_hash,
+            "translation_adapter": translation_manifest, "asr_adapter": asr_manifest, "contract_schema_sha256": schema_hash,
             "native_relocations": native_relocations,
         }
         (staged / "runtime-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -379,7 +385,7 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path, help="new absolute meeting-worker resource directory")
     parser.add_argument("--cache", required=True, type=Path, help="build artifact cache (no model weights)")
     parser.add_argument("--offline", action="store_true", help="only use already hash-verified cached artifacts")
-    parser.add_argument("--with-asr", action="store_true", help="bundle the separately run Whisper auto-language adapter and pinned dependencies")
+    parser.add_argument("--with-asr", action="store_true", help="bundle the separately run Qwen3-ASR adapter and pinned dependencies")
     args = parser.parse_args()
     if sys.version_info < (3, 12) or platform.system() != "Darwin" or platform.machine() != "arm64":
         parser.error("Build on macOS arm64 with a Python 3.12+ bootstrap interpreter.")

@@ -134,7 +134,12 @@ dto! {
         pub claim_id:Uuid,pub kind:ClaimKind,pub text:String,pub evidence:Vec<AnalysisEvidence>,
         pub grounding:GroundingStatus,pub assignee:Option<String>,pub due:Option<String>,
     }
-    pub struct AnalysisSection {pub heading:String,pub claims:Vec<AnalysisClaim>}
+    pub struct AnalysisTopic {pub label:String,pub evidence:Vec<AnalysisEvidence>}
+    pub struct AnalysisSection {
+        pub heading:String,pub claims:Vec<AnalysisClaim>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub topics:Vec<AnalysisTopic>,
+    }
     pub struct ArtifactContent {pub title:String,pub sections:Vec<AnalysisSection>}
     pub struct CoverageUnit {
         pub target:CoverageTarget,pub start_utf8:usize,pub end_utf8:usize,

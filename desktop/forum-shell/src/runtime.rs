@@ -404,7 +404,7 @@ impl TranslationRuntime {
                             }
                             if current.host.replay_only {
                                 emit(RuntimeEvent::Draining(
-                                    "正在从本机录音恢复原文和译文；未打开音频设备".into(),
+                                    "正在从本机录音恢复会议字幕；未打开音频设备".into(),
                                 ));
                             } else {
                                 emit(RuntimeEvent::Started(current.host.id().to_string()));
@@ -466,16 +466,17 @@ impl TranslationRuntime {
                                 .repository
                                 .core
                                 .call(move |s| Ok(s.terminal_segment_ids(id)?.len()));
-                            if terminal.is_err()
-                                || progress
-                                    .segments_closed
-                                    .saturating_sub(terminal.unwrap_or(0))
-                                    > 1
+                            if terminal.is_err() {
+                                Some("会议存储暂不可用".to_string())
+                            } else if progress
+                                .segments_closed
+                                .saturating_sub(terminal.unwrap_or(0))
+                                > 4
                             {
                                 Some("语音识别存在积压，优先处理原文".to_string())
                             } else {
-                                match current.host.translation_pending() {
-                                    Ok(pending) if pending > 4 => {
+                                match current.host.translation_backlog() {
+                                    Ok(pending) if pending > 8 => {
                                         Some(format!("有 {pending} 项字幕等待处理，暂缓会议分析"))
                                     }
                                     Err(_) => Some("会议存储暂不可用".into()),
@@ -483,7 +484,16 @@ impl TranslationRuntime {
                                 }
                             }
                         };
-                        worker_budget.set_pressure(pressure);
+                        if let Some(reason) = pressure.as_ref().filter(|reason| {
+                            reason.starts_with("语音识别存在积压")
+                                || reason.starts_with("有 ")
+                                || reason.as_str() == "原文持久化正在等待确认"
+                        }) {
+                            worker_budget
+                                .set_transient_pressure(reason.clone(), Duration::from_secs(8));
+                        } else {
+                            worker_budget.set_pressure(pressure);
+                        }
                     }
                     if current.force_cleanup && current.stopping_at.is_none() {
                         let _ = current
@@ -507,7 +517,7 @@ impl TranslationRuntime {
                         if progress.devices_released && !current.draining_announced {
                             current.draining_announced = true;
                             emit(RuntimeEvent::Draining(
-                                "音频设备已释放，正在保存最后一段和剩余译文".into(),
+                                "音频设备已释放，正在保存最后的字幕".into(),
                             ));
                         }
                         let sealed = if progress.capture_sealed {

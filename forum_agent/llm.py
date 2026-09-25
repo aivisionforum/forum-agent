@@ -62,8 +62,8 @@ def prewarm() -> None:
     # session), and only where RAM comfortably fits both (the first
     # minutes of the day otherwise cost ~7 min while 18GB loads).
     from forum_agent import preflight
-    from forum_agent.constants import REPORT_MODEL
-    if preflight.total_ram_gb() < preflight.RECOMMENDED_RAM_GB:
+    from forum_agent.constants import REPORT_MODEL, TRANSLATION_DEMO
+    if TRANSLATION_DEMO or preflight.total_ram_gb() < preflight.RECOMMENDED_RAM_GB:
         return
     from forum_agent import activity
     try:

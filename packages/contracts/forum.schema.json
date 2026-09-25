@@ -593,6 +593,12 @@
         },
         "heading": {
           "type": "string"
+        },
+        "topics": {
+          "items": {
+            "$ref": "#/$defs/AnalysisTopic"
+          },
+          "type": "array"
         }
       },
       "required": [
@@ -753,6 +759,25 @@
         "segment_id",
         "text",
         "audio"
+      ],
+      "type": "object"
+    },
+    "AnalysisTopic": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/AnalysisEvidence"
+          },
+          "type": "array"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "evidence"
       ],
       "type": "object"
     },
@@ -4298,6 +4323,13 @@
         "backend": {
           "type": "string"
         },
+        "context_spans": {
+          "description": "Earlier source for disambiguation only; it is not translated/claimed again.",
+          "items": {
+            "$ref": "#/$defs/SourceSpan"
+          },
+          "type": "array"
+        },
         "direction_epoch": {
           "format": "uint64",
           "minimum": 1,
@@ -4414,6 +4446,9 @@
     },
     "TranslationWork": {
       "properties": {
+        "audio": {
+          "$ref": "#/$defs/AudioRange"
+        },
         "configured_source_language": {
           "type": "string"
         },
@@ -4433,9 +4468,18 @@
         },
         "target_language": {
           "type": "string"
+        },
+        "track_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
         }
       },
       "required": [
+        "track_id",
+        "audio",
         "source_span",
         "configured_source_language",
         "target_language",

@@ -127,6 +127,7 @@ export type AnalysisResult = {
 export type AnalysisSection = {
   "claims": Array<AnalysisClaim>;
   "heading": string;
+  "topics"?: Array<AnalysisTopic>;
 };
 
 export type AnalysisSnapshot = {
@@ -156,6 +157,11 @@ export type AnalysisSource = {
   "speaker_id"?: string | null;
   "status"?: TranscriptStatus | null;
   "text": string;
+};
+
+export type AnalysisTopic = {
+  "evidence": Array<AnalysisEvidence>;
+  "label": string;
 };
 
 export type ArtifactContent = {
@@ -876,6 +882,7 @@ export type TranslationRecord = {
 export type TranslationRequested = {
   "attempt": number;
   "backend": string;
+  "context_spans"?: Array<SourceSpan>;
   "direction_epoch": number;
   "input_text": string;
   "model_manifest_id": string;
@@ -900,9 +907,11 @@ export type TranslationRequestedEvent = {
 export type TranslationStatus = "final" | "passthrough";
 
 export type TranslationWork = {
+  "audio": AudioRange;
   "configured_source_language": string;
   "detected_language"?: string | null;
   "direction_epoch": number;
   "source_span": SourceSpan;
   "target_language": string;
+  "track_id": string;
 };

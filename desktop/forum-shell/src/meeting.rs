@@ -615,6 +615,16 @@ impl MeetingHost {
             .map_err(|e| e.to_string())
     }
 
+    /// Count actual queued source segments once, not both language targets or
+    /// exhausted failures that can never clear by pausing the insight model.
+    pub fn translation_backlog(&self) -> Result<usize, String> {
+        let id = self.id();
+        self.repository.core.call(move |store| Ok(store.coverage(id)?.into_iter()
+            .filter(|c| matches!(c.state.as_str(), "pending" | "requested"))
+            .map(|c| c.segment_id).collect::<std::collections::HashSet<_>>().len()))
+            .map_err(|e|e.to_string())
+    }
+
     pub fn stop_server(&mut self) -> Result<(), String> {
         self.server.stop().map_err(|e| e.to_string())
     }
@@ -794,6 +804,12 @@ fn handle_rpc(
             state.replay_dispatch = Some(expected);
             Ok(json!({"accepted":true}))
         }
+        "translation_context" => {
+            let first: SourceSpan = serde_json::from_value(params.get("first").cloned().unwrap_or(Value::Null))
+                .map_err(|e| invalid(&e.to_string()))?;
+            let epoch = params.get("direction_epoch").and_then(Value::as_u64).ok_or_else(|| invalid("missing direction epoch"))?;
+            core.call(move |store| Ok(serde_json::to_value(store.translation_context(id, &first, epoch)?)?)).map_err(core_error)
+        }
         "poll_translation" | "translation_requests" => {
             let limit = params
                 .get("limit")
@@ -902,7 +918,10 @@ pub fn project_transcript(core: &CoreHandle, id: Uuid) -> Result<TranslationUpda
         for item in &tail.items {
             let Some(row) = &item.transcript else {
                 history.push(SentenceUnit {
-                    source_text: "[音频已保存，原文待处理]".into(),
+                    segment_id: Some(item.segment_id),
+                    source_revision: None,
+                    language_texts: Default::default(),
+                    source_text: String::new(),
                     translation: String::new(),
                     source_language: "auto".into(),
                     target_language: tail.status.target_languages.join(","),
@@ -912,6 +931,7 @@ pub fn project_transcript(core: &CoreHandle, id: Uuid) -> Result<TranslationUpda
             };
             let source = &row.payload;
             let mut outputs = Vec::new();
+            let mut language_texts = std::collections::HashMap::new();
             for translation in &translations {
                 if translation.state == "stale" {
                     continue;
@@ -920,17 +940,18 @@ pub fn project_transcript(core: &CoreHandle, id: Uuid) -> Result<TranslationUpda
                     s.segment_id == source.segment_id && s.segment_revision == source.revision
                 }) {
                     if let Some(result) = &translation.result {
-                        outputs.push(format!(
-                            "[{}] {}",
-                            translation.request.target_language, result.text
-                        ));
+                        outputs.push(result.text.clone());
+                        language_texts.insert(translation.request.target_language.clone(), result.text.clone());
                     }
                 }
             }
             history.push(SentenceUnit {
+                segment_id: Some(source.segment_id),
+                source_revision: Some(source.revision.get()),
+                language_texts,
                 source_text: match source.status {
-                    TranscriptStatus::Failed => "[该段识别失败，可从录音恢复]".into(),
-                    TranscriptStatus::Empty => "[该段没有识别到文字]".into(),
+                    TranscriptStatus::Failed => String::new(),
+                    TranscriptStatus::Empty => String::new(),
                     TranscriptStatus::Success => source.text.clone(),
                 },
                 translation: outputs.join("\n"),

@@ -48,12 +48,33 @@ class AdapterTests(unittest.TestCase):
             worker.local_model(Path("mlx-community/whisper"))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "config.json").write_text("{}")
+            (root / "config.json").write_text('{"model_type":"qwen3_asr"}')
+            (root / "tokenizer_config.json").write_text("{}")
+            (root / "vocab.json").write_text("{}")
+            (root / "merges.txt").write_text("#version: 0.2")
             (root / "weights.npz").write_bytes(b"untrusted")
             with self.assertRaises(ValueError):
                 worker.local_model(root)
-            (root / "weights.safetensors").write_bytes(b"test")
+            (root / "model.safetensors").write_bytes(b"test")
             self.assertEqual(worker.local_model(root), root.resolve())
+
+    def test_qwen_auto_hint_mixed_routing_and_truncation(self):
+        from types import SimpleNamespace
+        engine = worker.QwenEngine.__new__(worker.QwenEngine)
+        engine.np = SimpleNamespace(float32=None, asarray=lambda samples, **kw: samples)
+        engine.path = Path("/local/qwen")
+        calls=[]
+        result=SimpleNamespace(text="我们先做 prototype 再评估。", language="Chinese", truncated=False, finish_reason="eos")
+        def transcribe(*args, **kwargs):
+            calls.append(kwargs)
+            return result
+        engine.transcribe_audio=transcribe
+        self.assertEqual(engine.transcribe([0.1],"auto")[1],"mixed")
+        self.assertIsNone(calls[-1]["language"])
+        engine.transcribe([0.1],"en")
+        self.assertEqual(calls[-1]["language"],"English")
+        result.truncated=True
+        self.assertEqual(worker.response(engine,self.request())["status"],"failed")
 
     def test_frame_reader_preserves_next_frame_and_detects_truncated_input(self):
         read_fd, write_fd = os.pipe()
@@ -77,7 +98,7 @@ class AdapterTests(unittest.TestCase):
                 os.close(write_fd)
 
     def test_exact_digital_silence_does_not_hallucinate(self):
-        engine = worker.WhisperEngine.__new__(worker.WhisperEngine)
+        engine = worker.QwenEngine.__new__(worker.QwenEngine)
         self.assertEqual(engine.transcribe([0.0] * 1600, "auto"), ("", None))
 
 

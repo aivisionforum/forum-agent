@@ -127,6 +127,7 @@ mod tests {
             attempt: 3,
             target_language: "en".into(),
             direction_epoch: 1,
+            context_spans: vec![],
             source_spans: vec![SourceSpan {
                 segment_id: Uuid::new_v4(),
                 segment_revision: Revision::FIRST,

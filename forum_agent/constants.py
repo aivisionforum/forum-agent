@@ -1,4 +1,8 @@
 """Single source of truth for strings/keys shared across modules (R3)."""
+import os
+
+# Opt-in demo mode: keep automatic synthesis from blocking live translation.
+TRANSLATION_DEMO = os.environ.get("FORUM_AGENT_TRANSLATION_DEMO") == "1"
 
 # Audio
 SAMPLE_RATE = 16000

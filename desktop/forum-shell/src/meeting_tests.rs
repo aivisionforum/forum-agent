@@ -71,6 +71,8 @@ fn host_seals_durable_source_with_translation_pending_and_reads_it_after_reopen(
     let pcm = vec![0.25f32; 1600];
     capture.record(&pcm).unwrap();
     let meta = capture.close_segment(&pcm).unwrap();
+    let pending_projection = project_transcript(&repo.core, id).unwrap();
+    assert!(pending_projection.history.iter().all(|s| s.source_text.is_empty() && s.translation.is_empty()));
     let mut asr = DurableProducer::open(host.config.for_producer("asr").unwrap()).unwrap();
     let source = TranscriptFinal {
         track_id: meta.track_id,
@@ -110,6 +112,12 @@ fn host_seals_durable_source_with_translation_pending_and_reads_it_after_reopen(
         page["items"][0]["transcript"]["payload"]["text"],
         source.text
     );
+    let projection = project_transcript(&repo.core, id).unwrap();
+    assert_eq!(projection.history[0].segment_id, Some(meta.segment_id));
+    assert_eq!(projection.history[0].source_revision, Some(source.revision.get()));
+    assert_eq!(projection.history[0].source_text, source.text);
+    assert_eq!(projection.history[0].source_language, "zh");
+    assert!(projection.history[0].translation.is_empty());
     let markdown = repo.export_markdown(id).unwrap();
     assert!(markdown.contains(&source.text));
     drop(capture);
@@ -182,6 +190,8 @@ fn sealed_failed_source_recovery_waits_for_new_revision_and_producer_ack() {
     };
     let pending = asr.append(EventType::TranscriptFinal, &source).unwrap();
     asr.flush_one(pending.message_id).unwrap();
+    let failed_projection = project_transcript(&repo.core, id).unwrap();
+    assert!(failed_projection.history.iter().all(|s| s.source_text.is_empty() && s.translation.is_empty()));
     host.mark_stopping().unwrap();
     capture.seal_after_devices_released().unwrap();
     let seal = ProducerSeal {

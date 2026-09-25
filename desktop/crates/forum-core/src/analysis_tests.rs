@@ -86,6 +86,7 @@ fn result(store: &Store, j: &AnalysisJob) -> AnalysisResult {
             title: "纪要 <script>alert(1)</script>".into(),
             sections: vec![AnalysisSection {
                 heading: "已确认".into(),
+                topics: vec![],
                 claims: vec![AnalysisClaim {
                     claim_id: Uuid::new_v4(),
                     kind: ClaimKind::Fact,
@@ -649,6 +650,7 @@ fn recovered_asr_revision_invalidates_partial_artifact_and_pending_commit() {
             title: "输入尚缺".into(),
             sections: vec![AnalysisSection {
                 heading: "限制".into(),
+                topics: vec![],
                 claims: vec![AnalysisClaim {
                     claim_id: Uuid::new_v4(),
                     kind: ClaimKind::Uncertainty,
@@ -749,11 +751,12 @@ fn publication_projects_only_reviewed_strings_and_republish_is_idempotent() {
     );
 }
 #[test]
-fn insight_window_is_full_segments_and_does_not_claim_gap_free_audio() {
+fn insight_includes_meeting_beginning_and_does_not_claim_gap_free_audio() {
     let mut s = Store::in_memory().unwrap();
     let f = Fixture::new();
     f.setup(&mut s);
     s.register_capture(&f.capture).unwrap();
+    s.ingest_final(&f.final_event).unwrap();
     let mut capture = f.capture.clone();
     capture.message_id = Uuid::new_v4();
     capture.producer.run_id = Uuid::new_v4();
@@ -768,6 +771,7 @@ fn insight_window_is_full_segments_and_does_not_claim_gap_free_audio() {
     s.register_capture(&capture).unwrap();
     let mut final_event = f.final_event.clone();
     final_event.message_id = Uuid::new_v4();
+    final_event.producer.run_id = Uuid::new_v4();
     final_event.payload.segment_id = capture.payload.segment_id;
     final_event.payload.audio = capture.payload.audio.clone();
     s.ingest_final(&final_event).unwrap();
@@ -775,9 +779,14 @@ fn insight_window_is_full_segments_and_does_not_claim_gap_free_audio() {
         .create_analysis_job(&request(&f, AnalysisKind::Insight))
         .unwrap();
     let snapshot = s.analysis_snapshot(j.job_id).unwrap().snapshot;
-    assert_eq!(snapshot.segments.len(), 1);
-    assert_eq!(snapshot.segments[0].segment_id, capture.payload.segment_id);
+    assert_eq!(snapshot.segments.len(), 2);
+    assert_eq!(snapshot.segments[0].segment_id, f.capture.payload.segment_id);
+    assert_eq!(snapshot.segments[1].segment_id, capture.payload.segment_id);
     assert!(snapshot.input_complete);
+    let mut automatic = request(&f, AnalysisKind::Insight);
+    automatic.automatic = true;
+    let first_automatic = s.create_analysis_job(&automatic).unwrap();
+    assert_eq!(s.analysis_snapshot(first_automatic.job_id).unwrap().snapshot.segments.len(), 2);
     let gap = Event {
         schema_version: 1,
         message_id: Uuid::new_v4(),
@@ -962,6 +971,84 @@ fn analysis_stop_intent_survives_restart_without_model_or_job() {
 }
 
 #[test]
+fn live_insight_excludes_unfinished_tail_without_claiming_complete_coverage() {
+    let mut store = Store::in_memory().unwrap();
+    let f = setup(&mut store);
+    let mut tail = f.capture.clone();
+    tail.message_id = Uuid::new_v4();
+    tail.producer.seq += 1;
+    tail.payload.segment_id = Uuid::new_v4();
+    tail.payload.audio = AudioRange {
+        start_sample: 80000,
+        end_sample: 128000,
+        sample_rate: 16000,
+        start_ms: 5000,
+        end_ms: 8000,
+    };
+    store.register_capture(&tail).unwrap();
+    let job = store
+        .create_analysis_job(&request(&f, AnalysisKind::Insight))
+        .unwrap();
+    let snapshot = store.analysis_snapshot(job.job_id).unwrap().snapshot;
+    assert_eq!(snapshot.segments.len(), 1);
+    assert!(!snapshot.input_complete);
+    let mut final_tail = f.final_event.clone();
+    final_tail.message_id = Uuid::new_v4();
+    final_tail.producer.seq += 1;
+    final_tail.payload.segment_id = tail.payload.segment_id;
+    final_tail.payload.audio = tail.payload.audio;
+    store.ingest_final(&final_tail).unwrap();
+    assert_eq!(
+        store.claim_analysis_job(job.job_id, 1).unwrap().state,
+        AnalysisJobState::Running
+    );
+    let artifact = store.finish_analysis_job(&result(&store, &job)).unwrap();
+    assert!(!artifact.coverage_complete);
+    assert_ne!(artifact.validation, ArtifactValidation::Stale);
+    store
+        .revise_transcript(&f.revision(Revision::FIRST, "确实修改了引用原文"))
+        .unwrap();
+    assert_eq!(
+        store.artifact(artifact.artifact_id).unwrap().validation,
+        ArtifactValidation::Stale
+    );
+}
+
+#[test]
+fn empty_stop_intent_does_not_block_real_meetings_and_manual_jobs_take_priority() {
+    let mut store = Store::in_memory().unwrap();
+    let empty = Fixture::new();
+    store.create_session(&empty.session).unwrap();
+    store
+        .record_analysis_stop_intent(empty.session.session_id)
+        .unwrap();
+    let f = setup(&mut store);
+    store
+        .record_analysis_stop_intent(f.session.session_id)
+        .unwrap();
+    let pending = store.pending_analysis_stop_intents(10).unwrap();
+    assert!(store
+        .ack_empty_analysis_stop_intent(pending[0].0, pending[0].1)
+        .unwrap());
+    assert!(!store
+        .ack_empty_analysis_stop_intent(pending[1].0, pending[1].1)
+        .unwrap());
+    assert_eq!(
+        store.pending_analysis_stop_intents(10).unwrap(),
+        vec![pending[1]]
+    );
+    let mut automatic = request(&f, AnalysisKind::Minutes);
+    automatic.automatic = true;
+    let auto = store.create_analysis_job(&automatic).unwrap();
+    let manual = store
+        .create_analysis_job(&request(&f, AnalysisKind::Insight))
+        .unwrap();
+    let queue = store.next_analysis_jobs(10).unwrap();
+    assert_eq!(queue[0].job_id, manual.job_id);
+    assert_eq!(queue[1].job_id, auto.job_id);
+}
+
+#[test]
 fn old_stop_ack_cannot_delete_new_stop_or_another_session() {
     let mut s = Store::in_memory().unwrap();
     let f = Fixture::new();
@@ -1049,3 +1136,143 @@ fn successful_finish_closes_progress_but_partial_keeps_reported_counters() {
 
 #[path = "forum_tests.rs"]
 mod forum_tests;
+
+#[test]
+fn rolling_insight_uses_new_committed_sources_with_overlap_and_never_piles_up() {
+    let mut s = Store::in_memory().unwrap();
+    let f = setup(&mut s);
+    let id = f.session.session_id;
+    assert!(s.automatic_insight_ready(id).unwrap());
+    finish(&mut s, &f);
+    assert!(!s.automatic_insight_ready(id).unwrap());
+    let mut previous = None;
+    for (seq, start_ms) in [(2, 30_000), (3, 40_000), (4, 1_000_000)] {
+        let mut capture = f.capture.clone();
+        capture.message_id = Uuid::new_v4();
+        capture.producer.seq = seq;
+        capture.payload.segment_id = Uuid::new_v4();
+        capture.payload.audio = AudioRange {
+            start_sample: start_ms * 16,
+            end_sample: (start_ms + 3000) * 16,
+            sample_rate: 16000,
+            start_ms,
+            end_ms: start_ms + 3000,
+        };
+        s.register_capture(&capture).unwrap();
+        assert!(!s.automatic_insight_ready(id).unwrap()); // pending audio is not input
+        let mut event = f.final_event.clone();
+        event.message_id = Uuid::new_v4();
+        event.producer.seq = seq;
+        event.payload.segment_id = capture.payload.segment_id;
+        event.payload.audio = capture.payload.audio;
+        s.ingest_final(&event).unwrap();
+        assert!(s.automatic_insight_ready(id).unwrap());
+        let mut req = request(&f, AnalysisKind::Insight);
+        req.automatic = true;
+        let job = s.create_analysis_job(&req).unwrap();
+        assert!(!s.automatic_insight_ready(id).unwrap());
+        s.claim_analysis_job(job.job_id, 1).unwrap();
+        assert!(!s.automatic_insight_ready(id).unwrap());
+        let snapshot = s.analysis_snapshot(job.job_id).unwrap().snapshot;
+        assert!(!snapshot
+            .segments
+            .iter()
+            .any(|x| x.segment_id == f.capture.payload.segment_id));
+        assert!(snapshot
+            .segments
+            .iter()
+            .any(|x| x.segment_id == capture.payload.segment_id));
+        if let Some(old) = previous {
+            assert_eq!(
+                snapshot.segments.iter().any(|x| x.segment_id == old),
+                start_ms < 100_000
+            );
+        }
+        s.finish_analysis_job(&result(&s, &job)).unwrap();
+        assert!(!s.automatic_insight_ready(id).unwrap());
+        previous = Some(capture.payload.segment_id);
+    }
+    s.revise_transcript(&f.revision(Revision::FIRST, "更正较早的原文"))
+        .unwrap();
+    assert!(s.automatic_insight_ready(id).unwrap());
+    let mut req = request(&f, AnalysisKind::Insight);
+    req.automatic = true;
+    let job = s.create_analysis_job(&req).unwrap();
+    assert!(s
+        .analysis_snapshot(job.job_id)
+        .unwrap()
+        .snapshot
+        .segments
+        .iter()
+        .any(|x| x.text == "更正较早的原文"));
+    s.claim_analysis_job(job.job_id, 1).unwrap();
+    s.finish_analysis_job(&result(&s, &job)).unwrap();
+    assert!(!s.automatic_insight_ready(id).unwrap());
+}
+
+#[test]
+fn live_history_retains_more_than_one_page_and_refreshes_old_review_and_source_changes() {
+    let mut s = Store::in_memory().unwrap();
+    let f = setup(&mut s);
+    let id = f.session.session_id;
+    let first = finish(&mut s, &f);
+    for _ in 0..31 {
+        finish(&mut s, &f);
+    }
+    let (cursor, all) = s.live_insight_history(id, 0).unwrap();
+    assert_eq!(all.unwrap().len(), 32);
+    assert!(s.live_insight_history(id, cursor).unwrap().1.is_none());
+    s.review_artifact(&ArtifactReviewCommand {
+        artifact_id: first.artifact_id,
+        expected_revision: first.revision,
+        review: ArtifactReview::Rejected,
+        operator_id: "test".into(),
+        reason: "discard".into(),
+    })
+    .unwrap();
+    let (next, all) = s.live_insight_history(id, cursor).unwrap();
+    assert!(next > cursor);
+    assert_eq!(
+        all.unwrap()
+            .iter()
+            .find(|a| a.artifact_id == first.artifact_id)
+            .unwrap()
+            .review,
+        ArtifactReview::Rejected
+    );
+    s.revise_transcript(&f.revision(Revision::FIRST, "更正原文"))
+        .unwrap();
+    assert!(s
+        .live_insight_history(id, next)
+        .unwrap()
+        .1
+        .unwrap()
+        .iter()
+        .all(|a| a.validation == ArtifactValidation::Stale));
+}
+
+#[test]
+fn source_backed_topics_persist_without_claims_and_reject_invalid_evidence() {
+    let mut s = Store::in_memory().unwrap();
+    let f = setup(&mut s);
+    let job = s.create_analysis_job(&request(&f, AnalysisKind::Insight)).unwrap();
+    s.claim_analysis_job(job.job_id, job.attempt).unwrap();
+    let mut output = result(&s, &job);
+    let evidence = output.content.sections[0].claims[0].evidence.clone();
+    output.content.sections[0].claims.clear();
+    output.content.sections[0].topics = vec![AnalysisTopic { label: "用户体验".into(), evidence }];
+    let mut bad = output.clone();
+    bad.content.sections[0].topics[0].evidence.clear();
+    assert!(s.finish_analysis_job(&bad).is_err());
+    let mut bad = output.clone();
+    if let AnalysisEvidence::Source { span, .. } = &mut bad.content.sections[0].topics[0].evidence[0] {
+        span.quote = "不存在的引用".into();
+    }
+    assert!(s.finish_analysis_job(&bad).is_err());
+    let saved = s.finish_analysis_job(&output).unwrap();
+    assert!(saved.content.sections[0].claims.is_empty());
+    assert_eq!(saved.content.sections[0].topics[0].label, "用户体验");
+    assert_eq!(s.live_insight_history(f.session.session_id, 0).unwrap().1.unwrap()[0].content, saved.content);
+    let legacy: AnalysisSection = serde_json::from_value(serde_json::json!({"heading":"旧版", "claims":[]})).unwrap();
+    assert!(legacy.topics.is_empty());
+}

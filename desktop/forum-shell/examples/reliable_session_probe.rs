@@ -39,22 +39,28 @@ fn main() -> Result<()> {
     let repo = std::env::current_dir()?.canonicalize()?;
     let root = PathBuf::from("/tmp").join(format!("forum-runtime-probe-{}", Uuid::new_v4()));
     let runtime = TranslationRuntime::new(root.clone());
+    let source = std::env::var("FORUM_PROBE_TRANSCRIBE_LANGUAGE").unwrap_or_else(|_| "auto".into());
+    ensure!(["auto", "zh", "en"].contains(&source.as_str()), "expected auto, zh or en");
+    let translate = source == "auto";
+    let target = if translate { "bilingual" } else { "none" };
     let options = MeetingOptions {
-            max_segment_ms: 10_000,        source_language: "auto".into(),
-        target_language: "bilingual".into(),
+        max_segment_ms: 10_000,
+        source_language: source.clone(),
+        target_language: target.into(),
         recording_enabled: true,
         system_audio: false,
-                dual_audio: false,
+        dual_audio: false,
     };
-    let paths = models::ModelPaths::resolve_current().map_err(|e| anyhow!(e))?;
+    let paths = models::ModelPaths::resolve_current_for_mode(translate).map_err(|e| anyhow!(e))?;
+    let mut env = paths.env_vars_for_mode(translate).map_err(|e| anyhow!(e))?;
     let automatic = models::AutomaticAsrPaths::resolve(None).map_err(|e| anyhow!(e))?;
-    let mut env = paths.env_vars().map_err(|e| anyhow!(e))?;
     env.extend(automatic.env_vars().map_err(|e| anyhow!(e))?);
+    if translate { env.extend(models::translation_runtime_env(None).map_err(|e| anyhow!(e))?); }
     let flow = dataflow::render_translation_dataflow(
         None,
         dataflow::RenderOptions {
-            source_language: "auto",
-            target_language: "bilingual",
+            source_language: &source,
+            target_language: target,
             system_audio: false,
             max_segment_ms: 5000,
             asr_model_path: &paths.asr,
@@ -62,6 +68,9 @@ fn main() -> Result<()> {
         },
     )
     .map_err(|e| anyhow!(e))?;
+    if !translate {
+        ensure!(!fs::read_to_string(&flow)?.contains("- id: translator"), "transcription graph started translator");
+    }
     let cases = [
         "zh_negation",
         "en_negation",
@@ -89,7 +98,9 @@ fn main() -> Result<()> {
         host.activate_if_ready().map_err(|e| anyhow!(e))?;
         let mut capture = CaptureSession::open(host.capture_context())?;
         let mut source_ids = Vec::new();
-        let selected = if round == 0 {
+        let selected = if !translate {
+            vec![if source == "zh" { "zh_negation" } else { "en_negation" }]
+        } else if round == 0 {
             cases.to_vec()
         } else {
             vec!["short_en"]
@@ -177,6 +188,10 @@ fn main() -> Result<()> {
             "source transcript was not sealed; diagnostics saved under {}",
             root.display()
         );
+        if !translate {
+            ensure!(export.translations.is_empty(), "source-only meeting produced translations");
+            ensure!(receipt["translation_pending"] == 0, "source-only meeting awaits translation");
+        }
         let markdown = runtime
             .repository()
             .map_err(|e| anyhow!(e))?
@@ -192,7 +207,7 @@ fn main() -> Result<()> {
     fs::write(
         output.join("report.json"),
         serde_json::to_vec_pretty(
-            &json!({"scope":"production desktop runtime + synthetic recording recovery; no audio devices","root":root,"rounds":reports}),
+            &json!({"scope":"production desktop runtime + synthetic recording recovery; no audio devices","source_language":source,"target_language":target,"root":root,"rounds":reports}),
         )?,
     )?;
     drop(runtime);

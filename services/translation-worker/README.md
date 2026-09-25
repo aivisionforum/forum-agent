@@ -1,0 +1,9 @@
+# Local Hy-MT2 translation adapter
+
+macOS uses `mlx-community/Hy-MT2-1.8B-4bit` through the bundled MLX-LM runtime, in a persistent Python process separate from ASR and Agent. `FORUM_TRANSLATOR_PYTHON` and `FORUM_TRANSLATOR_SCRIPT` select the packaged runtime and adapter. The existing `QWEN35_TRANSLATOR_MODEL_PATH` environment variable is retained as a compatibility alias for the selected translation directory; the actual durable backend identity is `hy-mt2-mlx` and its manifest fingerprints the selected files.
+
+Only existing absolute local Hy-MT2 model directories are accepted. Tokenizer loading disables remote code and network resolution. JSONL requests contain source text, preceding context, target language, temperature, token limit and a numeric request ID. Partial messages are cumulative; final messages explicitly report EOS. The Rust owner applies deadlines and cancellation, kills/reaps failed inference children, and refuses truncated results. Bounded streaming backpressure cannot discard final output. Recovery requests retain their original model identity and are never silently relabeled as another model.
+
+The prompt uses Hy-MT2's background/source format, adapted from the [official model card](https://huggingface.co/tencent/Hy-MT2-1.8B). Context informs references and continuations but is not translated again. The source and context remain separately attributed in the durable core. Keep the synthetic context/negation cases when changing this prompt: the old JSON-only prompt caused this model to translate background text.
+
+Run protocol tests with `python3 -m unittest discover -s services/translation-worker/tests`. The native `forum_translation_probe` example exercises this exact backend, including streaming cancellation; set both runtime environment variables before running it.

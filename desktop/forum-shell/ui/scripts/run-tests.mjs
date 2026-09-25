@@ -24,7 +24,7 @@ function emitTypeScript(directory) {
       });
       const target = path.join(temporary, path.relative(uiRoot, sourcePath).replace(/\.ts$/, '.mjs'));
       fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, outputText.replace(/(from\s+['"][^'"]+)\.ts(['"])/g, '$1.mjs$2'));
+      fs.writeFileSync(target, outputText.replace(/(from\s+['"][^'"]+)\.(?:ts|js)(['"])/g, '$1.mjs$2'));
     }
   }
 }

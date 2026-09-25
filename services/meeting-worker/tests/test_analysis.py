@@ -11,10 +11,11 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from forum_meeting_worker.analysis import (chunks, claims_from_output, execute,
+from forum_meeting_worker.analysis import (chunks, claims_from_output, validated_claims, insight_output, execute,
                                          input_units, validate_run)
 from forum_meeting_worker.fingerprint import model_fingerprint
 from forum_meeting_worker.job_io import AttemptFiles, JobError, canonical, digest
@@ -82,6 +83,58 @@ class AnalysisTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
+
+    def test_topics_cover_earlier_source_independently_of_latest_claim_and_survive_resume(self):
+        f = Fixture(self.tmp.name, texts=['课堂设备能否提高孩子的学习兴趣？', '政府需要改进公共服务。'], kind='insight')
+        output = {'claims': [{'kind': 'question', 'text': '如何改进公共服务？',
+            'citations': [{'unit_id': 'u1:0', 'quote': '政府需要改进公共服务'}], 'assignee': None, 'due': None}],
+            'topics': [{'label': '教育', 'citations': [{'unit_id': 'u0:0', 'quote': '提高孩子的学习兴趣'}]},
+                       {'label': '政府', 'citations': [{'unit_id': 'u1:0', 'quote': '政府需要改进公共服务'}]}]}
+        with patch.object(LocalModel, 'generate', return_value=json.dumps(output, ensure_ascii=False)):
+            self.assertEqual(f.run()['status'], 'succeeded')
+        section = json.loads((f.directory / 'result.json').read_text())['content']['sections'][0]
+        self.assertEqual([t['label'] for t in section['topics']], ['教育', '政府'])
+        self.assertEqual(section['topics'][0]['evidence'][0]['span']['segment_id'], f.snapshot['segments'][0]['segment_id'])
+        checkpoints = [p for method, p in f.messages if method == 'jobs.checkpoint']
+        second = f.root / f.job / '2'; second.mkdir(mode=0o700)
+        (second / 'input.json').write_bytes((f.directory / 'input.json').read_bytes())
+        (second / 'checkpoints.json').write_bytes(canonical(checkpoints))
+        f.params['attempt'] = 2
+        f.params['confirmed_checkpoints']['sha256'] = digest(canonical(checkpoints))
+        with patch.object(LocalModel, 'generate', side_effect=AssertionError('Should reuse topics')):
+            self.assertEqual(f.run()['status'], 'succeeded')
+        self.assertEqual(json.loads((second / 'result.json').read_text())['content']['sections'][0]['topics'], section['topics'])
+
+    def test_topics_require_exact_evidence_but_do_not_need_a_selected_claim(self):
+        f = Fixture(self.tmp.name, texts=['课堂设备能否提高孩子的学习兴趣？'], kind='insight')
+        units, _ = input_units(f.snapshot)
+        output = {'claims': [], 'topics': [{'label': '教育', 'citations': [{'unit_id': 'u0:0', 'quote': '孩子的学习兴趣'}]}]}
+        claims, topics, partial = insight_output(output, units, f.job, 0)
+        self.assertEqual(claims, [])
+        self.assertEqual(topics[0]['label'], '教育')
+        self.assertFalse(partial)
+        with patch.object(LocalModel, 'generate', return_value=json.dumps(output, ensure_ascii=False)):
+            self.assertEqual(f.run()['status'], 'succeeded')
+        for citations in [[], [{'unit_id': 'u0:0', 'quote': '从未讨论医疗'}]]:
+            claims, topics, partial = insight_output({'claims': [], 'topics': [{'label': '医疗', 'citations': citations}]}, units, f.job, 0)
+            self.assertEqual(topics, [])
+            self.assertTrue(partial)
+
+    def test_small_talk_has_no_topic_and_legacy_output_remains_readable(self):
+        f = Fixture(self.tmp.name, texts=['Thank you. Right.'], kind='insight')
+        units, _ = input_units(f.snapshot)
+        for output in [{'claims': []}, {'claims': [], 'topics': []}]:
+            self.assertEqual(insight_output(output, units, f.job, 0), ([], [], False))
+
+    def test_invalid_insight_cannot_discard_an_independently_cited_topic(self):
+        f = Fixture(self.tmp.name, texts=['学校需要改善课堂教学。'], kind='insight')
+        units, _ = input_units(f.snapshot)
+        output = {'claims': [{'kind': 'fact', 'text': '不实结论', 'citations': [], 'assignee': None, 'due': None}],
+                  'topics': [{'label': '教育', 'citations': [{'unit_id': 'u0:0', 'quote': '学校需要改善课堂教学'}]}]}
+        claims, topics, partial = insight_output(output, units, f.job, 0)
+        self.assertEqual(claims, [])
+        self.assertEqual(topics[0]['label'], '教育')
+        self.assertTrue(partial)
 
     def test_exact_utf8_sources_and_no_transcript_mutation(self):
         f = Fixture(self.tmp.name)
@@ -185,7 +238,30 @@ class AnalysisTests(unittest.TestCase):
 
     def test_finite_retry_does_not_change_output_contract(self):
         f = Fixture(self.tmp.name, behavior={'invalid_first': True})
-        self.assertEqual(f.run()['status'], 'succeeded')
+        prompts = []
+        generate = LocalModel.generate
+        def record(model, rendered, generation, units):
+            prompts.append(rendered)
+            return generate(model, rendered, generation, units)
+        with patch.object(LocalModel, 'generate', new=record):
+            self.assertEqual(f.run()['status'], 'succeeded')
+        self.assertEqual(len(prompts), 2)
+        self.assertNotEqual(prompts[0], prompts[1])
+        self.assertIn('previous response failed validation', prompts[1])
+
+    def test_one_bad_quote_does_not_discard_valid_claims_or_claim_complete_coverage(self):
+        f = Fixture(self.tmp.name, texts=['预算还没有批准。', '需要周五确认名单。'], kind='insight')
+        good = {'kind': 'fact', 'text': '预算尚未批准', 'citations': [{'unit_id': 'u0:0', 'quote': '还没有批准'}], 'assignee': None, 'due': None}
+        bad = good | {'text': '虚构金额', 'citations': [{'unit_id': 'u1:0', 'quote': '预算二十万'}]}
+        with patch.object(LocalModel, 'generate', return_value=json.dumps({'claims': [good, bad]})):
+            self.assertEqual(f.run()['status'], 'succeeded_partial')
+        result = json.loads((f.directory / 'result.json').read_text())
+        self.assertEqual([c['text'] for c in result['content']['sections'][0]['claims']], ['预算尚未批准'])
+        self.assertTrue(all(u['status'] == 'failed' for u in result['coverage']['units']))
+        self.assertFalse(any(method == 'jobs.checkpoint' for method, _ in f.messages))
+        units, _ = input_units(f.snapshot)
+        with self.assertRaises(JobError):
+            validated_claims({'claims': [bad]}, units, f.job, 0)
 
     def test_all_six_task_routes_and_published_report_evidence(self):
         from forum_meeting_worker.job_io import KINDS
@@ -292,6 +368,28 @@ class AnalysisTests(unittest.TestCase):
         with self.assertRaisesRegex(JobError, 'not in cited evidence'):
             claims_from_output({'claims': [claim]}, units, f.job, 0)
 
+    def test_wrong_unit_is_repaired_only_by_unique_exact_quote_with_utf8_offsets(self):
+        f = Fixture(self.tmp.name, texts=['另一个人的发言。', '📝结论：预算是十二万元。'])
+        units, _ = input_units(f.snapshot)
+        claim = {'kind': 'fact', 'text': '预算十二万元', 'citations': [
+            {'unit_id': 'u0:0', 'quote': '预算是十二万元'}], 'assignee': None, 'due': None}
+        result = claims_from_output({'claims': [claim]}, units, f.job, 0)
+        span = result[0]['evidence'][0]['span']
+        self.assertEqual(span['segment_id'], f.snapshot['segments'][1]['segment_id'])
+        self.assertEqual(span['start_utf8'], len('📝结论：'.encode()))
+        self.assertEqual(f.snapshot['segments'][1]['text'].encode()[span['start_utf8']:span['end_utf8']].decode(), '预算是十二万元')
+
+    def test_citation_repair_rejects_ambiguous_repeated_or_fuzzy_quotes(self):
+        for texts, quote in [(['预算十二万。', '预算十二万。'], '预算十二万'),
+                             (['预算十二万。预算十二万。'], '预算十二万'),
+                             (['预算十二万。'], '预算是十二万')]:
+            f = Fixture(self.tmp.name, texts=texts)
+            units, _ = input_units(f.snapshot)
+            claim = {'kind': 'fact', 'text': '预算', 'citations': [
+                {'unit_id': 'wrong-unit', 'quote': quote}], 'assignee': None, 'due': None}
+            with self.assertRaisesRegex(JobError, 'exact, unambiguous'):
+                claims_from_output({'claims': [claim]}, units, f.job, 0)
+
     def test_32b_grant_is_explicit_and_fake_not_a_production_backend(self):
         from forum_meeting_worker.job_io import validate_grants
         f = Fixture(self.tmp.name)
@@ -369,7 +467,8 @@ class PipeTests(unittest.TestCase):
         public_kind = {'test_two_room_report_through_compute_process': 'event_report',
                        'test_two_room_closing_through_compute_process': 'closing_brief'}.get(self._testMethodName)
         immediate = public_kind or self._testMethodName == 'test_successful_compute_exits_cleanly'
-        self.f = Fixture(self.tmp.name, behavior={'delay_seconds': 0 if immediate else 10}, kind=public_kind or 'minutes')
+        delay = 0 if immediate else 0.5 if self._testMethodName == 'test_pause_retains_attempt_and_resumes_without_restart' else 10
+        self.f = Fixture(self.tmp.name, behavior={'delay_seconds': delay}, kind=public_kind or 'minutes')
         if public_kind:
             self.f.published([str(uuid4()), self.f.session])
         if self._testMethodName == 'test_uncooperative_compute_is_reaped_before_cancel_result':
@@ -441,6 +540,60 @@ class PipeTests(unittest.TestCase):
                 self.assertEqual(message['error']['data']['code'], 'DEADLINE_EXCEEDED')
                 break
         self.assertLess(time.monotonic() - started, 2)
+
+    def pause_compute(self):
+        self.send('jobs.run', 'run', self.f.params)
+        while self.read().get('method') != 'jobs.progress':
+            pass
+        self.send('jobs.set_paused', 'pause', {'job_id': self.f.job, 'attempt': 1, 'paused': True})
+        acknowledged = parked = False
+        while not (acknowledged and parked):
+            message = self.read()
+            if message.get('id') == 'pause':
+                self.assertEqual(message['result']['status'], 'flow_requested')
+                acknowledged = True
+            if message.get('method') == 'jobs.flow':
+                self.assertEqual(message['params'], {'job_id': self.f.job, 'attempt': 1, 'paused': True})
+                parked = True
+
+    def test_pause_retains_attempt_and_resumes_without_restart(self):
+        self.pause_compute()
+        self.send('jobs.set_paused', 'wrong', {'job_id': self.f.job, 'attempt': 2, 'paused': False})
+        self.assertIn('error', self.read())
+        time.sleep(0.6)
+        self.assertFalse((self.f.directory / 'result.json').exists())
+        self.send('health.ping', 'ping', {})
+        self.assertEqual(self.read()['id'], 'ping')
+        self.send('jobs.set_paused', 'resume', {'job_id': self.f.job, 'attempt': 1, 'paused': False})
+        resumed = False
+        while True:
+            message = self.read()
+            if message.get('method') == 'jobs.flow':
+                self.assertFalse(message['params']['paused'])
+                resumed = True
+            if message.get('id') == 'run':
+                self.assertEqual(message['result']['attempt'], 1)
+                self.assertEqual(message['result']['status'], 'succeeded')
+                break
+        self.assertTrue(resumed)
+
+    def test_cancel_wakes_paused_compute(self):
+        self.pause_compute()
+        self.send('jobs.cancel', 'cancel', {'job_id': self.f.job, 'attempt': 1})
+        while True:
+            message = self.read()
+            if message.get('id') == 'run':
+                self.assertEqual(message['error']['data']['code'], 'CANCELLED')
+                break
+
+    def test_pause_does_not_extend_total_deadline(self):
+        self.f.params['remaining_budget_ms'] = 600
+        self.pause_compute()
+        while True:
+            message = self.read()
+            if message.get('id') == 'run':
+                self.assertEqual(message['error']['data']['code'], 'DEADLINE_EXCEEDED')
+                break
 
     def test_successful_compute_exits_cleanly(self):
         self.send('jobs.run', 'run', self.f.params)

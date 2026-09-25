@@ -73,6 +73,7 @@ fn requested(f: &Fixture, start: usize, end: usize) -> Event<TranslationRequeste
             attempt: 1,
             target_language: "en".into(),
             direction_epoch: 1,
+            context_spans: vec![],
             source_spans: vec![SourceSpan {
                 segment_id: f.capture.payload.segment_id,
                 segment_revision: Revision::FIRST,
@@ -1452,4 +1453,61 @@ mod inherited_ownership {
         drop(reopened);
         Store::open(db.path()).unwrap();
     }
+}
+
+#[test]
+fn translation_context_is_exact_scoped_and_does_not_reserve_source_coverage() {
+    let mut s = Store::in_memory().unwrap();
+    let f = Fixture::new();
+    source(&mut s, &f);
+    let mut capture = f.capture.clone();
+    capture.message_id = Uuid::new_v4();
+    capture.producer.seq = 2;
+    capture.payload.segment_id = Uuid::new_v4();
+    capture.payload.audio = AudioRange { start_sample: 80000, end_sample: 128000, sample_rate: 16000, start_ms: 5000, end_ms: 8000 };
+    s.register_capture(&capture).unwrap();
+    let mut final2 = f.final_event.clone();
+    final2.message_id = Uuid::new_v4();
+    final2.producer.seq = 2;
+    final2.payload.segment_id = capture.payload.segment_id;
+    final2.payload.audio = capture.payload.audio;
+    final2.payload.text = "然后继续讨论".into();
+    s.ingest_final(&final2).unwrap();
+    let span = SourceSpan { segment_id: final2.payload.segment_id, segment_revision: Revision::FIRST, start_utf8: 0, end_utf8: final2.payload.text.len(), quote: final2.payload.text.clone() };
+    let context = s.translation_context(f.session.session_id, &span, 1).unwrap();
+    assert_eq!(context.len(), 1);
+    assert_eq!(context[0].quote, f.final_event.payload.text);
+    assert!(s.translation_context(f.session.session_id, &span, 2).unwrap().is_empty());
+    let mut req = requested(&f, 0, f.final_event.payload.text.len());
+    req.payload.source_spans = vec![span];
+    req.payload.input_text = final2.payload.text;
+    req.payload.context_spans = context;
+    s.request_translation(&req).unwrap();
+    let pending = s.pending_translation_work(f.session.session_id, 100).unwrap();
+    assert_eq!(pending.len(), 1, "context is not translated or reserved twice");
+    assert_eq!(pending[0].source_span.segment_id, f.capture.payload.segment_id);
+    s.finish_translation(&finished(&f, &req)).unwrap();
+    s.revise_transcript(&f.revision(Revision::FIRST, "修正了前文的含义")).unwrap();
+    let pending = s.pending_translation_work(f.session.session_id, 100).unwrap();
+    assert!(pending.iter().any(|p| p.source_span.segment_id == final2.payload.segment_id), "a corrected context must invalidate the dependent translation");
+    assert!(s.finish_translation(&finished(&f, &req)).is_err(), "late output using old context must be fenced");
+}
+
+#[test]
+fn translation_context_prefix_must_not_overlap_or_cross_session() {
+    let mut s = Store::in_memory().unwrap();
+    let f = Fixture::new();
+    let other = Fixture::new();
+    source(&mut s, &f);
+    source(&mut s, &other);
+    let mut req = requested(&f, 9, f.final_event.payload.text.len());
+    req.payload.context_spans = s.translation_context(f.session.session_id, &req.payload.source_spans[0], 1).unwrap();
+    assert_eq!(req.payload.context_spans[0].quote, "先测试");
+    let mut invalid = req.clone();
+    invalid.payload.context_spans[0].segment_id = other.capture.payload.segment_id;
+    assert!(matches!(s.request_translation(&invalid), Err(StoreError::ScopeMismatch)));
+    invalid = req.clone();
+    invalid.payload.context_spans = invalid.payload.source_spans.clone();
+    assert!(matches!(s.request_translation(&invalid), Err(StoreError::Validation(_))));
+    s.request_translation(&req).unwrap();
 }

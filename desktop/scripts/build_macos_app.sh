@@ -24,8 +24,18 @@ BUILD_VERSION="${FORUM_AGENT_BUILD_VERSION:-$MARKETING_VERSION}"
 BUILD_TARGET_DIR="${FORUM_AGENT_CARGO_TARGET_DIR:-${TMPDIR:-/tmp}/forum-shell-cargo-target}"
 TAURI_PRODUCT_NAME="AI Vision Forum"
 SKIP_UPDATER_ARTIFACTS=1
+STAGING_ONLY=0
 
 ensure_translator_is_not_running() {
+  # A new candidate in a separate directory cannot replace the running app.
+  # Never allow this exception for the normal install destination or a reuse.
+  if [[ "$STAGING_ONLY" == "1" ]]; then
+    if [[ "$OUT_DIR" == "$ROOT_DIR/dist" || -e "$OUT_DIR/$APP_NAME.app" || -L "$OUT_DIR/$APP_NAME.app" ]]; then
+      echo "Staging requires a new candidate outside desktop/dist." >&2
+      exit 1
+    fi
+    return
+  fi
   if pgrep -x forum-shell >/dev/null 2>&1; then
     echo "AI Vision Forum is currently running." >&2
     echo "Quit every AI Vision Forum window before rebuilding the app bundle." >&2
@@ -47,6 +57,7 @@ Options:
   --version <version>    App version; must match Cargo.toml (default: "$VERSION")
   --skip-updater-artifacts
                          Build a local test app without updater archive/signature
+  --stage-only           Create a new candidate in --out-dir without replacing the running app
   --offline              Use cached Cargo/npm/Python artifacts; do not fetch them
   -h, --help             Show this help
 EOF
@@ -60,6 +71,7 @@ while [[ $# -gt 0 ]]; do
     --out-dir) OUT_DIR="$2"; shift 2 ;;
     --version) VERSION="$2"; shift 2 ;;
     --skip-updater-artifacts) SKIP_UPDATER_ARTIFACTS=1; shift ;;
+    --stage-only) STAGING_ONLY=1; shift ;;
     --offline) export FORUM_AGENT_BUILD_OFFLINE=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1"; usage; exit 1 ;;

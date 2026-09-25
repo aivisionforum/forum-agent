@@ -14,12 +14,17 @@ use std::{
     time::Instant,
 };
 
+#[cfg(target_os = "macos")]
+pub const MODEL_BACKEND: &str = "hy-mt2-mlx";
+#[cfg(not(target_os = "macos"))]
 pub const MODEL_BACKEND: &str = "qwen3.5-mlx";
 pub const PASSTHROUGH_BACKEND: &str = "identity-passthrough";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TranslationWork {
+    pub track_id: Uuid,
+    pub audio: forum_contracts::AudioRange,
     pub source_span: SourceSpan,
     pub configured_source_language: String,
     pub detected_language: Option<String>,
@@ -112,7 +117,11 @@ pub fn plan_requests(
     model_manifest: &str,
     max_graphemes: usize,
 ) -> Result<Vec<TranslationRequested>> {
-    let mut groups: Vec<(String, u64, bool, AttributedBuffer)> = Vec::new();
+    struct Group {
+        target: String, epoch: u64, passthrough: bool, track: Uuid,
+        last_start: u64, last_end: u64, buffer: AttributedBuffer,
+    }
+    let mut groups: Vec<Group> = Vec::new();
     let mut seen = HashMap::new();
     for item in work {
         ensure!(
@@ -136,23 +145,26 @@ pub fn plan_requests(
             continue;
         }
         let passthrough = is_passthrough(&item);
-        let group = if let Some(i) = groups.iter().position(|g| {
-            g.0 == item.target_language && g.1 == item.direction_epoch && g.2 == passthrough
+        let group = if let Some(i) = groups.iter().rposition(|g| {
+            g.target == item.target_language && g.epoch == item.direction_epoch && g.passthrough == passthrough
+                && g.track == item.track_id && item.audio.start_ms >= g.last_start
+                && item.audio.start_ms <= g.last_end.saturating_add(1500)
         }) {
             i
         } else {
-            groups.push((
-                item.target_language.clone(),
-                item.direction_epoch,
-                passthrough,
-                AttributedBuffer::new(JoinMode::Space),
-            ));
+            groups.push(Group {
+                target: item.target_language.clone(), epoch: item.direction_epoch, passthrough,
+                track: item.track_id, last_start: item.audio.start_ms, last_end: item.audio.end_ms,
+                buffer: AttributedBuffer::new(JoinMode::Space),
+            });
             groups.len() - 1
         };
-        groups[group].3.append(item.source_span)?;
+        groups[group].last_start = item.audio.start_ms;
+        groups[group].last_end = item.audio.end_ms;
+        groups[group].buffer.append(item.source_span)?;
     }
     let mut requests = Vec::new();
-    for (target, epoch, passthrough, mut buffer) in groups {
+    for Group { target, epoch, passthrough, mut buffer, .. } in groups {
         while let Some(chunk) = buffer.take_chunk(max_graphemes)? {
             let request = TranslationRequested {
                 translation_id: Uuid::new_v4(),
@@ -160,6 +172,7 @@ pub fn plan_requests(
                 attempt: 1,
                 target_language: target.clone(),
                 direction_epoch: epoch,
+                context_spans: vec![],
                 source_spans: chunk.source_spans,
                 input_text: chunk.input_text,
                 normalization_version: chunk.normalization_version.into(),
@@ -211,6 +224,7 @@ pub struct DurableQueue {
     waiting: Option<Waiting>,
     active: Option<Active>,
     stopping: bool,
+    phrase_window: crate::phrase_window::PhraseWindow,
 }
 
 impl DurableQueue {
@@ -231,6 +245,7 @@ impl DurableQueue {
             waiting: None,
             active: None,
             stopping: false,
+            phrase_window: Default::default(),
         })
     }
     pub fn mark_ready(&mut self) -> Result<()> {
@@ -400,9 +415,14 @@ impl DurableQueue {
             let work: Vec<TranslationWork> = serde_json::from_value(value)?;
             // Only the selected request is reserved. Other proposed IDs are
             // discarded; unselected coverage remains durably pending in core.
-            plan_requests(work, &self.model_manifest, 160)?
-                .into_iter()
-                .next()
+            let mut proposal = plan_requests(work, &self.model_manifest, 320)?.into_iter().next();
+            if let Some(request) = proposal.as_mut().filter(|r| r.backend != PASSTHROUGH_BACKEND) {
+                if self.phrase_window.defer(request, Instant::now()) { return Ok(None); }
+                request.context_spans = serde_json::from_value(self.client.call("translation_context",
+                    json!({"session_id":self.session_id,"first":request.source_spans[0],"direction_epoch":request.direction_epoch}))?)?;
+                request.validate()?;
+            }
+            proposal
         };
         let Some(request) = request else {
             return Ok(None);
@@ -531,6 +551,8 @@ mod tests {
         epoch: u64,
     ) -> TranslationWork {
         TranslationWork {
+            track_id: Uuid::from_u128(1),
+            audio: forum_contracts::AudioRange {start_sample:0,end_sample:48000,sample_rate:16000,start_ms:0,end_ms:3000},
             source_span: SourceSpan {
                 segment_id: Uuid::new_v4(),
                 segment_revision: Revision::FIRST,
@@ -564,6 +586,18 @@ mod tests {
             "en",
             1
         )));
+    }
+    #[test]
+    fn phrase_groups_do_not_cross_tracks_or_long_silences() {
+        let first = work("Should we build in house", "en", None, "zh", 1);
+        let mut next = work("or buy in?", "en", None, "zh", 1);
+        next.audio.start_ms = 3000; next.audio.end_ms = 6000;
+        assert_eq!(plan_requests(vec![first.clone(), next.clone()], "test", 320).unwrap().len(), 1);
+        next.track_id = Uuid::new_v4();
+        assert_eq!(plan_requests(vec![first.clone(), next.clone()], "test", 320).unwrap().len(), 2);
+        next.track_id = first.track_id;
+        next.audio.start_ms = 30000; next.audio.end_ms = 33000;
+        assert_eq!(plan_requests(vec![first, next], "test", 320).unwrap().len(), 2);
     }
     #[test]
     fn repeated_work_and_direction_changes_do_not_duplicate_or_cross_epoch() {
@@ -667,6 +701,7 @@ mod tests {
                 match call.method.as_str() {
                     "ready"=>{state.ready_calls.push(call.params.clone());Ok(json!({"ready":true}))},
                     "poll_translation"=>Ok(serde_json::to_value(&state.work).unwrap()),
+                    "translation_context"=>Ok(json!([])),
                     "translation_requests"=>{
                         let after:Option<PageKey>=serde_json::from_value(call.params["after"].clone()).unwrap();
                         let limit=call.params["limit"].as_u64().unwrap_or(100) as usize;
@@ -719,7 +754,11 @@ mod tests {
             }
         }
         fn queue(&self) -> DurableQueue {
-            DurableQueue::open(self.config.clone(), "test-local-model".into()).unwrap()
+            {
+                let mut queue = DurableQueue::open(self.config.clone(), "test-local-model".into()).unwrap();
+                queue.phrase_window = crate::phrase_window::PhraseWindow::immediate();
+                queue
+            }
         }
     }
     impl Drop for Host {

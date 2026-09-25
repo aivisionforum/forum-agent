@@ -15,6 +15,7 @@ export type MeetingPage = SnapshotPage & { translations: TranslationRecord[] };
 export type AnalysisState = {
   session_id: string; cursor: number; notice?: string | null; jobs: AnalysisJob[]; artifacts: ArtifactRecord[];
   next_jobs: string | null; next_artifacts: string | null;
+  live_cursor?: number; live_artifacts?: ArtifactRecord[] | null;
 };
 export type JobRequest = { request_id: string; session_ids: string[]; kind: AnalysisKind; automatic: boolean; public_selections?: import('./network').PublishedSelection[] };
 export type JobAction = { job_id: string; expected_attempt: number };
@@ -35,6 +36,9 @@ export class ForumClient {
   }
   analysis(sessionId: string, afterJobs: string | null = null, afterArtifacts: string | null = null): Promise<AnalysisState> {
     return this.transport.call('get_analysis_state', { sessionId, afterJobs, afterArtifacts });
+  }
+  liveAnalysis(sessionId: string, liveCursor: number): Promise<AnalysisState> {
+    return this.transport.call('get_analysis_state', {sessionId, liveCursor});
   }
   importLegacy(request: { title: string; content: string }): Promise<SessionSummary> { return this.transport.call('import_legacy_transcript', { request }); }
   createJob(request: JobRequest): Promise<AnalysisJob> { return this.transport.call('create_analysis_job', { request }); }

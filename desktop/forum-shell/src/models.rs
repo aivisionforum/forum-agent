@@ -8,7 +8,7 @@ use std::{
 pub const ASR_MODEL_ENV: &str = "QWEN3_ASR_MODEL_PATH";
 pub const TRANSLATOR_MODEL_ENV: &str = "QWEN35_TRANSLATOR_MODEL_PATH";
 const ASR_DIRECTORY: &str = "qwen3-asr-1.7b";
-const TRANSLATOR_DIRECTORY: &str = "Qwen3.5-2B-MLX-4bit";
+const TRANSLATOR_DIRECTORY: &str = "Hy-MT2-1.8B-4bit";
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ModelPaths {
@@ -21,13 +21,17 @@ pub struct ModelPaths {
 
 impl ModelPaths {
     pub fn resolve_current() -> Result<Self, String> {
+        Self::resolve_current_for_mode(true)
+    }
+
+    pub fn resolve_current_for_mode(translate: bool) -> Result<Self, String> {
         let home = dirs::home_dir().ok_or("Could not resolve the macOS home directory")?;
         let selected = Self::resolve(
             &home,
             env::var(ASR_MODEL_ENV).ok().as_deref(),
             env::var(TRANSLATOR_MODEL_ENV).ok().as_deref(),
         );
-        selected.validate_absolute()?;
+        selected.env_vars_for_mode(translate)?;
         Ok(selected)
     }
 
@@ -125,10 +129,22 @@ impl ModelPaths {
             && translator_ready(&self.translator)
     }
 
-    pub fn ready_for(&self, automatic: bool) -> bool {
+    pub fn ready_for(&self, _automatic: bool) -> bool {
         self.validate_absolute().is_ok()
-            && (automatic || asr_ready(&self.asr, self.asr_may_cache_tokenizer))
+            && asr_ready(&self.asr, self.asr_may_cache_tokenizer)
             && translator_ready(&self.translator)
+    }
+
+    pub fn ready_for_mode(&self, automatic: bool, translate: bool) -> bool {
+        if translate { return self.ready_for(automatic); }
+        self.asr.is_absolute() && asr_ready(&self.asr, self.asr_may_cache_tokenizer)
+    }
+
+    pub fn env_vars_for_mode(&self, translate: bool) -> Result<HashMap<String, String>, String> {
+        if translate { return self.env_vars(); }
+        if !self.asr.is_absolute() { return Err(format!("{ASR_MODEL_ENV} must be an absolute model path")); }
+        let path = self.asr.to_str().ok_or("ASR model path is not valid Unicode")?;
+        Ok(HashMap::from([(ASR_MODEL_ENV.to_string(), path.to_string())]))
     }
 
     fn validate_absolute(&self) -> Result<(), String> {
@@ -159,8 +175,7 @@ impl ModelPaths {
     }
 }
 
-/// The automatic path has a distinct local model and a separately owned
-/// Python process. Never reinterpret a forced Qwen language hint as detection.
+/// Qwen3-ASR runs in an owned Python process for automatic and fixed modes.
 pub struct AutomaticAsrPaths {
     pub python: PathBuf,
     pub script: PathBuf,
@@ -177,20 +192,12 @@ impl AutomaticAsrPaths {
         let python = env::var_os("FORUM_ASR_PYTHON")
             .map(PathBuf::from)
             .or_else(|| packaged.as_ref().map(|p| p.join("python/bin/python3.12")))
-            .ok_or("自动识别需要含 Whisper 运行时的 Forum 安装包")?;
+            .ok_or("自动识别需要含 Qwen3-ASR 运行时的 Forum 安装包")?;
         let script = env::var_os("FORUM_ASR_SCRIPT")
             .map(PathBuf::from)
             .or_else(|| packaged.as_ref().map(|p| p.join("asr/asr_worker.py")))
             .ok_or("自动识别运行程序尚未安装")?;
-        let owned = ModelPaths::owned(&home)
-            .asr
-            .parent()
-            .unwrap()
-            .join("whisper-large-v3-turbo");
-        let cached = home.join(".cache/huggingface/hub/models--mlx-community--whisper-large-v3-turbo/snapshots/a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb");
-        let model = env::var_os("FORUM_WHISPER_MODEL_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| if whisper_ready(&owned) { owned } else { cached });
+        let model = ModelPaths::resolve(&home, env::var(ASR_MODEL_ENV).ok().as_deref(), None).asr;
         let result = Self {
             python,
             script,
@@ -199,7 +206,7 @@ impl AutomaticAsrPaths {
         for (name, path) in [
             ("Python", &result.python),
             ("ASR adapter", &result.script),
-            ("Whisper", &result.model),
+            ("Qwen3-ASR", &result.model),
         ] {
             if !path.is_absolute() || path.components().any(|p| matches!(p, Component::ParentDir)) {
                 return Err(format!("{name} 需要完整的本地绝对路径"));
@@ -208,8 +215,8 @@ impl AutomaticAsrPaths {
         if !nonempty_file(&result.python) || !nonempty_file(&result.script) {
             return Err("自动识别运行时不完整，请使用新版 Forum 开发包".into());
         }
-        if !whisper_ready(&result.model) {
-            return Err("尚未准备 Whisper 自动识别模型；可先选择明确的源语言。模型需放入 Forum/models/whisper-large-v3-turbo，或设置 FORUM_WHISPER_MODEL_PATH".into());
+        if !asr_ready(&result.model, false) {
+            return Err("尚未准备 Qwen3-ASR 1.7B 模型；请下载本地语音模型或设置 QWEN3_ASR_MODEL_PATH".into());
         }
         Ok(result)
     }
@@ -218,7 +225,7 @@ impl AutomaticAsrPaths {
         [
             ("FORUM_ASR_PYTHON", &self.python),
             ("FORUM_ASR_SCRIPT", &self.script),
-            ("FORUM_WHISPER_MODEL_PATH", &self.model),
+            ("FORUM_ASR_MODEL_PATH", &self.model),
         ]
         .into_iter()
         .map(|(key, path)| {
@@ -230,9 +237,19 @@ impl AutomaticAsrPaths {
     }
 }
 
-fn whisper_ready(directory: &Path) -> bool {
-    nonempty_file(&directory.join("config.json"))
-        && nonempty_file(&directory.join("weights.safetensors"))
+/// Runtime selection shares the packaged interpreter, while each model has its own child.
+pub fn translation_runtime_env(resource_dir: Option<&Path>) -> Result<HashMap<String, String>, String> {
+    let packaged = resource_dir.map(Path::to_path_buf)
+        .or_else(|| env::var_os("FORUM_AGENT_APP_RESOURCES").map(PathBuf::from))
+        .map(|p| p.join("meeting-worker"));
+    let mut output = HashMap::new();
+    for (key, suffix) in [("FORUM_TRANSLATOR_PYTHON", "python/bin/python3.12"), ("FORUM_TRANSLATOR_SCRIPT", "translation/translation_worker.py")] {
+        let path = env::var_os(key).map(PathBuf::from).or_else(|| packaged.as_ref().map(|p| p.join(suffix)))
+            .ok_or("Hy-MT2 翻译运行时尚未安装")?;
+        if !path.is_absolute() || !nonempty_file(&path) { return Err(format!("{key} 需要完整的本地运行时文件")); }
+        output.insert(key.into(), path.to_str().ok_or("翻译运行时路径不是有效 Unicode")?.into());
+    }
+    Ok(output)
 }
 
 fn has_no_symlink_ancestors(path: &Path) -> bool {
@@ -418,6 +435,22 @@ mod tests {
         assert_eq!(selected, ModelPaths::owned(&fixture.0));
         assert!(!selected.ready());
         assert!(snapshot(&fixture.0).is_empty());
+    }
+
+    #[test]
+    fn transcription_only_needs_no_translator_model_or_environment() {
+        let fixture = Fixture::new();
+        let asr = fixture.0.join("asr");
+        fixture.complete(&asr);
+        let selected = ModelPaths::resolve(&fixture.0, asr.to_str(), Some("unused/translator"));
+        assert!(selected.ready_for_mode(false, false));
+        assert!(!selected.ready_for_mode(false, true));
+        let variables = selected.env_vars_for_mode(false).unwrap();
+        assert_eq!(variables.len(), 1);
+        assert_eq!(variables[ASR_MODEL_ENV], asr.to_str().unwrap());
+        assert!(!variables.contains_key(TRANSLATOR_MODEL_ENV));
+        fs::remove_file(asr.join("model.safetensors")).unwrap();
+        assert!(!selected.ready_for_mode(false, false));
     }
 
     #[test]

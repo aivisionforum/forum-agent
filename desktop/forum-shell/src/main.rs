@@ -3,10 +3,10 @@
 //! A standalone desktop application for live speech translation.
 
 mod app;
+mod audio_inputs;
 mod analysis;
 mod lan_manager;
 mod speaker_manager;
-mod apple_speech;
 mod dataflow;
 mod identity;
 mod models;

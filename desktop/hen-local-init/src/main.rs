@@ -15,8 +15,8 @@
 //! | `FORUM_AGENT_MODEL_COMPONENT`    | `core` (the ASR and translation pair only)          |
 //! | `QWEN3_ASR_MODEL_PATH`            | `~/Library/Application Support/AI Vision Forum/models/qwen3-asr-1.7b` |
 //! | `QWEN3_ASR_REPO`                  | `mlx-community/Qwen3-ASR-1.7B-8bit`                 |
-//! | `QWEN35_TRANSLATOR_MODEL_PATH`    | `~/Library/Application Support/AI Vision Forum/models/Qwen3.5-2B-MLX-4bit` |
-//! | `QWEN35_TRANSLATOR_REPO`          | `mlx-community/Qwen3.5-2B-MLX-4bit`                 |
+//! | `QWEN35_TRANSLATOR_MODEL_PATH`    | `~/Library/Application Support/AI Vision Forum/models/Hy-MT2-1.8B-4bit` |
+//! | `QWEN35_TRANSLATOR_REPO`          | `mlx-community/Hy-MT2-1.8B-4bit`                 |
 //! | `MOXIN_MODEL_PROVIDER`            | `auto` (`modelscope`/`huggingface` force one path)  |
 //! | `MOXIN_MODELSCOPE_ENDPOINT`       | `https://modelscope.cn`                             |
 //! | `HF_ENDPOINT`                     | `https://huggingface.co` (Hugging Face provider)    |
@@ -41,7 +41,7 @@ use serde::{Deserialize, Serialize};
 // where pct is overall download progress as a float 0.0000–1.0000.
 
 // Actual download sizes in bytes (measured 2026-04-17, `du -sk` × 1024)
-const BYTES_TRANSLATOR: u64 = 1_749_164_032; // Qwen3.5-2B-MLX-4bit
+const BYTES_TRANSLATOR: u64 = 1_017_400_000; // Hy-MT2-1.8B-4bit
 const BYTES_ASR: u64 = 2_473_308_160; // Qwen3-ASR-1.7B-8bit
 const TOTAL_BYTES: u64 = BYTES_TRANSLATOR + BYTES_ASR;
 const MODEL_COMPLETION_MARKER: &str = ".moxin-model-complete.json";
@@ -49,13 +49,13 @@ const BOOTSTRAP_VERSION: u32 = 1;
 const DEFAULT_HF_ENDPOINT: &str = "https://huggingface.co";
 const DEFAULT_MODELSCOPE_ENDPOINT: &str = "https://modelscope.cn";
 const HTTP_USER_AGENT: &str = "AIVisionForum/hen-local-init";
-const PROVIDER_PROBE_REPO: &str = "mlx-community/Qwen3.5-2B-MLX-4bit";
+const PROVIDER_PROBE_REPO: &str = "mlx-community/Hy-MT2-1.8B-4bit";
 const PROVIDER_PROBE_FILE: &str = "config.json";
 const BOOTSTRAP_LOCK_FILE: &str = "bootstrap.lock";
 const MAX_DOWNLOAD_FILE_ATTEMPTS: usize = 4;
 const OWNED_MODELS_RELATIVE: &str = "Library/Application Support/AI Vision Forum/models";
 const ASR_DIRECTORY: &str = "qwen3-asr-1.7b";
-const TRANSLATOR_DIRECTORY: &str = "Qwen3.5-2B-MLX-4bit";
+const TRANSLATOR_DIRECTORY: &str = "Hy-MT2-1.8B-4bit";
 
 /// Validated write ownership. No filesystem mutations occur during validation.
 /// The host's home directory is the trust anchor; below it, even symlinks that
@@ -219,18 +219,9 @@ const ASR_MODEL_FILES: &[&str] = &[
 ];
 
 const QWEN35_TRANSLATOR_MODEL_FILES: &[&str] = &[
-    ".gitattributes",
-    "README.md",
-    "chat_template.jinja",
-    "config.json",
-    "model.safetensors",
-    "model.safetensors.index.json",
-    "preprocessor_config.json",
-    "processor_config.json",
-    "tokenizer.json",
-    "tokenizer_config.json",
-    "video_preprocessor_config.json",
-    "vocab.json",
+    ".gitattributes", "README.md", "LICENSE.txt", "chat_template.jinja", "config.json",
+    "generation_config.json", "model.safetensors", "model.safetensors.index.json",
+    "tokenizer.json", "tokenizer_config.json", "mlx_manifest.json",
 ];
 
 fn write_state(
@@ -679,7 +670,7 @@ fn normalize_endpoint(endpoint: &str) -> String {
 fn modelscope_manifest_files(repo_id: &str) -> Result<&'static [&'static str]> {
     match repo_id {
         "mlx-community/Qwen3-ASR-1.7B-8bit" => Ok(ASR_MODEL_FILES),
-        "mlx-community/Qwen3.5-2B-MLX-4bit" => Ok(QWEN35_TRANSLATOR_MODEL_FILES),
+        "mlx-community/Hy-MT2-1.8B-4bit" => Ok(QWEN35_TRANSLATOR_MODEL_FILES),
         _ => bail!("no built-in ModelScope manifest for {}", repo_id),
     }
 }
@@ -1337,7 +1328,7 @@ mod tests {
         );
 
         let translator_files =
-            modelscope_manifest_files("mlx-community/Qwen3.5-2B-MLX-4bit").unwrap();
+            modelscope_manifest_files("mlx-community/Hy-MT2-1.8B-4bit").unwrap();
         assert!(translator_files.contains(&"tokenizer.json"));
     }
 
@@ -1514,7 +1505,7 @@ mod tests {
 
         let ready = ensure_model_dir_ready(
             &dir,
-            "mlx-community/Qwen3.5-2B-MLX-4bit",
+            "mlx-community/Hy-MT2-1.8B-4bit",
             qwen35_translation_model_ready,
         )
         .unwrap();
@@ -1522,7 +1513,7 @@ mod tests {
         assert!(ready);
         assert!(model_completion_marker_valid(
             &dir,
-            "mlx-community/Qwen3.5-2B-MLX-4bit"
+            "mlx-community/Hy-MT2-1.8B-4bit"
         ));
 
         fs::remove_dir_all(&dir).unwrap();
@@ -1536,7 +1527,7 @@ mod tests {
 
         let ready = ensure_model_dir_ready(
             &dir,
-            "mlx-community/Qwen3.5-2B-MLX-4bit",
+            "mlx-community/Hy-MT2-1.8B-4bit",
             qwen35_translation_model_ready,
         )
         .unwrap();
@@ -1572,7 +1563,7 @@ fn resolve_config(home: &Path) -> Config {
             .map(PathBuf::from)
             .unwrap_or_else(|_| owned_root.join(TRANSLATOR_DIRECTORY)),
         qwen35_translator_repo: env::var("QWEN35_TRANSLATOR_REPO")
-            .unwrap_or_else(|_| "mlx-community/Qwen3.5-2B-MLX-4bit".to_string()),
+            .unwrap_or_else(|_| "mlx-community/Hy-MT2-1.8B-4bit".to_string()),
     }
 }
 
@@ -1600,7 +1591,7 @@ fn main() -> Result<()> {
         .join(" -> ");
     eprintln!("[hen-local-init] model provider order: {}", provider_names);
 
-    // 2 potential downloads: Qwen3.5 translator and ASR.
+    // 2 potential downloads: Hy-MT2 translator and ASR.
     let total: usize = 2;
     owned.check(&cfg.qwen35_translator_dir)?;
     let translator_ready = ensure_model_dir_ready(
@@ -1631,14 +1622,14 @@ fn main() -> Result<()> {
 
     let client = build_http_client(Duration::from_secs(3600))?;
 
-    // ── Step 1: Qwen3.5 translator (required) ─────────────────────────────────
+    // ── Step 1: Hy-MT2 translator (required) ─────────────────────────────────
     if translator_ready {
-        eprintln!("[hen-local-init] Qwen3.5 translator model already ready, skipping");
+        eprintln!("[hen-local-init] Hy-MT2 translator model already ready, skipping");
         write_state(
             state_file,
             1,
             total,
-            "Qwen3.5 Translator",
+            "Hy-MT2 Translator",
             "Already present",
             bytes_done,
             TOTAL_BYTES,
@@ -1648,7 +1639,7 @@ fn main() -> Result<()> {
             state_file,
             1,
             total,
-            "Downloading Qwen3.5 Translator",
+            "Downloading Hy-MT2 Translator",
             "Starting...",
             bytes_done,
             TOTAL_BYTES,
@@ -1665,12 +1656,12 @@ fn main() -> Result<()> {
             &mut bytes_done,
             TOTAL_BYTES,
             qwen35_translation_model_ready,
-            "Qwen3.5 translator model incomplete after download",
+            "Hy-MT2 translator model incomplete after download",
         )
-        .with_context(|| "Qwen3.5 translator download failed")?;
+        .with_context(|| "Hy-MT2 translator download failed")?;
         owned.check(&cfg.qwen35_translator_dir)?;
         write_model_completion_marker(&cfg.qwen35_translator_dir, &cfg.qwen35_translator_repo)?;
-        eprintln!("[hen-local-init] Qwen3.5 translator download complete");
+        eprintln!("[hen-local-init] Hy-MT2 translator download complete");
     }
 
     // ── Step 2: ASR (required) ─────────────────────────────────────────────────

@@ -2,6 +2,8 @@ use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TranslationWork {
+    pub track_id: Uuid,
+    pub audio: AudioRange,
     pub source_span: SourceSpan,
     pub configured_source_language: String,
     pub detected_language: Option<String>,
@@ -94,7 +96,7 @@ fn current_sources(
     session_id: Uuid,
     p: &TranslationRequested,
 ) -> Result<()> {
-    for span in &p.source_spans {
+    for span in p.source_spans.iter().chain(&p.context_spans) {
         let (_, _, current) = capture_context(connection, session_id, span.segment_id)?;
         let epoch: u64 = connection.query_row(
             "SELECT direction_epoch FROM capture_segments WHERE segment_id=?1",
@@ -121,6 +123,19 @@ fn current_sources(
             return Err(StoreError::DependencyNotReady);
         }
         span.validate_against(&record.payload.text)?;
+    }
+    if !p.context_spans.is_empty() {
+        let first = &p.source_spans[0];
+        let source = load_revision(connection, session_id, first.segment_id, first.segment_revision)?;
+        for span in &p.context_spans {
+            let context = load_revision(connection, session_id, span.segment_id, span.segment_revision)?;
+            if context.payload.track_id != source.payload.track_id
+                || (span.segment_id == first.segment_id && span.end_utf8 > first.start_utf8)
+                || (span.segment_id != first.segment_id && context.payload.audio.end_ms > source.payload.audio.start_ms)
+            {
+                return Err(StoreError::ScopeMismatch);
+            }
+        }
     }
     Ok(())
 }
@@ -236,6 +251,31 @@ fn claim_span(tx: &Transaction<'_>, span: &SourceSpan, p: &TranslationRequested)
 }
 
 impl Store {
+    /// Bounded recent source context, frozen into the translation request so
+    /// corrections fence its output just like corrections to translated text.
+    pub fn translation_context(&self, session_id: Uuid, first: &SourceSpan, epoch: u64) -> Result<Vec<SourceSpan>> {
+        require_session(&self.connection, session_id)?;
+        let source = load_revision(&self.connection, session_id, first.segment_id, first.segment_revision)?;
+        first.validate_against(&source.payload.text)?;
+        let mut statement = self.connection.prepare("SELECT r.record_json FROM segments s JOIN capture_segments c ON c.segment_id=s.id JOIN segment_revisions r ON r.segment_id=s.id AND r.revision=s.current_revision WHERE s.session_id=?1 AND s.track_id=?2 AND c.direction_epoch=?3 AND json_extract(c.audio_json,'$.end_ms')<=?4 AND json_extract(c.audio_json,'$.end_ms')>?5 AND json_extract(r.record_json,'$.payload.status')='success' ORDER BY json_extract(c.audio_json,'$.start_ms') DESC,s.id DESC LIMIT 3")?;
+        let rows = statement.query_map(params![session_id.to_string(), source.payload.track_id.to_string(), epoch, source.payload.audio.start_ms, source.payload.audio.start_ms.saturating_sub(20_000)], |r| r.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut spans = Vec::new();
+        for body in rows.into_iter().rev() {
+            let record: TranscriptRecord = serde_json::from_str(&body)?;
+            let text = record.payload.text;
+            if !text.trim().is_empty() {
+                spans.push(SourceSpan {segment_id:record.payload.segment_id, segment_revision:record.payload.revision, start_utf8:0, end_utf8:text.len(), quote:text});
+            }
+        }
+        if first.start_utf8 > 0 {
+            spans.push(SourceSpan {segment_id:first.segment_id, segment_revision:first.segment_revision, start_utf8:0, end_utf8:first.start_utf8, quote:source.payload.text[..first.start_utf8].to_string()});
+        }
+        // Keep the most recent whole spans; never cut a name/word mid-context.
+        while spans.iter().map(|s| s.quote.chars().count()).sum::<usize>() > 720 { spans.remove(0); }
+        Ok(spans)
+    }
+
     pub fn translation_records_for_segments_at(
         &self,
         session_id: Uuid,
@@ -398,7 +438,7 @@ impl Store {
     ) -> Result<Vec<TranslationWork>> {
         validate_limit(limit)?;
         require_session(&self.connection, session_id)?;
-        let mut s=self.connection.prepare("SELECT c.segment_id,c.segment_revision,c.target_language,c.direction_epoch,c.start_utf8,c.end_utf8,r.record_json FROM translation_coverage c JOIN segments s ON s.id=c.segment_id JOIN segment_revisions r ON r.segment_id=s.id AND r.revision=c.segment_revision WHERE s.session_id=?1 AND c.state='pending' AND s.current_revision=c.segment_revision AND c.direction_epoch=(SELECT direction_epoch FROM capture_segments WHERE segment_id=s.id) ORDER BY r.created_seq,c.start_utf8,c.target_language LIMIT ?2")?;
+        let mut s=self.connection.prepare("SELECT c.segment_id,c.segment_revision,c.target_language,c.direction_epoch,c.start_utf8,c.end_utf8,r.record_json FROM translation_coverage c JOIN segments s ON s.id=c.segment_id JOIN segment_revisions r ON r.segment_id=s.id AND r.revision=c.segment_revision WHERE s.session_id=?1 AND c.state='pending' AND s.current_revision=c.segment_revision AND c.direction_epoch=(SELECT direction_epoch FROM capture_segments WHERE segment_id=s.id) ORDER BY json_extract(r.record_json,'$.payload.audio.start_ms'),c.segment_id,c.start_utf8,c.target_language LIMIT ?2")?;
         let rows = s.query_map(params![session_id.to_string(), limit], |r| {
             Ok((
                 r.get::<_, String>(0)?,
@@ -421,6 +461,8 @@ impl Store {
                 .ok_or(ValidationError::InvalidSpan)?
                 .to_owned();
             Ok(TranslationWork {
+                track_id: record.payload.track_id,
+                audio: record.payload.audio,
                 source_span: SourceSpan {
                     segment_id: parse_uuid(&segment)?,
                     segment_revision: revision.try_into()?,
@@ -586,7 +628,7 @@ impl Store {
         }
         tx.execute("INSERT INTO translation_attempts(translation_id,revision,attempt,request_json,state,created_seq,updated_seq) VALUES(?1,?2,?3,?4,'requested',?5,?5)",params![p.translation_id.to_string(),p.revision.get(),p.attempt,serde_json::to_string(p)?,receipt.store_seq])?;
         if new_revision {
-            for (index, span) in p.source_spans.iter().enumerate() {
+            for (index, span) in p.source_spans.iter().chain(&p.context_spans).enumerate() {
                 tx.execute("INSERT INTO translation_sources(translation_id,revision,source_index,segment_id,segment_revision,start_utf8,end_utf8,quote) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![p.translation_id.to_string(),p.revision.get(),index,span.segment_id.to_string(),span.segment_revision.get(),span.start_utf8,span.end_utf8,span.quote])?;
             }
         }

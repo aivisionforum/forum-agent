@@ -261,6 +261,9 @@ impl TranslationDisplayState {
         max_history: usize,
     ) {
         self.history.push(SentenceUnit {
+                segment_id: None,
+                source_revision: None,
+                language_texts: Default::default(),
             source_text: source_text.clone(),
             translation,
             source_language: self.source_language.clone(),

@@ -204,6 +204,24 @@ def chunks(units, model, prompt, generation):
     return result
 
 
+def citation_source(sources, unit_id, quote):
+    """Resolve an ID typo only via a unique, byte-exact quote in this chunk.
+
+    Never fuzzy-match, normalize ASR, search other meetings, or accept a repeated
+    quote. The final evidence always contains the actual source ID and offsets.
+    """
+    unit = sources.get(unit_id)
+    if unit is not None and unit['text'].count(quote) == 1:
+        return unit
+    matches = [(u, u['text'].count(quote)) for u in sources.values() if quote in u['text']]
+    if len(matches) == 1 and matches[0][1] == 1:
+        actual = matches[0][0]
+        logging.getLogger('forum_meeting_worker.analysis').warning(
+            'Corrected citation unit %s -> %s using unique exact quote', unit_id, actual['unit_id'])
+        return actual
+    raise JobError('INVALID_MODEL_OUTPUT', 'Quote must be an exact, unambiguous substring.')
+
+
 def claims_from_output(output, units, namespace, step):
     require(isinstance(output, dict) and set(output) == {'claims'} and isinstance(output['claims'], list)
             and len(output['claims']) <= 8, 'Model output must contain at most eight claims.', 'INVALID_MODEL_OUTPUT')
@@ -219,9 +237,10 @@ def claims_from_output(output, units, namespace, step):
         evidence = []
         for citation in item['citations']:
             require(isinstance(citation, dict) and set(citation) == {'unit_id', 'quote'}, 'Invalid citation fields.', 'INVALID_MODEL_OUTPUT')
-            unit = sources.get(citation['unit_id']); quote = citation['quote']
-            require(unit is not None and isinstance(quote, str) and quote and len(quote) <= 4096,
+            quote = citation['quote']
+            require(isinstance(citation['unit_id'], str) and isinstance(quote, str) and quote and len(quote) <= 4096,
                     'Citation must identify supplied input.', 'INVALID_MODEL_OUTPUT')
+            unit = citation_source(sources, citation['unit_id'], quote)
             offset = unit['text'].find(quote)
             require(offset >= 0 and unit['text'].find(quote, offset + 1) < 0,
                     'Quote must be an exact, unambiguous substring.', 'INVALID_MODEL_OUTPUT')
@@ -244,6 +263,66 @@ def claims_from_output(output, units, namespace, step):
     return claims
 
 
+def validated_claims(output, units, namespace, step):
+    """Keep independently valid claims, without repairing a bad quote or claim.
+
+    Any omission marks the entire chunk's coverage incomplete. Such output is
+    never checkpointed as complete and cannot become a public complete report.
+    """
+    try:
+        return claims_from_output(output, units, namespace, step), False
+    except JobError as original:
+        require(isinstance(output, dict) and set(output) == {'claims'}
+                and isinstance(output['claims'], list) and len(output['claims']) <= 8,
+                'Invalid model envelope.', 'INVALID_MODEL_OUTPUT')
+        accepted = []
+        for index, claim in enumerate(output['claims']):
+            try:
+                accepted.extend(claims_from_output({'claims': [claim]}, units, namespace, f'{step}:{index}'))
+            except JobError as error:
+                logging.getLogger('forum_meeting_worker.analysis').warning(
+                    'Omitted unsupported claim %s in chunk %s: %s', index, step, error)
+        if not accepted:
+            raise original
+        return accepted, True
+
+
+def insight_output(output, units, namespace, step):
+    """Topics summarize the whole source chunk, independently of the two notes.
+
+    Keep their own exact evidence so an early domain can survive even when it
+    was not selected as a claim. Invalid topic metadata never discards notes.
+    """
+    require(isinstance(output, dict) and set(output) in ({'claims'}, {'claims', 'topics'}),
+            'Invalid insight envelope.', 'INVALID_MODEL_OUTPUT')
+    claim_error = None
+    try:
+        claims, partial = validated_claims({'claims': output['claims']}, units, namespace, step)
+    except JobError as error:
+        if error.code != 'INVALID_MODEL_OUTPUT':
+            raise
+        claim_error = error
+        claims, partial = [], True
+    topics = []
+    supplied = output.get('topics', [])
+    if not isinstance(supplied, list) or len(supplied) > 5:
+        return claims, topics, True
+    for item in supplied:
+        try:
+            require(isinstance(item, dict) and set(item) == {'label', 'citations'}
+                    and isinstance(item['label'], str) and 2 <= len(item['label'].strip()) <= 12
+                    and isinstance(item['citations'], list) and 1 <= len(item['citations']) <= 2,
+                    'Invalid topic.', 'INVALID_MODEL_OUTPUT')
+            cited = claims_from_output({'claims': [{'kind': 'fact', 'text': item['label'].strip(),
+                'citations': item['citations'], 'assignee': None, 'due': None}]}, units, namespace, step)[0]
+            topics.append({'label': cited['text'], 'evidence': cited['evidence']})
+        except JobError:
+            partial = True
+    if claim_error and not topics:
+        raise claim_error
+    return claims, topics, partial
+
+
 def execute(params, configuration, check, emit, allow_fake=False):
     grant = validate_run(params, configuration)
     files, snapshot, confirmed = read_inputs(params, configuration['job_root'])
@@ -261,37 +340,60 @@ def execute(params, configuration, check, emit, allow_fake=False):
         emit('jobs.progress', {'job_id': params['job_id'], 'attempt': params['attempt'],
             'phase': 'reusing' if checkpoint else 'analyzing', 'completed_units': step, 'total_units': len(grouped), 'wait_reason': None})
         problem = None
+        topics = []
         try:
             check()
             if checkpoint:
                 output = checkpoint['result']
-                claims = claims_from_output(output, group, params['job_id'], step)
+                if params['kind'] == 'insight':
+                    claims, topics, partial = insight_output(output, group, params['job_id'], step)
+                    require(not partial, 'Invalid topic checkpoint.', 'INVALID_MODEL_OUTPUT')
+                else:
+                    claims = claims_from_output(output, group, params['job_id'], step)
             else:
                 for retry in range(generation['max_retries'] + 1):
                     check()
                     raw = None
                     try:
-                        raw = model.generate(model.render(prompt, group), generation, group)
+                        rendered = model.render(prompt, group)
+                        if retry:
+                            repair_hint = ('Return complete claims and topics arrays: at most one claim and two broad topics, each with one short exact quote.'
+                                           if params['kind'] == 'insight' else 'Return one or two concise claims only, with one short exact quote each.')
+                            repair = model.render(prompt + '\nThe previous response failed validation. ' + repair_hint + ' Finish the complete JSON object. Do not enumerate all source units.', group)
+                            reserve = generation['max_output_tokens'] + generation['safety_tokens']
+                            if model.token_count(repair) + reserve <= generation['context_limit']:
+                                rendered = repair
+                        raw = model.generate(rendered, generation, group)
                         try:
                             output = strict_json(raw.encode())
                         except JobError:
                             raise JobError('INVALID_MODEL_OUTPUT', 'Model did not return strict JSON.') from None
-                        claims = claims_from_output(output, group, params['job_id'], step)
+                        if params['kind'] == 'insight':
+                            claims, topics, partial = insight_output(output, group, params['job_id'], step)
+                        else:
+                            claims, partial = validated_claims(output, group, params['job_id'], step)
+                        if partial:
+                            problem = 'INVALID_MODEL_OUTPUT: unsupported claims omitted'
+                            files.write(f'partial-{step}.json', {'reason': problem, 'raw_output': raw})
                         break
                     except JobError as exc:
                         logging.getLogger('forum_meeting_worker.analysis').warning('chunk %s validation: %s', step, str(exc))
                         if isinstance(raw, str):
-                            files.write(f'rejected-{step}-{retry}.json', {'error_code': exc.code, 'raw_output': raw})
+                            files.write(f'rejected-{step}-{retry}.json', {'error_code': exc.code, 'reason': str(exc), 'raw_output': raw})
                         if exc.code != 'INVALID_MODEL_OUTPUT' or retry == generation['max_retries']:
                             raise
-                checkpoint = {'job_id': params['job_id'], 'attempt': params['attempt'], 'step_index': step,
-                    'snapshot_sha256': params['snapshot']['sha256'], 'input_sha256': input_hash,
-                    'effective_config_hash': params['config']['effective_config_hash'],
-                    'result_sha256': digest(canonical(output)), 'result': output}
-                files.write(f'checkpoint-{step}.json', checkpoint)
-                emit('jobs.checkpoint', checkpoint)
+                if not problem:
+                    checkpoint = {'job_id': params['job_id'], 'attempt': params['attempt'], 'step_index': step,
+                        'snapshot_sha256': params['snapshot']['sha256'], 'input_sha256': input_hash,
+                        'effective_config_hash': params['config']['effective_config_hash'],
+                        'result_sha256': digest(canonical(output)), 'result': output}
+                    files.write(f'checkpoint-{step}.json', checkpoint)
+                    emit('jobs.checkpoint', checkpoint)
             valid += 1
-            sections.append({'heading': f'{params["kind"]} · {step + 1}', 'claims': claims})
+            section = {'heading': f'{params["kind"]} · {step + 1}', 'claims': claims}
+            if topics:
+                section['topics'] = topics
+            sections.append(section)
         except JobError as exc:
             if exc.code == 'CANCELLED':
                 raise

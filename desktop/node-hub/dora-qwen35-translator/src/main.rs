@@ -15,6 +15,8 @@ mod durable_queue;
 mod generation_control;
 mod recovery_budget;
 mod transcript_buffer;
+mod translation_prompt;
+mod phrase_window;
 
 use anyhow::{anyhow, Result};
 use arrow::array::{Array, StringArray};
@@ -28,7 +30,7 @@ use transcript_buffer::TranscriptBuffer;
 
 // Platform inference backend: MLX on macOS, managed llama-server on Windows.
 #[cfg(target_os = "macos")]
-#[path = "backend_mlx.rs"]
+#[path = "backend_python.rs"]
 mod backend;
 #[cfg(windows)]
 #[path = "backend_llamacpp.rs"]
@@ -221,9 +223,8 @@ fn resolve_model_path() -> PathBuf {
     let base = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     #[cfg(target_os = "macos")]
     {
-        base.join(".OminiX")
-            .join("models")
-            .join("Qwen3.5-2B-MLX-4bit")
+        base.join("Library/Application Support/AI Vision Forum/models")
+            .join("Hy-MT2-1.8B-4bit")
     }
     #[cfg(windows)]
     {
@@ -715,10 +716,10 @@ fn main() -> Result<()> {
         (dummy_tx, never_rx, None)
     } else {
         let model_path = resolve_model_path();
-        tracing::info!("Loading Qwen3.5 model from: {}", model_path.display());
+        tracing::info!("Loading translation model from: {}", model_path.display());
         let _ = send_log(
             &mut node,
-            &format!("Loading Qwen3.5 model from {}", model_path.display()),
+            &format!("Loading translation model from {}", model_path.display()),
         );
 
         let (request_tx, request_rx) = mpsc::channel();
@@ -739,8 +740,8 @@ fn main() -> Result<()> {
 
         match ready_rx.recv() {
             Ok(Ok(())) => {
-                tracing::info!("Qwen3.5 model loaded");
-                let _ = send_log(&mut node, "Qwen3.5 model loaded - ready to translate");
+                tracing::info!("Translation model loaded");
+                let _ = send_log(&mut node, "Translation model loaded - ready to translate");
             }
             Ok(Err(e)) => {
                 let _ = worker_handle.join();

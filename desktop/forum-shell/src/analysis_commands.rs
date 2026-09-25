@@ -46,9 +46,10 @@ fn get_analysis_state(
     session_id: forum_contracts::Uuid,
     after_jobs: Option<String>,
     after_artifacts: Option<String>,
+    live_cursor: Option<u64>,
 ) -> Result<serde_json::Value, String> {
     let notice = match &state.analysis {
-        Ok(manager) => manager.client().notice(),
+        Ok(manager) => manager.client().notice(session_id),
         Err(error) => Some(error.clone()),
     };
     let jobs = after_jobs
@@ -62,7 +63,8 @@ fn get_analysis_state(
     state.runtime.repository()?.core.call(move|store|{
         let jobs=store.list_analysis_jobs(session_id,jobs,30)?;
         let artifacts=store.list_artifacts(session_id,artifacts,30)?;
-        Ok(serde_json::json!({"session_id":session_id,"cursor":jobs.cursor.max(artifacts.cursor),"jobs":jobs.items,"artifacts":artifacts.items,"notice":notice,"next_jobs":jobs.next_after.map(|k|serde_json::to_string(&k).unwrap()),"next_artifacts":artifacts.next_after.map(|k|serde_json::to_string(&k).unwrap())}))
+        let (live_cursor,live_artifacts)=match live_cursor {Some(known)=>store.live_insight_history(session_id,known)?,None=>(0,None)};
+        Ok(serde_json::json!({"session_id":session_id,"cursor":jobs.cursor.max(artifacts.cursor),"jobs":jobs.items,"artifacts":artifacts.items,"live_cursor":live_cursor,"live_artifacts":live_artifacts,"notice":notice,"next_jobs":jobs.next_after.map(|k|serde_json::to_string(&k).unwrap()),"next_artifacts":artifacts.next_after.map(|k|serde_json::to_string(&k).unwrap())}))
     }).map_err(|e|e.to_string())
 }
 

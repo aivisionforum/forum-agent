@@ -1,27 +1,11 @@
-# Local automatic ASR adapter
+# Local Qwen3-ASR adapter
 
-F03 adds a local Whisper adapter for `source_language=auto`. The existing Rust Qwen3 ASR remains the fixed-language backend. Detected language is separate from the configured hint; Whisper reports the dominant language of the segment, not word-level language identification. Mixed Chinese/English text is preserved for translation routing.
+The macOS desktop uses Qwen3-ASR-1.7B for automatic and fixed-language recognition through the pinned `mlx-qwen3-asr==0.4.4` runtime. Automatic mode sends no language hint. English/Chinese detection is separate from the configured hint; segments containing both Chinese and Latin words route as mixed. The native Rust fixed-language backend remains available for legacy standalone nodes without a Python adapter.
 
-The desktop owns the Rust ASR node. That node owns a separate Python process running this adapter. It does not share a model interpreter with the meeting worker. `FORUM_ASR_PYTHON`, `FORUM_ASR_SCRIPT`, and `FORUM_WHISPER_MODEL_PATH` must select existing absolute paths. The model directory must contain `config.json` and `weights.safetensors`; a Hugging Face repository name or implicit download is rejected.
+The desktop owns the Rust node, which owns a separate persistent Python process. It shares no model interpreter with translation or the meeting Agent. `FORUM_ASR_PYTHON`, `FORUM_ASR_SCRIPT`, and `FORUM_ASR_MODEL_PATH` select existing absolute local paths; the desktop derives the model from `QWEN3_ASR_MODEL_PATH` or its normal model selection. The adapter requires a Qwen ASR config, safetensors, tokenizer config, vocab and merges. It never downloads weights or executes model repository code.
 
-The packaged app includes the pinned standalone CPython/MLX runtime and adapter, but no weights. Development can explicitly select a built runtime:
+Protocol v1 uses bounded JSONL over owned stdio. Startup loads/evaluates weights before readiness. Inputs contain an ID, mono 16 kHz finite PCM in [-1,1], and `language=auto|zh|en` (up to 30 seconds). Results echo the ID and include text, detected language, and `success|empty|failed`. Digital silence returns empty; inference failures and token-budget truncation cannot become successful transcripts. Library output goes to stderr. Rust supplies deadlines and process-group containment, and persists results before acknowledging core ingestion.
 
-```sh
-export FORUM_ASR_PYTHON=/absolute/meeting-worker/python/bin/python3.12
-export FORUM_ASR_SCRIPT=/absolute/meeting-worker/asr/asr_worker.py
-export FORUM_WHISPER_MODEL_PATH=/absolute/existing/whisper-large-v3-turbo
-```
+Recognition still follows the capture journal's individual audio segments, preserving exact source attribution and recovery. This replacement does not yet use Qwen's cumulative streaming API; doing so requires mapping revised text back to earlier audio. Translation keeps the short phrase assembly window and preceding-context dependencies.
 
-Protocol version 1 is bounded newline-delimited JSON over owned stdio. Startup loads and evaluates the model before emitting `ready`. Inputs contain an ID, mono 16 kHz finite PCM in [-1, 1], and `language=auto` (up to 30 seconds). Results echo the ID and contain `text`, `detected_language`, and `status=success|empty|failed`. Shutdown is `{"type":"shutdown"}`. Stdout is reserved for protocol frames; library output is redirected to stderr. Frame assembly and Rust process I/O have deadlines. Native inference cancellation ultimately uses the owned ASR process group.
-
-Digital silence returns an explicit empty result. Failure never becomes an empty transcript. The Rust producer durably writes final results before acknowledging core ingestion; pending work remains in the outbox when core is unavailable. The recording journal provides recovery for audio whose final result was never produced.
-
-Build with `desktop/scripts/package_meeting_worker.py --with-asr`. The superset lock retains official wheels and licenses. One pinned SciPy native extension contains three unused Homebrew build RPATHs: the packager removes exactly those three, updates its RECORD hash, and signs the relocated extension. The bundle checker still rejects external non-system dependencies. This is local portability evidence; a clean second Mac remains a separate acceptance test.
-
-Validation:
-
-```sh
-.venv/bin/python -m unittest discover -s services/asr-worker/tests
-```
-
-Real local probes use the existing synthetic corpus under ignored `artifacts/local/f01-model-feasibility/`. No meeting microphone is opened by those probes. A few synthetic cases do not establish live-meeting accuracy, latency percentiles, or long-session stability.
+Build with `desktop/scripts/package_meeting_worker.py --with-asr`. The shared runtime also packages the separate Hy-MT2 translator. The lock retains earlier Whisper dependencies for compatibility; they are not loaded by the new ASR path. Run adapter checks with `python3 -m unittest discover -s services/asr-worker/tests`. Synthetic probes do not establish long-session or real-room accuracy.
