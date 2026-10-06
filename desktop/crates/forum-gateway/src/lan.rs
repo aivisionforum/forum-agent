@@ -1218,6 +1218,7 @@ mod tests {
         let identity = LanIdentity::generate(&path, "127.0.0.1".parse().unwrap()).unwrap();
         let source = source();
         let content = Arc::new(Mutex::new(PublicSnapshot {
+            wall: None,
             cursor: 1,
             artifacts: vec![PublicArtifact {
                 public_id: uuid::Uuid::new_v4(),

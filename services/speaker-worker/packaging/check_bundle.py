@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -13,6 +14,19 @@ from uuid import uuid4
 
 OWNER = 'ai-vision-forum-speaker-worker-v1'
 SITE = Path('python/lib/python3.12/site-packages')
+TIMEOUT_ENV = 'FORUM_SPEAKER_CHECK_TIMEOUT_SECONDS'
+
+
+def check_timeout():
+    # Fresh standalone runtimes can spend minutes in macOS's first native-library scan.
+    raw = os.environ.get(TIMEOUT_ENV, '300')
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f'{TIMEOUT_ENV} must be a positive finite number of seconds.') from None
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f'{TIMEOUT_ENV} must be a positive finite number of seconds.')
+    return value
 
 
 def digest(path):
@@ -62,6 +76,7 @@ def check_paths(root):
 
 
 def check(root):
+    timeout = check_timeout()
     root = root.resolve(strict=True)
     manifest = check_paths(root)
     helper = root / 'checks/_native_check.py'
@@ -72,8 +87,12 @@ def check(root):
         scratch = Path(directory); env = native.isolated_environment(scratch)
         python = root / 'python/bin/python3.12'
         def run(arguments, **kwargs):
-            return subprocess.run([str(python), '-I', '-B', *arguments], cwd=scratch, env=env,
-                text=True, capture_output=True, timeout=30, check=True, **kwargs)
+            try:
+                return subprocess.run([str(python), '-I', '-B', *arguments], cwd=scratch, env=env,
+                    text=True, capture_output=True, timeout=timeout, check=True, **kwargs)
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(f'Speaker runtime check exceeded {timeout:g}s. Fresh macOS native-library '
+                    f'scans may take several minutes; increase {TIMEOUT_ENV} and retry.') from exc
         runtime = json.loads(run(['-c', native.RUNTIME_INFO, str(root)]).stdout)
         if runtime['python_version'] != manifest['python']['version'] or runtime['machine'] != 'arm64':
             raise ValueError('Interpreter version or architecture differs from manifest.')

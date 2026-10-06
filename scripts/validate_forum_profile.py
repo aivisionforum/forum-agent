@@ -106,7 +106,11 @@ def _validate(product: dict, profile: dict, acceptance: dict) -> None:
             "Fixed-direction fallback is not automatic bilingual C1 acceptance")
     publication = profile["publication"]
     require(publication["public_captions"] == "strict_manual_review", "Public captions require strict manual review")
-    require(publication["public_summaries"] == "manual_review_required", "Public summaries require manual review")
+    require(publication["public_summaries"] == "session_selected_gated_default_or_automatic_insights",
+            "Public summaries require per-session opt-in, gated by default")
+    require(publication["automatic_insights"] == "validated_new_results_only_operator_correctable"
+            and publication["automatic_public_evidence"] == "anonymous_source_description_no_raw_quotes",
+            "Automatic insight publication must retain validation and exclude raw quotes")
     for key in ("unreviewed_partials_on_public_displays", "automatic_name_masking_is_approval",
                 "raw_audio_and_transcript_on_participant_gateway"):
         require(publication[key] is False, f"Unsafe publication policy: {key}")

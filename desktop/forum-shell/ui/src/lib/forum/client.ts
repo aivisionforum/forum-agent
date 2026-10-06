@@ -15,6 +15,7 @@ export type MeetingPage = SnapshotPage & { translations: TranslationRecord[] };
 export type AnalysisState = {
   session_id: string; cursor: number; notice?: string | null; jobs: AnalysisJob[]; artifacts: ArtifactRecord[];
   next_jobs: string | null; next_artifacts: string | null;
+  insight_settings?: {mode: 'gated' | 'automatic'};
   live_cursor?: number; live_artifacts?: ArtifactRecord[] | null;
 };
 export type JobRequest = { request_id: string; session_ids: string[]; kind: AnalysisKind; automatic: boolean; public_selections?: import('./network').PublishedSelection[] };
@@ -47,11 +48,24 @@ export class ForumClient {
   editArtifact(request: ArtifactEdit): Promise<ArtifactRecord> { return this.transport.call('revise_artifact', { request }); }
   reviewArtifact(request: ArtifactReviewCommand): Promise<ArtifactRecord> { return this.transport.call('review_artifact', { request }); }
   publishArtifact(request: ArtifactPublishCommand): Promise<ArtifactRecord> { return this.transport.call('publish_artifact', { request }); }
+  approveAndPublishArtifact(request: ArtifactPublishCommand): Promise<ArtifactRecord> { return this.transport.call('approve_and_publish_artifact', {request}); }
+  prepareInsightPublication(artifactId: string, revision: number): Promise<ArtifactPublishCommand> {
+    return this.transport.call('prepare_insight_publication', {artifactId, revision});
+  }
   hideArtifact(request: ArtifactVisibilityCommand): Promise<ArtifactRecord> { return this.transport.call('hide_artifact', { request }); }
   artifact(artifactId: string, revision: number | null = null): Promise<ArtifactRecord | null> { return this.transport.call('get_analysis_artifact', { artifactId, revision }); }
   evidence(evidence: AnalysisEvidence): Promise<EvidenceDetail> { return this.transport.call('get_analysis_evidence', { evidence }); }
   exportArtifact(artifactId: string, revision: number, format: ExportFormat): Promise<ExportResult> {
     return this.transport.call('export_artifact', { request: { artifact_id: artifactId, expected_revision: revision, format } });
+  }
+  setInsightMode(sessionId: string, mode: 'gated' | 'automatic'): Promise<{mode: 'gated' | 'automatic'}> {
+    return this.transport.call('set_insight_settings', {request: {session_id:sessionId,mode,operator_id:'local-operator',reason:mode === 'automatic' ? '操作员为本场选择自动批准并负责现场纠错' : '操作员为本场选择守门审核'}});
+  }
+  insightSettings(sessionId: string): Promise<{mode: 'gated' | 'automatic'}> {
+    return this.transport.call('get_insight_settings', {sessionId});
+  }
+  showInsightWall(sessionId: string, language: 'zh' | 'en'): Promise<DisplayInfo> {
+    return this.transport.call('show_insight_wall', {sessionId, language});
   }
   displayInfo(sessionId: string): Promise<DisplayInfo> { return this.transport.call('get_display_info', { sessionId }); }
   publicSnapshot(sessionId: string, after: number | null): Promise<PublicSnapshot> {
@@ -71,6 +85,13 @@ export const validationLabels: Record<string, string> = { valid: '引用有效',
 export const reviewLabels: Record<string, string> = { draft: '待审核', approved: '已批准', rejected: '已驳回' };
 export const publicationLabels: Record<string, string> = { private: '仅操作台', published: '已公开', hidden: '已隐藏', withdrawn: '已撤回' };
 export function canPublish(artifact: ArtifactRecord): boolean {
-  return artifact.validation === 'valid' && artifact.review === 'approved' && artifact.coverage_complete
+  return artifact.review === 'approved' && canReviewForWall(artifact);
+}
+export function canReviewForWall(artifact: ArtifactRecord): boolean {
+  const claims = artifact.content.sections.flatMap(s => s.claims);
+  const coverageReady = artifact.coverage_complete || (artifact.kind === 'insight'
+    && artifact.session_ids.length === 1 && claims.length > 0
+    && claims.every(c => c.grounding === 'cited' && c.evidence.length > 0));
+  return artifact.validation === 'valid' && coverageReady
     && !['suggested_questions','redaction_review'].includes(artifact.kind);
 }

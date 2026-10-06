@@ -1078,6 +1078,29 @@ mod tests {
         assert_eq!(outputs[0].1, pcm);
     }
     #[test]
+    fn gained_unclosed_tail_replays_without_applying_new_gain() {
+        let mut fixture = Fixture::new(true);
+        fixture.ready.store(true, Ordering::Release);
+        let shared = crate::SharedDoraState::new();
+        shared.input_gain.set(3.0);
+        let processed = shared.process_input(&vec![0.008; 1600]);
+        let mut capture = CaptureSession::open(fixture.config.clone()).unwrap();
+        let mut segmenter = PcmSegmenter::default();
+        capture.record(&processed).unwrap();
+        segmenter.push(&processed);
+        capture.checkpoint_segmenter(&segmenter).unwrap();
+        drop(capture);
+        shared.input_gain.set(0.0);
+        fixture.transition(SessionState::Recording, SessionState::Interrupted);
+        let mut config = fixture.config.clone();
+        config.replay_only = true;
+        let mut recovered = CaptureSession::open(config).unwrap();
+        let mut outputs = Vec::new();
+        recovered.replay_pending(|_, pcm| { outputs.extend_from_slice(pcm); Ok(()) }).unwrap();
+        assert_eq!(outputs, processed);
+    }
+
+    #[test]
     fn recording_off_unclosed_tail_fails_recovery_and_does_not_seal() {
         let mut fixture = Fixture::new(false);
         fixture.ready.store(true, Ordering::Release);

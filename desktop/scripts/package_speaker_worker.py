@@ -10,6 +10,7 @@ import base64
 import csv
 import importlib.util
 import json
+import os
 from pathlib import Path
 import platform
 import shutil
@@ -29,6 +30,12 @@ HELPER = Path(__file__).with_name('package_meeting_worker.py')
 _spec = importlib.util.spec_from_file_location('forum_portable_primitives', HELPER)
 base = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(base)
+
+
+def checker_environment(env):
+    # The build uses a sanitized environment; forward only this documented knob.
+    key = 'FORUM_SPEAKER_CHECK_TIMEOUT_SECONDS'
+    return {**env, **({key: os.environ[key]} if key in os.environ else {})}
 
 
 def validate_lock(lock):
@@ -181,7 +188,7 @@ def package(output, cache, offline=False):
             'task_types': ['speaker_embedding'], 'model_weights_included': False, 'formal_product_acceptance': 'not_evaluated',
             'native_relocations': native_relocations}
         (staged / 'runtime-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
-        base.run(python, [str(checks / 'check_bundle.py'), '--root', str(staged)], cwd=scratch, env=env)
+        base.run(python, [str(checks / 'check_bundle.py'), '--root', str(staged)], cwd=scratch, env=checker_environment(env))
         if output.exists() or output.is_symlink():
             raise ValueError('Output appeared during packaging; refusing replacement.')
         staged.rename(output)

@@ -133,7 +133,12 @@ impl TranslationDirection {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AudioLevelSample { pub rms: f32, pub peak: f32 }
+const LEVEL_HISTORY_CAPACITY: usize = 64;
+
 pub struct MicState {
+    levels: RwLock<VecDeque<AudioLevelSample>>,
     level: DirtyValue<f32>,
     is_speaking: DirtyValue<bool>,
     is_recording: DirtyValue<bool>,
@@ -143,11 +148,24 @@ pub struct MicState {
 impl MicState {
     pub fn new() -> Self {
         Self {
+            levels: RwLock::new(VecDeque::with_capacity(LEVEL_HISTORY_CAPACITY)),
             level: DirtyValue::new(0.0),
             is_speaking: DirtyValue::new(false),
             is_recording: DirtyValue::new(false),
             aec_enabled: DirtyValue::new(true),
         }
+    }
+
+    pub fn take_levels(&self) -> Vec<AudioLevelSample> { self.levels.write().drain(..).collect() }
+
+    pub fn observe(&self, samples: &[f32]) {
+        if samples.is_empty() { return; }
+        let rms = (samples.iter().map(|s| s*s).sum::<f32>() / samples.len() as f32).sqrt();
+        let peak = samples.iter().fold(0.0_f32, |peak,s| peak.max(s.abs()));
+        self.set_level(rms);
+        let mut levels = self.levels.write();
+        if levels.len() >= LEVEL_HISTORY_CAPACITY { levels.pop_front(); }
+        levels.push_back(AudioLevelSample {rms,peak});
     }
 
     pub fn set_level(&self, level: f32) {
@@ -167,6 +185,7 @@ impl MicState {
     }
 
     pub fn clear(&self) {
+        self.levels.write().clear();
         self.level.set(0.0);
         self.is_speaking.set(false);
         self.is_recording.set(false);
@@ -181,6 +200,7 @@ impl Default for MicState {
 }
 
 pub struct SharedDoraState {
+    pub input_gain: DirtyValue<f32>,
     pub capture_context: RwLock<Option<crate::CaptureContext>>,
     pub capture_stop_requested: AtomicBool,
     pub capture_progress: DirtyValue<crate::CaptureProgress>,
@@ -212,6 +232,7 @@ pub struct SharedDoraState {
 impl SharedDoraState {
     fn fresh() -> Self {
         Self {
+            input_gain: DirtyValue::new(1.0),
             dynamic_node_context: RwLock::new(None),
             audio: AudioState::new(100),
             status: DirtyValue::default(),
@@ -242,6 +263,16 @@ impl SharedDoraState {
 
     pub fn new() -> Arc<Self> {
         Arc::new(Self::fresh())
+    }
+
+    /// Apply gain once, before journaling and VAD. Replay uses journaled PCM
+    /// without applying the current preference again.
+    pub fn process_input(&self, samples: &[f32]) -> Vec<f32> {
+        let value = self.input_gain.read();
+        let gain = if value.is_finite() { value.clamp(0.0, 3.0) } else { 1.0 };
+        let processed: Vec<f32> = samples.iter().map(|s| if s.is_finite() { (s * gain).clamp(-1.0, 1.0) } else { 0.0 }).collect();
+        self.mic.observe(&processed);
+        processed
     }
 
     pub fn add_bridge(&self, bridge_id: String) {
@@ -276,6 +307,39 @@ impl Default for SharedDoraState {
 #[cfg(test)]
 mod tests {
     use super::DirtyValue;
+
+    #[test]
+    fn gain_lifts_quiet_audio_clamps_and_preserves_raw_input() {
+        let shared = super::SharedDoraState::new();
+        let raw = [0.008, -0.008, 0.8, -0.8];
+        assert_eq!(shared.process_input(&raw), raw);
+        shared.input_gain.set(3.0);
+        let processed = shared.process_input(&raw);
+        assert!((processed[0] - 0.024).abs() < 0.000001);
+        assert_eq!(&processed[2..], &[1.0, -1.0]);
+        assert_eq!(raw[2], 0.8);
+        shared.input_gain.set(0.0);
+        assert_eq!(shared.process_input(&raw), [0.0; 4]);
+        shared.input_gain.set(f32::NAN);
+        assert_eq!(shared.process_input(&raw), raw);
+        assert_eq!(shared.process_input(&[f32::INFINITY, f32::NAN]), [0.0;2]);
+    }
+
+    #[test]
+    fn meter_bounds_history_and_detects_clipping_even_with_low_rms() {
+        let mic = super::MicState::new();
+        let mut quiet = vec![0.0; 1600];
+        quiet[0] = 1.0;
+        for _ in 0..100 { mic.observe(&quiet); }
+        let levels = mic.take_levels();
+        assert_eq!(levels.len(), super::LEVEL_HISTORY_CAPACITY);
+        assert!(levels[0].rms < 0.1);
+        assert_eq!(levels[0].peak, 1.0);
+        assert!(mic.take_levels().is_empty());
+        mic.observe(&quiet);
+        mic.clear();
+        assert!(mic.take_levels().is_empty());
+    }
 
     #[test]
     fn different_dispatchers_do_not_share_session_or_endpoint_state() {

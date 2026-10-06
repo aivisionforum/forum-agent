@@ -5,7 +5,7 @@ import { meetingMode, settingsForMeetingMode } from '../src/lib/meeting-mode.ts'
 
 const saved: TranslationSettings = {
   appLanguage: 'zh', accentTheme: 'neon-blue', sourceLanguage: 'zh', targetLanguage: 'en',
-  inputDevice: '__dual_audio__', subtitleSplit: false, translationOnly: true,
+  inputDevice: '__dual_audio__', inputGain: 1, subtitleSideBySide: false, subtitleSplit: false, translationOnly: true,
   overlayOpacity: 100, fontSizePreset: '44', anchorPositionPreset: 'bottom',
   finalIntervalSeconds: 5, keepAwakeDuringTranslation: true, recordingEnabled: true,
   speakersEnabled: true, autoSaveTranscript: true, periodicSaveTranscript: true,
@@ -45,4 +45,15 @@ test('legacy fixed translation directions migrate to their matching transcriptio
     assert.equal(updated.targetLanguage, 'none');
     assert.deepEqual(settingsForMeetingMode(updated, meetingMode(updated)), updated);
   }
+});
+
+
+test('mixed sessions preserve chosen bilingual display when starting', () => {
+  const input = {...saved, subtitleSideBySide:true, subtitleSplit:false};
+  const mixed = settingsForMeetingMode(input, 'mixed');
+  assert.equal(mixed.translationOnly, true);
+  assert.equal(mixed.subtitleSideBySide, true);
+  const single = settingsForMeetingMode(mixed, 'en');
+  assert.equal(single.subtitleSideBySide, false);
+  assert.equal(single.translationOnly, false);
 });

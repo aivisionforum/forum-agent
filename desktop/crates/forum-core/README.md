@@ -94,13 +94,13 @@ CARGO_TARGET_DIR=/tmp/aivf-core-f02-target cargo +stable run --offline --locked 
 | `list_analysis_jobs`, `list_artifacts` | 最近优先的created_at_ms/UUID keyset，after携带不可变analysis cursor；1–100条 |
 | `artifact`, `artifact_revision`, `resolve_analysis_evidence` | 当前/历史版本与精确引用定位；引用匹配不等于模型陈述已被事实证明 |
 | `edit_artifact`, `review_artifact` | expected_revision、操作者与理由；编辑新revision、回到Draft，自动结果不会覆盖人工批准的另一产物 |
-| `publish_artifact`, `set_artifact_visibility` | Valid+Approved+complete+current+policy才可发布；公开标题、正文、证据均显式人工审阅，来源变更递归撤回 |
+| `publish_artifact`, `set_artifact_visibility` | Valid+Approved+current+policy才可发布；文档要求complete，单场洞察允许全部claim都有引用的partial要点；守门模式公开标题、正文、证据均显式人工审阅；本场自动模式见下文，来源变更递归撤回 |
 | `public_snapshot`, `public_changes` | 单独publication cursor；仅不含内部ID的PublicArtifact。旧cursor重放已经隐藏/撤回正文时也只返回tombstone |
 | `export_artifact(id,revision,format)` | 内部JSON/Markdown/转义HTML导出；含状态与证据，不可直接作为LAN公开接口 |
 | `list_sessions_page` | rowid DESC真实会议目录分页，新会议不会挤掉后页旧会议 |
 | `import_legacy_transcript(spec,content)` | 16MiB/10000行、整份严格解析后单事务；按event+原文件SHA幂等，不读取外部路径 |
 
-洞察选择尾部900秒相交的完整段；纪要选择整场source快照。未封存纪要、缺ASR、录音gap、未覆盖尾字节都保留partial。跨场报告只用所选每一场已有的已批准且公开产物；任何一场没有此类输入会拒绝，没有退回私有草稿或原文的路径。新生成的产物永远从Draft/Private开始。引用必须精确匹配版本和UTF-8字节；无支持的claim是NeedsReview，不能直接批准发布。此检查不替代人工判断语义是否得到引用支持。
+洞察选择尾部900秒相交的完整段；纪要选择整场source快照。未封存纪要、缺ASR、录音gap、未覆盖尾字节都保留partial。跨场报告只用所选每一场已有的已批准且公开产物；任何一场没有此类输入会拒绝，没有退回私有草稿或原文的路径。新生成的产物默认从Draft/Private开始；只有本场显式启用自动模式的有效新洞察可在完成事务内批准发布。引用必须精确匹配版本和UTF-8字节；无支持的claim是NeedsReview，不能直接批准发布。此检查不替代人工判断语义是否得到引用支持。
 
 公开表述和公开证据在同artifact revision内冻结。改变匿名表述先edit形成新revision，再审核发布，保证 `(artifact_id,revision)` 的引用正文唯一。隐藏/撤回/原文修订以及晚到gap的失效和publication tombstone都与数据变更在一个SQLite事务提交。内部审核命令存在publication_reviews，公开DTO不带内部引用或路径。
 
@@ -135,3 +135,20 @@ SQLite v6 从 v5 升级前保留数据库备份。`speaker_assignments` 与历�
 远端副本从来不写入本机原文或本机 session owner 表。相同文本或说话人不会跨场自动合并；不同活动必须由操作者明确加入同一活动后创建新的场次，不能静默改写旧session。远端撤回会在下一次收到同步后生效；离线时本机页面标stale，并禁止以这些副本启动新的报告/闭幕生成。只读凭证与TLS验证由gateway实现，core API调用本身不代替网络认证。
 
 新增16项测试覆盖匿名标签版本/人工锁、同声纹跨session隔离、模糊向量unknown、事务故障回滚、严格公开DTO、owner/event冲突、全快照/重复/乱序/缺口/未知tombstone、撤回水位、断线递归失效、跨场精确选版、冻结provenance、迟到结果拒绝、公开搜索UTF-8与私有数据隔离、闭幕公开正文门槛及v5→v6备份迁移。另补3项真实FD/fork锁释放测试，退出确认不会被继承描述符延长；当前 `forum-core` 82项、`forum-contracts` 4项通过，包括 `serde_json/preserve_order` 配置；不代替两台真机、90分钟录音/漂移和真人说话人盲评。
+
+
+### Session insight wall (database v7)
+
+`insight_settings` defaults to gated per session; only an explicit operator command
+can enable automatic approval. Every mode change is recorded in a private audit
+row. On new insight completion, valid/current/fully-covered cited output may be
+approved and published in the same transaction. Both modes use the same publication
+validator. Replays, old drafts, edits, hidden items, minutes and reports do not
+receive automatic approval. Auto approval is identified in private metadata as
+`session-auto-approval`; it is not presented as human review. Anonymous source
+labels remain stable within a session, and raw evidence quotes remain private.
+
+`PublicSnapshot.wall` exposes only a coarse phase, the next scheduled update, and
+server time. No job IDs, errors, paths, draft counts or approval mode cross this
+boundary. It is optional for compatibility with older snapshots. The desktop
+scheduler and public countdown use the shared 180-second interval.

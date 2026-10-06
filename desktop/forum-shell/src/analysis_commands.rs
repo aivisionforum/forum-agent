@@ -64,7 +64,7 @@ fn get_analysis_state(
         let jobs=store.list_analysis_jobs(session_id,jobs,30)?;
         let artifacts=store.list_artifacts(session_id,artifacts,30)?;
         let (live_cursor,live_artifacts)=match live_cursor {Some(known)=>store.live_insight_history(session_id,known)?,None=>(0,None)};
-        Ok(serde_json::json!({"session_id":session_id,"cursor":jobs.cursor.max(artifacts.cursor),"jobs":jobs.items,"artifacts":artifacts.items,"live_cursor":live_cursor,"live_artifacts":live_artifacts,"notice":notice,"next_jobs":jobs.next_after.map(|k|serde_json::to_string(&k).unwrap()),"next_artifacts":artifacts.next_after.map(|k|serde_json::to_string(&k).unwrap())}))
+        Ok(serde_json::json!({"session_id":session_id,"cursor":jobs.cursor.max(artifacts.cursor),"jobs":jobs.items,"artifacts":artifacts.items,"live_cursor":live_cursor,"live_artifacts":live_artifacts,"notice":notice,"insight_settings":store.insight_settings(session_id)?,"next_jobs":jobs.next_after.map(|k|serde_json::to_string(&k).unwrap()),"next_artifacts":artifacts.next_after.map(|k|serde_json::to_string(&k).unwrap())}))
     }).map_err(|e|e.to_string())
 }
 
@@ -144,6 +144,23 @@ fn publish_artifact(
         })
         .map_err(|e| e.to_string())
 }
+#[tauri::command]
+fn prepare_insight_publication(
+    state: State<'_, AppState>,
+    artifact_id: forum_contracts::Uuid,
+    revision: forum_contracts::Revision,
+) -> Result<forum_contracts::ArtifactPublishCommand, String> {
+    state.runtime.repository()?.core.call(move |s| s.prepare_insight_publication(artifact_id, revision)).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn approve_and_publish_artifact(
+    state: State<'_, AppState>,
+    request: forum_contracts::ArtifactPublishCommand,
+) -> Result<forum_contracts::ArtifactRecord, String> {
+    state.runtime.repository()?.core.call(move |s| s.approve_and_publish_artifact(&request)).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn hide_artifact(
     state: State<'_, AppState>,
@@ -274,6 +291,92 @@ fn get_display_info(
         .to_rfc3339();
     Ok(serde_json::json!({"displayId":info.display_id,"url":info.url,"expiresAt":expires}))
 }
+// Public HTTP content never receives the operator IPC capability. These
+// navigation intents control only its own window; they cannot read/write a
+// meeting, publish an insight, or invoke an arbitrary native command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WallWindowAction { Close, Minimize, Fullscreen, Pin, Drag, State }
+fn wall_window_action(url: &tauri::Url) -> Option<WallWindowAction> {
+    if url.scheme() != "forum-wall-window" || !url.username().is_empty()
+        || url.password().is_some() || url.port().is_some()
+        || !matches!(url.path(), "" | "/") || url.query().is_some() || url.fragment().is_some() {
+        return None;
+    }
+    match url.host_str()? {
+        "close" => Some(WallWindowAction::Close),
+        "minimize" => Some(WallWindowAction::Minimize),
+        "fullscreen" => Some(WallWindowAction::Fullscreen),
+        "pin" => Some(WallWindowAction::Pin),
+        "drag" => Some(WallWindowAction::Drag),
+        "state" => Some(WallWindowAction::State),
+        _ => None,
+    }
+}
+fn queue_wall_window_action(app: &tauri::AppHandle, action: WallWindowAction) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window("insight-wall") else { return; };
+        let result = match action {
+            WallWindowAction::Close => window.hide(),
+            WallWindowAction::Minimize => window.minimize(),
+            WallWindowAction::Fullscreen => window.is_fullscreen().and_then(|value| window.set_fullscreen(!value)),
+            WallWindowAction::Pin => window.is_always_on_top().and_then(|value| window.set_always_on_top(!value)),
+            WallWindowAction::Drag => window.start_dragging(),
+            WallWindowAction::State => Ok(()),
+        };
+        let detail = serde_json::json!({
+            "pinned":window.is_always_on_top().unwrap_or(false),
+            "error":result.err().map(|error|error.to_string()).unwrap_or_default(),
+        });
+        let _ = window.eval(&format!("window.dispatchEvent(new CustomEvent('audience-window-state', {{detail:{detail}}}));"));
+    });
+}
+
+#[tauri::command]
+async fn show_insight_wall(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    session_id: forum_contracts::Uuid,
+    language: String,
+) -> Result<serde_json::Value, String> {
+    let info = get_display_info(state, session_id)?;
+    let mut url: tauri::Url = info["url"].as_str().ok_or("大屏地址无效")?
+        .parse().map_err(|_| "大屏地址无效")?;
+    url.query_pairs_mut().append_pair("lang", if language == "en" { "en" } else { "zh" }).append_pair("window", "desktop");
+    // The audience window loads the read-only HTTP projection. It is deliberately
+    // absent from the operator capability; no private state or command bridge.
+    if let Some(window) = app.get_webview_window("insight-wall") {
+        window.navigate(url).map_err(|e| e.to_string())?;
+        window.show().map_err(|e| e.to_string())?;
+        window.unminimize().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+    } else {
+        let origin = url.origin();
+        let handle = app.clone();
+        WebviewWindowBuilder::new(&app, "insight-wall", WebviewUrl::External(url))
+            .on_navigation(move |target| {
+                if let Some(action) = wall_window_action(target) {
+                    queue_wall_window_action(&handle, action);
+                    return false;
+                }
+                target.origin() == origin && target.path() == "/display.html"
+            })
+            .decorations(false)
+            .title(if language == "en" { "Public insights · Screen 2" } else { "公开洞察墙 · 屏幕 2" })
+            .inner_size(1180.0, 760.0).min_inner_size(640.0, 480.0)
+            .resizable(true).build().map_err(|e| e.to_string())?;
+    }
+    Ok(info)
+}
+
+#[tauri::command]
+fn get_insight_settings(
+    state: State<'_, AppState>,
+    session_id: forum_contracts::Uuid,
+) -> Result<forum_contracts::InsightSettings, String> {
+    state.runtime.repository()?.core.call(move |s| s.insight_settings(session_id)).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn revoke_display(
     state: State<'_, AppState>,
@@ -300,4 +403,35 @@ fn get_public_snapshot(
         .core
         .call(move |s| s.public_snapshot(session_id))
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_insight_settings(
+    state: State<'_, AppState>,
+    request: forum_contracts::SetInsightSettings,
+) -> Result<forum_contracts::InsightSettings, String> {
+    state.runtime.repository()?.core.call(move |s| s.set_insight_settings(&request)).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod wall_window_tests {
+    use super::*;
+    #[test]
+    fn public_window_intents_are_exact_and_never_route_operator_commands() {
+        for (name, expected) in [
+            ("close",WallWindowAction::Close), ("minimize",WallWindowAction::Minimize),
+            ("fullscreen",WallWindowAction::Fullscreen), ("pin",WallWindowAction::Pin),
+            ("drag",WallWindowAction::Drag), ("state",WallWindowAction::State),
+        ] {
+            assert_eq!(wall_window_action(&format!("forum-wall-window://{name}").parse().unwrap()), Some(expected));
+        }
+        for url in [
+            "https://pin", "forum-wall-window://publish_artifact", "forum-wall-window://get_overlay_state",
+            "forum-wall-window://pin?window=main", "forum-wall-window://pin/main",
+            "forum-wall-window://pin#javascript", "forum-wall-window://user@pin",
+            "forum-wall-window://pin:1234", "forum-wall-window://pin.example.com",
+        ] {
+            assert_eq!(wall_window_action(&url.parse().unwrap()), None, "{url}");
+        }
+    }
 }

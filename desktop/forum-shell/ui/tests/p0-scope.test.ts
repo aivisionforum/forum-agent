@@ -5,7 +5,17 @@ import test from 'node:test';
 const overlay = readFileSync(new URL('../src/Overlay.svelte', import.meta.url), 'utf8');
 const overlayCss = readFileSync(new URL('../src/overlay.css', import.meta.url), 'utf8');
 const api = readFileSync(new URL('../src/lib/api.ts', import.meta.url), 'utf8');
+const settings = readFileSync(new URL('../src/components/ApplicationSettings.svelte', import.meta.url), 'utf8');
 const app = readFileSync(new URL('../src/App.svelte', import.meta.url), 'utf8');
+
+test('audience captions never import or render the private analysis console', () => {
+  for (const forbidden of ['LiveInsights', 'SpeakerClient', 'captionLabels', 'runtimeMessage', 'meeting-divider', 'review_artifact', 'forumClient']) {
+    assert.ok(!overlay.includes(forbidden), `private console leaked to audience captions: ${forbidden}`);
+  }
+  assert.ok(app.includes('<LiveInsights'));
+  assert.ok(app.includes('<StageControls'));
+  assert.ok(!overlayCss.includes('--insight-share'));
+});
 
 test('preserves the main translation reveal state machine in all three modes', () => {
   for (const required of [
@@ -41,13 +51,9 @@ test('uses one resizable subtitle window without a fullscreen mode setting', () 
   assert.ok(!api.includes('overlayFullscreen'));
 });
 
-test('normalizes no-translation controls to source-only captions', () => {
-  assert.ok(app.includes("disabled={settings.targetLanguage === 'none'}"));
-  assert.ok(app.includes("tr('纯中文或纯英文模式只显示原文。'"));
-  assert.ok(app.includes("tr('双语', 'DUAL')"));
-  assert.ok(app.includes("tr('仅译文', 'TRANSLATION')"));
-  assert.ok(app.includes("tr('逐句双行', 'SENTENCE PAIRS')"));
-  assert.ok(!app.includes("tr('仅原文', 'SOURCE ONLY')"));
+test('source-only meetings disable bilingual content and layout controls', () => {
+  assert.ok(settings.includes("disabled={settings.targetLanguage === 'none'}"));
+  assert.ok(settings.includes("disabled={settings.targetLanguage === 'none' || settings.translationOnly}"));
   assert.ok(overlay.includes("state?.targetLanguage === 'none'"));
 });
 
@@ -69,7 +75,5 @@ test('forces captions to the bottom when the compact tier hides the footer', () 
 test('offers an enabled-by-default screen wake lock for live translation', () => {
   assert.ok(api.includes('keepAwakeDuringTranslation: boolean'));
   assert.ok(api.includes('keepAwakeDuringTranslation: true'));
-  assert.ok(app.includes("tr('实时翻译时保持屏幕唤醒', 'KEEP SCREEN AWAKE WHILE LIVE')"));
-  assert.ok(app.includes('keepAwakeDuringTranslation = true'));
-  assert.ok(app.includes('keepAwakeDuringTranslation = false'));
+  assert.ok(settings.includes('bind:checked={settings.keepAwakeDuringTranslation}'));
 });

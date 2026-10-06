@@ -24,7 +24,7 @@ pub use actor::*;
 pub use reliable::*;
 pub use translation::*;
 
-pub const DATABASE_VERSION: u32 = 6;
+pub const DATABASE_VERSION: u32 = 7;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -298,6 +298,11 @@ impl Store {
         if version < 6 {
             let tx = connection.transaction()?;
             tx.execute_batch(include_str!("../migrations/006_forum.sql"))?;
+            tx.commit()?;
+        }
+        if version < 7 {
+            let tx = connection.transaction()?;
+            tx.execute_batch(include_str!("../migrations/007_insight_wall.sql"))?;
             tx.commit()?;
         }
         self.migration_backup = migration_backup;

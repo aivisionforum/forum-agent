@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { t, uiLocale } from '../lib/i18n';
   import { createEventDispatcher } from 'svelte';
-  import { canPublish, kindLabels, validationLabels, reviewLabels, publicationLabels,
+  import { forumClient as client } from '../lib/forum/factory';
+  import { canReviewForWall, kindLabels, validationLabels, reviewLabels, publicationLabels,
     type ArtifactRecord, type ArtifactContent, type AnalysisEvidence, type ArtifactEdit,
     type ArtifactReviewCommand, type ArtifactPublishCommand, type ArtifactVisibilityCommand,
     type ExportFormat } from '../lib/forum/client';
@@ -19,6 +21,9 @@
   let publicTitle = '';
   let publicText = '';
   let publicConfirmed = false;
+  let preparing = false;
+  let proposalError = '';
+  let proposalGeneration = 0;
   let publicEvidence: Array<{ evidence: AnalysisEvidence; reviewed_text: string; include: boolean }> = [];
   export function completeAction(action: string) { if (action === 'edit') editing = false; if (action === 'publish') publishing = false; }
   const operator = 'local-operator';
@@ -34,13 +39,26 @@
     dispatch('review', { artifact_id: artifact.artifact_id, expected_revision: artifact.revision,
       review: approved ? 'approved' : 'rejected', operator_id:operator, reason: reason.trim() || (approved ? '本机操作员已检查正文与引用' : '本机操作员驳回，需要修订') });
   }
-  function beginPublish() {
+  async function beginPublish() {
     publishRevision = artifact.revision; publicTitle = ''; publicText = ''; publicConfirmed = false;
+    const id = artifact.artifact_id;
+    const generation = ++proposalGeneration;
+    proposalError = '';
     const unique = new Map<string,AnalysisEvidence>();
     for (const section of artifact.content.sections) for (const claim of section.claims)
       for (const evidence of claim.evidence) unique.set(JSON.stringify(evidence),evidence);
     publicEvidence = [...unique.values()].map(evidence => ({ evidence, reviewed_text:'', include:false }));
     publishing = true;
+    if (artifact.kind === 'insight') {
+      preparing = true;
+      try {
+        const proposal = await client.prepareInsightPublication(id, publishRevision);
+        if (generation !== proposalGeneration || !publishing || artifact.artifact_id !== id || artifact.revision !== publishRevision) return;
+        publicTitle = proposal.reviewed_title; publicText = proposal.reviewed_text;
+        publicEvidence = proposal.evidence.map(item => ({...item,include:true}));
+      } catch { if (generation === proposalGeneration) proposalError = '未能准备公开草稿，请核对原文后手动填写。'; }
+      finally { if (generation === proposalGeneration) preparing = false; }
+    }
   }
   function publish() {
     dispatch('publish', { artifact_id:artifact.artifact_id, expected_revision:publishRevision,
@@ -50,69 +68,71 @@
   }
   $: revisionChanged = editing && editRevision !== artifact.revision;
   $: publishChanged = publishing && publishRevision !== artifact.revision;
-  $: publishReady = canPublish(artifact) && !publishChanged && publicTitle.trim() && publicText.trim() && publicConfirmed
-    && publicEvidence.filter(e => e.include).every(e => e.reviewed_text.trim());
+  $: publishReady = canReviewForWall(artifact) && !preparing && !publishChanged && publicTitle.trim() && publicText.trim() && publicConfirmed
+    && publicEvidence.some(e => e.include) && publicEvidence.filter(e => e.include).every(e => e.reviewed_text.trim());
 </script>
 <article class="artifact-detail">
-  <header><div><p class="eyebrow">{kindLabels[artifact.kind]} · 第 {artifact.revision} 版</p><h2>{artifact.content.title}</h2></div>
-    <span class="privacy">{publicationLabels[artifact.publication]}</span></header>
-  <div class="states" aria-label="独立审核状态">
-    <span class:warning={artifact.validation !== 'valid'}>{validationLabels[artifact.validation]}</span>
-    <span>{reviewLabels[artifact.review]}</span>
-    <span class:warning={!artifact.coverage_complete}>{artifact.coverage_complete ? '输入范围完整' : '仅部分覆盖'}</span>
+  <header><div><p class="eyebrow">{$t(kindLabels[artifact.kind])} · {$t("第 {0} 版", artifact.revision)}</p><h2>{artifact.content.title}</h2></div>
+    <span class="privacy">{$t(publicationLabels[artifact.publication])}</span></header>
+  <div class="states" aria-label={$t("独立审核状态")}>
+    <span class:warning={artifact.validation !== 'valid'}>{$t(validationLabels[artifact.validation])}</span>
+    <span>{artifact.review === 'approved' && artifact.operator_id === 'session-auto-approval' ? $t("本场自动批准") : $t(reviewLabels[artifact.review])}</span>
+    <span class:warning={!artifact.coverage_complete}>{artifact.coverage_complete ? $t("输入范围完整") : $t("仅部分覆盖")}</span>
   </div>
-  <p class="disclaimer">模型生成内容需由操作员核查；“决策候选”不代表会议已正式确认。</p>
-  {#if artifact.validation === 'stale'}<p class="notice error">引用来源已改变，请重新生成或修订后审核。旧批准不能用于当前版本。</p>{/if}
-  {#if !artifact.coverage_complete}<p class="notice">这份草稿未覆盖全部输入。请查看任务失败范围并重试，不能按完整纪要发布。</p>{/if}
+  <p class="disclaimer">{$t("模型生成内容需由操作员核查；“决策候选”不代表会议已正式确认。")}</p>
+  {#if artifact.validation === 'stale'}<p class="notice error">{$t("引用来源已改变，请重新生成或修订后审核。旧批准不能用于当前版本。")}</p>{/if}
+  {#if !artifact.coverage_complete}<p class="notice">{$t("这份草稿未覆盖全部输入。请查看任务失败范围并重试，不能按完整纪要发布。")}</p>{/if}
   {#if editing}
     <div class="edit-panel">
-      {#if revisionChanged}<p class="notice error">当前已有第 {artifact.revision} 版。你的编辑保留在下方；请先复制需要的内容并重新载入当前版，旧版本不能覆盖新版本。</p>{/if}
-      <label>标题<input bind:value={content.title} maxlength="400" /></label>
+      {#if revisionChanged}<p class="notice error">{$t("当前已有第")} {artifact.revision} {$t("版。你的编辑保留在下方；请先复制需要的内容并重新载入当前版，旧版本不能覆盖新版本。")}</p>{/if}
+      <label>{$t("标题")}<input bind:value={content.title} maxlength="400" /></label>
       {#each content.sections as section}
-        <label>章节标题<input bind:value={section.heading} /></label>
+        <label>{$t("章节标题")}<input bind:value={section.heading} /></label>
         {#each section.claims as claim}
-          <label>{claimNames[claim.kind] ?? claim.kind}<textarea rows="3" bind:value={claim.text}></textarea></label>
-          {#if claim.kind === 'action'}<div class="two-fields"><label>责任人<input bind:value={claim.assignee} placeholder="未明确" /></label><label>期限<input bind:value={claim.due} placeholder="未明确" /></label></div>{/if}
+          <label>{$t(claimNames[claim.kind] ?? claim.kind)}<textarea rows="3" bind:value={claim.text}></textarea></label>
+          {#if claim.kind === 'action'}<div class="two-fields"><label>{$t("责任人")}<input bind:value={claim.assignee} placeholder={$t("未明确")} /></label><label>{$t("期限")}<input bind:value={claim.due} placeholder={$t("未明确")} /></label></div>{/if}
         {/each}
       {/each}
-      <p class="small">保存会创建新版本，并清除原版本的批准。引文位置保留，修改后的结论仍需核查。</p>
-      <div class="actions"><button class="primary" disabled={busy || revisionChanged || !content.title.trim()} on:click={saveEdit}>保存为新版本</button><button on:click={() => editing = false}>放弃编辑</button></div>
+      <p class="small">{$t("保存会创建新版本，并清除原版本的批准。引文位置保留，修改后的结论仍需核查。")}</p>
+      <div class="actions"><button class="primary" disabled={busy || revisionChanged || !content.title.trim()} on:click={saveEdit}>{$t("保存为新版本")}</button><button on:click={() => editing = false}>{$t("放弃编辑")}</button></div>
     </div>
   {:else}
     {#each artifact.content.sections as section}
       <section class="content-section"><h3>{section.heading}</h3>
         {#each section.claims as claim}
-          <div class="claim"><span class="claim-kind">{claimNames[claim.kind] ?? claim.kind}</span><p>{claim.text}</p>
-            {#if claim.assignee || claim.due}<p class="assignment">{claim.assignee ? `责任人：${claim.assignee}` : '责任人未明确'}{claim.due ? ` · 期限：${claim.due}` : ''}</p>{/if}
-            {#if claim.grounding === 'unsupported'}<span class="unsupported">缺少可验证引用，需人工检查</span>{/if}
-            <div class="references">{#each claim.evidence as evidence, i}<button on:click={() => dispatch('evidence',evidence)}>↗ 引用 {i + 1}{evidence.kind === 'artifact' ? ' · 已发布资料' : ' · 原文'}</button>{/each}</div>
+          <div class="claim"><span class="claim-kind">{$t(claimNames[claim.kind] ?? claim.kind)}</span><p>{claim.text}</p>
+            {#if claim.assignee || claim.due}<p class="assignment">{claim.assignee ? $t("责任人：{0}", claim.assignee) : $t("责任人未明确")}{claim.due ? $t(" · 期限：{0}", claim.due) : ''}</p>{/if}
+            {#if claim.grounding === 'unsupported'}<span class="unsupported">{$t("缺少可验证引用，需人工检查")}</span>{/if}
+            <div class="references">{#each claim.evidence as evidence, i}<button on:click={() => dispatch('evidence',evidence)}>{$t("↗ 引用")} {i + 1}{evidence.kind === 'artifact' ? $t(" · 已发布资料") : $t(" · 原文")}</button>{/each}</div>
           </div>
         {/each}
       </section>
     {/each}
   {/if}
-  <details class="coverage"><summary>输入覆盖与来源版本 · {artifact.coverage.units.length} 项</summary>
-    <div class="coverage-items">{#each artifact.coverage.units as unit}<p class:bad={unit.status === 'failed'}>{unit.status === 'processed' ? '已处理' : unit.status === 'ignored_empty' ? '无文本' : '未完成'} · {unit.target.kind === 'source' ? unit.target.segment_id : unit.target.artifact_id} · {unit.start_utf8}–{unit.end_utf8} bytes{unit.reason ? ` · ${unit.reason}` : ''}</p>{/each}</div>
+  <details class="coverage"><summary>{$t("输入覆盖与来源版本 ·")} {artifact.coverage.units.length} {$t("项")}</summary>
+    <div class="coverage-items">{#each artifact.coverage.units as unit}<p class:bad={unit.status === 'failed'}>{unit.status === 'processed' ? $t("已处理") : unit.status === 'ignored_empty' ? $t("无文本") : $t("未完成")} · {unit.target.kind === 'source' ? unit.target.segment_id : unit.target.artifact_id} · {unit.start_utf8}–{unit.end_utf8} bytes{unit.reason ? ` · ${unit.reason}` : ''}</p>{/each}</div>
   </details>
-  <label class="reason">审核或修订说明<input bind:value={reason} placeholder="可填写更正依据、批准或隐藏原因" /></label>
+  <label class="reason">{$t("审核或修订说明")}<input bind:value={reason} placeholder={$t("可填写更正依据、批准或隐藏原因")} /></label>
   <div class="actions review-actions">
-    <button disabled={busy || editing} on:click={beginEdit}>编辑正文</button>
-    <button disabled={busy || editing || artifact.validation === 'stale' || artifact.validation === 'invalid'} on:click={() => review(true)}>批准当前版</button>
-    <button disabled={busy || editing} on:click={() => review(false)}>驳回</button>
-    <button class="primary" disabled={busy || editing || !canPublish(artifact)} on:click={beginPublish}>审核公开版本</button>
-    {#if artifact.publication === 'published'}<button disabled={busy} on:click={() => dispatch('hide',{artifact_id:artifact.artifact_id,expected_revision:artifact.revision,publication:'hidden',operator_id:operator,reason:reason.trim() || '操作员隐藏公开内容'})}>从大屏隐藏</button>{/if}
+    <button disabled={busy || editing} on:click={beginEdit}>{$t("编辑正文")}</button>
+    {#if artifact.kind !== 'insight'}<button disabled={busy || editing || artifact.validation === 'stale' || artifact.validation === 'invalid'} on:click={() => review(true)}>{$t("批准当前版")}</button>{/if}
+    <button disabled={busy || editing} on:click={() => review(false)}>{$t("驳回")}</button>
+    <button class="primary" disabled={busy || editing || !canReviewForWall(artifact)} on:click={beginPublish}>{$t("审核并上墙")}</button>
+    {#if artifact.publication === 'published'}<button disabled={busy} on:click={() => dispatch('hide',{artifact_id:artifact.artifact_id,expected_revision:artifact.revision,publication:'hidden',operator_id:operator,reason:reason.trim() || '操作员隐藏公开内容'})}>{$t("从大屏隐藏")}</button>{/if}
   </div>
-  {#if artifact.kind === 'suggested_questions'}<p class="small">主持人问题仅在操作台显示。</p>{/if}
-  <div class="exports"><span>导出当前版本</span>{#each ['markdown','html','json'] as format}<button disabled={busy} on:click={() => dispatch('export',format as ExportFormat)}>{format === 'markdown' ? 'Markdown' : format.toUpperCase()}</button>{/each}<small>草稿导出保留审核状态；导出文件无法远程撤回。</small></div>
+  {#if artifact.kind === 'suggested_questions'}<p class="small">{$t("主持人问题仅在操作台显示。")}</p>{/if}
+  <div class="exports"><span>{$t("导出当前版本")}</span>{#each ['markdown','html','json'] as format}<button disabled={busy} on:click={() => dispatch('export',format as ExportFormat)}>{format === 'markdown' ? 'Markdown' : format.toUpperCase()}</button>{/each}<small>{$t("草稿导出保留审核状态；导出文件无法远程撤回。")}</small></div>
   {#if publishing}
-    <section class="public-editor" aria-label="审核独立公开版本">
-      <h3>准备大屏公开内容</h3><p>请填写适合公开的标题、正文及引用。内部原文不会自动复制；发布后只有这些字段出现在只读大屏。</p>
-      {#if publishChanged}<p class="notice error">版本已变化，请关闭此编辑区，重新审核当前版。</p>{/if}
-      <label>公开标题<input bind:value={publicTitle} placeholder="人工确认后的公开标题" /></label>
-      <label>公开正文<textarea rows="6" bind:value={publicText} placeholder="填写已核对并脱敏的公开正文"></textarea></label>
-      {#each publicEvidence as item, i}<div class="public-evidence"><label class="checkbox"><input type="checkbox" bind:checked={item.include} />公开引用 {i + 1}</label><button on:click={() => dispatch('evidence',item.evidence)}>查看内部出处</button>{#if item.include}<textarea rows="2" bind:value={item.reviewed_text} placeholder="填写人工审核、脱敏后的引用文本"></textarea>{/if}</div>{/each}
-      <label class="checkbox"><input type="checkbox" bind:checked={publicConfirmed} />我已核对当前版本及公开内容，确认不含需要隐藏的姓名、账号或敏感细节。</label>
-      <div class="actions"><button class="primary" disabled={busy || !publishReady} on:click={publish}>发布到本机大屏</button><button on:click={() => publishing = false}>关闭</button></div>
+    <section class="public-editor" aria-label={$t("审核独立公开版本")}>
+      <h3>{$t("准备大屏公开内容")}</h3><p>{$t("请核对下方公开草稿，必要时修改。发言人仅用“发言人A/B”等匿名标签；确认后，只有这些公开字段上墙，内部原文和状态不会上墙。")}</p>
+      {#if preparing}<p role="status">{$t("正在准备匿名公开草稿…")}</p>{/if}
+      {#if proposalError}<p role="status">{$t(proposalError)}</p>{/if}
+      {#if publishChanged}<p class="notice error">{$t("版本已变化，请关闭此编辑区，重新审核当前版。")}</p>{/if}
+      <label>{$t("公开标题")}<input disabled={preparing} bind:value={publicTitle} placeholder={$t("人工确认后的公开标题")} /></label>
+      <label>{$t("公开正文")}<textarea disabled={preparing} rows="6" bind:value={publicText} placeholder={$t("填写已核对并脱敏的公开正文")}></textarea></label>
+      {#each publicEvidence as item, i}<div class="public-evidence"><label class="checkbox"><input type="checkbox" bind:checked={item.include} />{$t("公开引用")} {i + 1}</label><button on:click={() => dispatch('evidence',item.evidence)}>{$t("查看内部出处")}</button>{#if item.include}<textarea rows="2" bind:value={item.reviewed_text} placeholder={$t("填写人工审核、脱敏后的引用文本")}></textarea>{/if}</div>{/each}
+      <label class="checkbox"><input type="checkbox" disabled={preparing} bind:checked={publicConfirmed} />{$t("我已核对当前版本及公开内容，确认不含需要隐藏的姓名、账号或敏感细节。")}</label>
+      <div class="actions"><button class="primary" disabled={busy || !publishReady} on:click={publish}>{$t("批准并上墙")}</button><button on:click={() => {publishing = false; proposalGeneration++; preparing = false;}}>{$t("关闭")}</button></div>
     </section>
   {/if}
 </article>

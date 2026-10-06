@@ -20,6 +20,8 @@ use std::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MeetingOptions {
+    #[serde(default)]
+    pub insight_mode: InsightApprovalMode,
     pub source_language: String,
     pub target_language: String,
     pub recording_enabled: bool,
@@ -297,6 +299,12 @@ impl MeetingRepository {
         self.core
             .call(move |store| {
                 store.create_session(&saved.session)?;
+                store.set_insight_settings(&SetInsightSettings {
+                    session_id: saved.session.session_id,
+                    mode: saved.options.insight_mode,
+                    operator_id: "local-operator".into(),
+                    reason: "操作员在开始本场前选择上墙模式".into(),
+                })?;
                 store.create_track(&saved.track)?;
                 if let Some(track)=&saved.secondary_track{store.create_track(track)?;}
                 Ok(())

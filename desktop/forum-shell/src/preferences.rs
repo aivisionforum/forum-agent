@@ -19,6 +19,8 @@ pub struct AppPreferences {
     pub translation_source_language: String,
     pub translation_target_language: String,
     pub translation_input_device: String,
+    pub translation_input_gain: f64,
+    pub translation_subtitle_side_by_side: bool,
     pub translation_subtitle_split: bool,
     pub translation_only: bool,
     pub translation_overlay_opacity: f64,
@@ -42,6 +44,8 @@ impl Default for AppPreferences {
             translation_source_language: "zh".into(),
             translation_target_language: "en".into(),
             translation_input_device: "__system_audio__".into(),
+            translation_input_gain: 1.0,
+            translation_subtitle_side_by_side: false,
             translation_subtitle_split: false,
             translation_only: false,
             translation_overlay_opacity: 1.0,
@@ -90,7 +94,14 @@ pub fn save(preferences: &AppPreferences) -> Result<(), String> {
         .map_err(|error| format!("Could not save preferences: {error}"))
 }
 
+pub fn default_input_gain() -> f64 { 1.0 }
+
+pub fn sanitize_input_gain(value: f64) -> f64 {
+    if value.is_finite() { value.clamp(0.0, 3.0) } else { 1.0 }
+}
+
 fn sanitize(preferences: &mut AppPreferences) {
+    preferences.translation_input_gain = sanitize_input_gain(preferences.translation_input_gain);
     if !matches!(
         preferences.translation_source_language.as_str(),
         "auto" | "zh" | "en" | "ja" | "fr"
@@ -106,6 +117,9 @@ fn sanitize(preferences: &mut AppPreferences) {
     if preferences.translation_target_language == "none" {
         preferences.translation_subtitle_split = true;
         preferences.translation_only = false;
+        preferences.translation_subtitle_side_by_side = false;
+    } else if preferences.translation_subtitle_side_by_side {
+        preferences.translation_subtitle_split = false;
     }
     if !matches!(
         preferences.translation_font_size_preset.as_str(),
@@ -141,6 +155,31 @@ pub fn sanitize_final_interval_seconds(value: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_preferences_keep_layout_and_default_to_unity_gain() {
+        let mut prefs: AppPreferences = serde_json::from_str(r#"{"translation_subtitle_split":true}"#).unwrap();
+        sanitize(&mut prefs);
+        assert_eq!(prefs.translation_input_gain, 1.0);
+        assert!(prefs.translation_subtitle_split);
+        assert!(!prefs.translation_subtitle_side_by_side);
+        prefs.translation_subtitle_side_by_side = true;
+        sanitize(&mut prefs);
+        assert!(!prefs.translation_subtitle_split);
+        prefs.translation_target_language = "none".into();
+        sanitize(&mut prefs);
+        assert!(prefs.translation_subtitle_split);
+        assert!(!prefs.translation_subtitle_side_by_side);
+    }
+
+    #[test]
+    fn invalid_gain_cannot_mute_or_overamplify_by_accident() {
+        assert_eq!(sanitize_input_gain(f64::NAN), 1.0);
+        assert_eq!(sanitize_input_gain(f64::INFINITY), 1.0);
+        assert_eq!(sanitize_input_gain(-1.0), 0.0);
+        assert_eq!(sanitize_input_gain(99.0), 3.0);
+        assert_eq!(sanitize_input_gain(2.25), 2.25);
+    }
 
     #[test]
     fn sanitizes_invalid_translation_values() {

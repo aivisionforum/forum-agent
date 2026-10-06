@@ -5,6 +5,7 @@ fn process_dual_packets(
     clocks: &mut Option<Vec<crate::audio_clock::ClockMapper>>,
     echo: &mut crate::audio_clock::EchoReference,
     final_flush: bool,
+    shared: &SharedDoraState,
 ) -> anyhow::Result<()> {
     if clocks.is_none() {
         if queues.iter().any(|q| q.is_empty()) {
@@ -21,17 +22,19 @@ fn process_dual_packets(
             let packet = queues[index].pop_front().unwrap();
             let next = queues[index].front().map(|p| p.at);
             let aligned = clocks.as_mut().unwrap()[index].map(packet, next)?;
+            // Persist gain before reference cancellation; replay never reapplies it.
+            let samples = shared.process_input(&aligned.samples);
             if index == 1 {
-                echo.push(&aligned.samples);
+                echo.push(&samples);
                 group.process(
                     index,
-                    &aligned.samples,
-                    &aligned.samples,
+                    &samples,
+                    &samples,
                     aligned.gap_before,
                 )?;
             } else {
-                let processed = echo.filter(&aligned.samples);
-                group.process(index, &aligned.samples, &processed, aligned.gap_before)?;
+                let processed = echo.filter(&samples);
+                group.process(index, &samples, &processed, aligned.gap_before)?;
             }
         }
     }
@@ -176,7 +179,7 @@ impl AecInputBridge {
                     }
                     queues[0].extend(mic.as_ref().unwrap().get_timed_audio());
                     queues[1].extend(system.as_ref().unwrap().get_timed_audio());
-                    process_dual_packets(group, &mut queues, &mut clocks, &mut echo, false)?;
+                    process_dual_packets(group, &mut queues, &mut clocks, &mut echo, false, &shared)?;
                     group.pump(|meta, pcm| dispatch(node, meta, pcm))?;
                     shared.capture_progress.set(crate::CaptureProgress {
                         started: true,
@@ -234,7 +237,7 @@ impl AecInputBridge {
             if result.is_ok() && !replay_done && !context.replay_only {
                 if let (Some(group), Some((node, _))) = (group.as_mut(), connection.as_mut()) {
                     result = (|| -> anyhow::Result<()> {
-                        process_dual_packets(group, &mut queues, &mut clocks, &mut echo, true)?;
+                        process_dual_packets(group, &mut queues, &mut clocks, &mut echo, true, &shared)?;
                         // Seal the last observed PCM within the stop boundary,
                         // not a fictitious wall-clock tail that neither source saw.
                         let final_sample = group.progress().final_sample;

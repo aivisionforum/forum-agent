@@ -1,6 +1,6 @@
 # forum-agent
 
-Forum 整合开发：[工程方案](docs/engineering/VISION_FORUM_ENGINEERING_PLAN_ZH.md) · [分阶段任务](docs/engineering/IMPLEMENTATION_TASKS_ZH.md) · **[实际进度与验证](docs/engineering/PROGRESS_ZH.md)**。新桌面版位于 `desktop/`，已接入可靠字幕、会议分析、双轨/匿名标签、双会场、公开查询和闭幕综述；第四部分本机回归与开发 `.app` 构建已通过，正式跨设备/90 分钟/签名验收待完成。安装与开发包见 [发行说明](docs/engineering/PACKAGING_RELEASE_ZH.md)，使用见 [操作指南](docs/OPERATOR_GUIDE.md)。先完成 Forum，再派生 Hen Local Minutes。下方截图和 Python Quickstart 描述旧版应用，不能据此认定整合桌面版功能或验收状态。
+Forum 整合开发：[工程方案](docs/engineering/VISION_FORUM_ENGINEERING_PLAN_ZH.md) · [分阶段任务](docs/engineering/IMPLEMENTATION_TASKS_ZH.md) · **[实际进度与验证](docs/engineering/PROGRESS_ZH.md)**。新桌面版位于 `desktop/`，已接入可靠字幕、会议分析、双轨/匿名标签、双会场、公开查询和闭幕综述；第四部分本机回归与开发 `.app` 构建已通过，正式跨设备/90 分钟/签名验收待完成。洞察墙现支持本场守门/自动批准、约 3 分钟倒计时、WORKING、自动翻页及“本场至今”；第二台 Mac 的构建/启动烟测已收到同事通过反馈（含 Node 22），尚不代表双机长会和正式发行验收。安装与开发包见 [发行说明](docs/engineering/PACKAGING_RELEASE_ZH.md)，使用见 [操作指南](docs/OPERATOR_GUIDE.md)。先完成 Forum，再派生 Hen Local Minutes。下方截图和 Python Quickstart 描述旧版应用，不能据此认定整合桌面版功能或验收状态。
 
 An open-source AI participant for any conference, forum, or working
 meeting, with first-class bilingual (中文/English) support. It listens to

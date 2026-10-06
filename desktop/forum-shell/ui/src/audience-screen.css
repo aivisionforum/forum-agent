@@ -1,0 +1,15 @@
+/* Shared public-screen type and chrome. Keep both venue screens in one family. */
+:root{
+  --audience-font:Inter,"Helvetica Neue",Helvetica,"SF Pro Display","PingFang SC","Noto Sans CJK SC",Arial,sans-serif;
+  --audience-background:#050607;
+  --audience-foreground:#f6f7f8;
+}
+.audience-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 28px;border-bottom:1px solid #1d2126;min-height:76px;box-sizing:border-box}
+.audience-heading .eyebrow{display:block;font-size:9px;font-weight:600;letter-spacing:.16em;color:#737f8b}
+.audience-heading h1{font-size:16px;font-weight:500;margin:7px 0 0;letter-spacing:.06em}
+.audience-footer{height:34px;flex-shrink:0;display:flex;align-items:center;justify-content:flex-start;gap:10px;padding:0 18px;border-top:1px solid #292f35;background:#101418;font-size:11px;line-height:1;box-sizing:border-box}
+.audience-footer .brand-logo-tile{width:16px;height:16px;display:grid;place-items:center;flex-shrink:0;background:transparent}
+.audience-footer .brand-logo{width:13px;height:13px;display:block;background:#adb9c3;-webkit-mask:var(--brand-mark) center / contain no-repeat;mask:var(--brand-mark) center / contain no-repeat}
+.audience-footer .brand-name{font-size:10px;color:#919fa9;font-weight:400;letter-spacing:-.015em}
+.audience-footer .brand-tagline{margin-left:auto;font-size:10px;font-weight:400;white-space:nowrap;color:#7b8a96;letter-spacing:0}
+@media(max-width:850px){.audience-heading{min-height:60px;padding:10px 22px}.audience-footer .brand-name{display:none}}

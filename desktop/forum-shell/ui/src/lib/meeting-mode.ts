@@ -9,5 +9,5 @@ export function meetingMode(settings: TranslationSettings): MeetingMode {
 export function settingsForMeetingMode(settings: TranslationSettings, mode: MeetingMode): TranslationSettings {
   return {...settings, sourceLanguage: mode === 'mixed' ? 'auto' : mode,
     targetLanguage: mode === 'mixed' ? 'bilingual' : 'none',
-    translationOnly: false, subtitleSplit: mode === 'mixed' ? settings.subtitleSplit : true};
+    translationOnly: mode === 'mixed' && settings.translationOnly, subtitleSideBySide: mode === 'mixed' && settings.subtitleSideBySide, subtitleSplit: mode === 'mixed' ? settings.subtitleSplit : true};
 }

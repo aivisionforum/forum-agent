@@ -1,19 +1,95 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { ForumClient, kindLabels, type PublicSnapshot } from './lib/forum/client';
+  import { t, uiLocale, initializeLocale, setLocale, type Locale } from './lib/i18n';
+  import { productName, brandLogoUrl as logoUrl } from './lib/product';
+  import AudienceTitlebar from './components/AudienceTitlebar.svelte';
+  import './audience-screen.css';
+  import LanguageSwitch from './components/LanguageSwitch.svelte';
+  import { onMount, tick } from 'svelte';
+  import { ForumClient, type PublicSnapshot } from './lib/forum/client';
   import { DisplayTransport } from './lib/forum/transport';
   import { displayCredentials, PublicProjection } from './lib/forum/display-state';
-  import { errorText } from './lib/forum/session-fence';
+  import { wallArtifacts, wallMessage, paginateText, type WallView } from './lib/forum/insight-wall';
+  initializeLocale('wall');
+  const nativeWindow = new URL(window.location.href).searchParams.get('window') === 'desktop';
+  let pinned = false;
+  let windowError = '';
+  function nativeAction(action: string) { window.location.assign(`forum-wall-window://${action}`); }
+  async function windowAction(action: 'close' | 'minimize' | 'fullscreen' | 'pin') {
+    windowError = '';
+    if (nativeWindow) { nativeAction(action); return; }
+    if (action === 'fullscreen') {
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else await document.documentElement.requestFullscreen();
+      } catch { windowError = '窗口暂不可用，请操作员检查'; }
+    }
+  }
+  function dragWindow(event: MouseEvent) {
+    if (nativeWindow && event.button === 0 && event.detail < 2) nativeAction('drag');
+  }
+  onMount(() => {
+    const update = (event: Event) => {
+      const detail = (event as CustomEvent<{pinned:boolean;error:string}>).detail;
+      pinned = detail.pinned; windowError = detail.error ? '窗口暂不可用，请操作员检查' : '';
+    };
+    window.addEventListener('audience-window-state', update);
+    if (nativeWindow) nativeAction('state');
+    return () => window.removeEventListener('audience-window-state', update);
+  });
+  async function chooseLanguage(locale: Locale) {
+    setLocale(locale, 'wall');
+    const url = new URL(window.location.href); url.searchParams.set('lang', locale);
+    window.history.replaceState(null, '', url);
+    await layout();
+  }
   let snapshot: PublicSnapshot | null = null;
   let connected = false;
   let error = '';
-  let updated = '';
-  let query = '';
-  $: filtered = snapshot?.artifacts.filter(a => { const q=query.trim().toLocaleLowerCase(); return !q || [a.title,a.text,...a.evidence.map(e=>e.text)].some(text=>text.toLocaleLowerCase().includes(q)); }) ?? [];
+  let layoutError = '';
+  let view: WallView = new URL(window.location.href).searchParams.get('view') === 'recap' ? 'recap' : 'live';
+  let pages: string[] = [];
+  let page = 0;
+  let now = Date.now();
+  let clockOffset = 0;
+  let stage: HTMLDivElement;
+  let measure: HTMLDivElement;
+  let contentKey = '';
+  let layoutGeneration = 0;
+  let rotateAt = Date.now() + 15000;
+  $: status = wallMessage(snapshot,now + clockOffset);
+
+  async function layout() {
+    const generation = ++layoutGeneration;
+    await tick();
+    if (!stage || !measure || !connected || generation !== layoutGeneration) return;
+    const height = stage.clientHeight - 4;
+    measure.style.width = `${stage.clientWidth}px`;
+    try {
+      pages = wallArtifacts(snapshot,view).flatMap(a => paginateText(
+        a.title === '讨论要点' ? a.text : `${a.title}\n\n${a.text}`,
+        text => { measure.textContent = text; return measure.scrollHeight <= height; }
+      ));
+      page = Math.min(page,Math.max(0,pages.length - 1));
+      layoutError = '';
+    } catch (e) { pages = []; layoutError = e instanceof Error ? e.message : '请调整屏幕大小。'; }
+    finally { measure.textContent = ''; }
+  }
+  function chooseView(next: WallView) {
+    view = next; page = 0; rotateAt = Date.now() + 15000;
+    const url = new URL(window.location.href); url.searchParams.set('view',view);
+    window.history.replaceState(null,'',url); void layout();
+  }
+  function turnPage(delta: number) { page = (page + delta + pages.length) % pages.length; rotateAt = Date.now() + 15000; }
   onMount(() => {
     let disposed = false; let busy = false;
     const projection = new PublicProjection();
+    const clear = () => { projection.disconnect(); snapshot = null; pages = []; connected = false; layoutGeneration++; };
     let client: ForumClient;
+    let resize: ResizeObserver | undefined;
+    let timer: number | undefined;
+    let ticker: number | undefined;
+    let online: () => void = () => {};
+    const offline = () => { clear(); error = '连接中断，正在等待恢复'; };
     try {
       const credentials = displayCredentials(new URL(window.location.href),window.sessionStorage);
       window.history.replaceState(null,'',credentials.cleanUrl);
@@ -24,35 +100,80 @@
         try {
           const next = projection.accept(await client.publicSnapshot(credentials.sessionId,projection.cursor));
           if (disposed) return;
-          snapshot = next; connected = true; error = ''; updated = new Date().toLocaleTimeString();
-        } catch(e) {
-          if (!disposed) { projection.disconnect(); snapshot = null; connected = false; error = errorText(e); }
+          const key = JSON.stringify(next.artifacts);
+          const changed = !connected || contentKey !== key;
+          snapshot = next; connected = true; error = '';
+          now = Date.now();
+          clockOffset = next.wall ? next.wall.server_time_ms - now : 0;
+          if (changed) { contentKey = key; pages = []; page = 0; rotateAt = Date.now() + 15000; await layout(); }
+        } catch {
+          if (!disposed) { clear(); error = '连接暂不可用，请操作员检查大屏连接'; }
         } finally { busy = false; }
       };
-      const offline = () => { projection.disconnect(); snapshot = null; connected = false; error = '网络已断开，公开内容暂时隐藏。'; };
-      const online = () => void refresh();
+      online = () => void refresh();
       window.addEventListener('offline',offline); window.addEventListener('online',online);
+      resize = new ResizeObserver(() => { rotateAt = Date.now() + 15000; void layout(); });
+      resize.observe(stage);
+      void document.fonts.ready.then(() => { if (!disposed) void layout(); });
       void refresh();
-      const timer = window.setInterval(() => void refresh(),2000);
-      return () => { disposed = true; window.clearInterval(timer); window.removeEventListener('offline',offline); window.removeEventListener('online',online); };
-    } catch(e) { error = errorText(e); return () => { disposed = true; }; }
+      timer = window.setInterval(() => void refresh(),2000);
+      ticker = window.setInterval(() => {
+        now = Date.now();
+        if (now >= rotateAt && pages.length > 1) turnPage(1);
+      },250);
+    } catch { error = '请操作员从本场控制台重新打开洞察墙'; }
+    return () => {
+      disposed = true; layoutGeneration++; resize?.disconnect();
+      window.clearInterval(timer); window.clearInterval(ticker);
+      window.removeEventListener('offline',offline); window.removeEventListener('online',online);
+    };
   });
 </script>
-<svelte:head><title>AI Vision Forum · 已审核内容</title><meta name="referrer" content="no-referrer" /></svelte:head>
+<svelte:head><title>{productName} · {$uiLocale === 'en' ? 'Insight wall' : '洞察墙'}</title><meta name="referrer" content="no-referrer" /></svelte:head>
 <main class="display-shell">
-  <header><div><p>AI VISION FORUM</p><h1>讨论中的洞察</h1></div><div class:connected class="connection"><span></span>{connected ? '只读同步 · 已审核发布' : '连接未就绪'}<small>{updated && connected ? `更新于 ${updated}` : ''}</small></div></header>
-  {#if error}<section class="disconnected" role="alert"><p class="symbol">↻</p><h2>公开内容暂不可用</h2><p>{error}</p><p class="hint">连接恢复后会重新读取当前公开版本。</p></section>
-  {:else if !connected}<section class="disconnected"><h2>正在读取已审核内容…</h2></section>
-  {:else if snapshot?.artifacts.length}<form class="public-search" on:submit|preventDefault={() => {}}><label for="public-query">浏览与查询已发布资料</label><input id="public-query" bind:value={query} maxlength="128" placeholder="搜索公开标题、正文和引用"/><span>{filtered.length} 项</span></form>{#if !filtered.length}<p class="search-empty">没有匹配的公开资料。</p>{/if}<div class="public-grid">{#each filtered as artifact (artifact.public_id)}<article><p class="kind">{kindLabels[artifact.kind] ?? '会议成果'} · V{artifact.revision}</p><h2>{artifact.title}</h2><p class="body">{artifact.text}</p>{#if artifact.evidence.length}<div class="public-evidence"><span>公开引用</span>{#each artifact.evidence as evidence}<blockquote>{evidence.text}</blockquote>{/each}</div>{/if}</article>{/each}</div>
-  {:else}<section class="disconnected"><p class="symbol">✦</p><h2>等待新的洞察</h2><p>操作员审核并发布后，内容会出现在这里。</p></section>{/if}
-  <footer><span>LOCAL FIRST · HUMAN REVIEWED</span><span>公开只读视图 · 自动同步撤回与隐藏</span></footer>
+  <AudienceTitlebar subtitle={$uiLocale === 'en' ? 'Public insights · Screen 2' : '公开洞察墙 · 屏幕 2'} nativeControls={nativeWindow} {pinned} action={windowAction} drag={dragWindow}/>
+  {#if windowError}<div class="window-error" role="alert">{$t(windowError)}</div>{/if}
+  <header class="audience-heading"><div><span class="eyebrow">LIVE INSIGHTS</span><h1>{view === 'recap' ? $t("本场至今") : $t("讨论中的洞察")}</h1></div>
+    <div class="activity" role="status"><strong class:working={status.label === 'WORKING'}>{connected ? $t(status.label) : $t("正在连接")}</strong><span>{connected ? $t(status.detail) : $t("正在同步本场洞察")}</span></div>
+  </header>
+  <nav aria-label={$t("洞察墙页面")}><div class="view-tabs"><button class:selected={view === 'live'} aria-pressed={view === 'live'} on:click={() => chooseView('live')}>{$t("最新洞察")}</button><button class:selected={view === 'recap'} aria-pressed={view === 'recap'} on:click={() => chooseView('recap')}>{$t("本场至今")}</button></div><LanguageSwitch value={$uiLocale} onchange={chooseLanguage}/></nav>
+  <div class="stage" bind:this={stage}>
+    {#if error || layoutError}<section class="empty" role="alert"><span class="symbol">↻</span><h2>{$t(error || layoutError)}</h2><p>{$t("连接或画面恢复后自动继续。")}</p></section>
+    {:else if connected && pages.length}<article class="wall-copy">{pages[page]}</article>
+    {:else}<section class="empty"><span class="symbol">✦</span><h2>{connected && snapshot?.wall?.phase === 'finished' ? $t("本场暂无公开洞察") : connected && snapshot?.wall?.phase === 'working' ? $t("正在整理讨论中的要点") : $t("正在听取讨论")}</h2><p>{view === 'recap' ? $t("本场已公开的要点会累积在这里，供主持人回顾。") : $t("新的讨论要点就绪后，会自动出现在这里。")}</p></section>{/if}
+  </div>
+  <div class="wall-copy measure" bind:this={measure} aria-hidden="true"></div>
+  <footer class="audience-footer">
+    <span class="brand-logo-tile"><span class="brand-logo" style={`--brand-mark:url("${logoUrl}")`} aria-hidden="true"></span></span><span class="brand-name">{productName}</span>
+    <div class="paging">{#if connected && pages.length > 1}<button aria-label={$t("上一页")} on:click={() => turnPage(-1)}>←</button><span>{page + 1} / {pages.length} {$t("· 每 15 秒翻页")}</span><button aria-label={$t("下一页")} on:click={() => turnPage(1)}>→</button>{:else}<span>{connected ? $t("持续同步") : $t("等待连接")}</span>{/if}</div>
+    <span class="brand-tagline">{$uiLocale === 'en' ? 'Public insights · Screen 2' : '公开洞察墙 · 屏幕 2'}</span>
+  </footer>
 </main>
 <style>
-  :global(html),:global(body),:global(#app) { margin:0;min-height:100%;height:100%;background:#10151d;color:#f4f5f8; } :global(body) {font-family:Inter,'PingFang SC',sans-serif;}
-  .public-search{display:flex;align-items:center;gap:15px;flex-wrap:wrap;margin-top:28px}.public-search label,.public-search span{font-size:12px;color:#aab5cb}.public-search input{flex:1;min-width:180px;max-width:520px;background:#ffffff0a;border:1px solid #ffffff35;color:#e6ecf6;padding:12px;font:inherit;font-size:14px;border-radius:0}.search-empty{font-size:14px;color:#96a4be;padding:30px 0}
-  .display-shell {height:100%;overflow:auto;padding:42px 6vw;display:flex;flex-direction:column;box-sizing:border-box;background:radial-gradient(ellipse at top right,#202941,#10151d 65%);}
-  header {display:flex;justify-content:space-between;gap:30px;align-items:center;border-bottom:1px solid #ffffff25;padding-bottom:30px;} header p {font-size:12px;letter-spacing:.2em;color:#a6b0cc;margin:0 0 14px;} h1 {font-size:clamp(26px,3vw,44px);font-weight:550;letter-spacing:-.03em;margin:0;}.connection {font-size:12px;color:#9ba3b5;line-height:2;}.connection>span {display:inline-block;width:7px;height:7px;border-radius:50%;background:#af784f;margin-right:8px;}.connection.connected>span{background:#7ab697;}.connection small{display:block;font-size:10px;margin-left:15px;color:#7e899e;}
-  .public-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(440px,100%),1fr));gap:24px;margin:32px 0;align-items:start;}.public-grid article{background:#ffffff08;border:1px solid #ffffff1f;padding:30px;}.kind{font-size:11px;letter-spacing:.1em;color:#9facd5;margin:0 0 18px;}h2{font-size:clamp(21px,2.2vw,30px);font-weight:500;line-height:1.6;margin:0 0 16px;overflow-wrap:anywhere;white-space:pre-wrap;}.body{font-size:clamp(17px,1.7vw,24px);line-height:1.9;color:#d6dce8;white-space:pre-wrap;overflow-wrap:anywhere;margin:0;}.public-evidence{margin-top:26px;border-top:1px solid #ffffff20;padding-top:16px;}.public-evidence>span{font-size:10px;color:#8791a6;}.public-evidence blockquote{margin:12px 0;padding-left:14px;border-left:2px solid #607198;color:#a3aec4;font-size:14px;line-height:1.9;white-space:pre-wrap;overflow-wrap:anywhere;}
-  .disconnected {flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:75px 0;min-height:300px;}.disconnected p{font-size:15px;color:#8f9bb3;line-height:1.8;}.disconnected .symbol{font-size:42px;color:#7d8bae;}.disconnected .hint{font-size:12px;}footer{display:flex;justify-content:space-between;gap:16px;font-size:10px;letter-spacing:.06em;color:#62708c;padding-top:30px;margin-top:auto;}
-  @media(max-width:650px){.display-shell{padding:28px 20px;}header{align-items:flex-start;flex-direction:column;gap:20px;}.public-grid article{padding:22px;}footer{flex-direction:column;}}
+  :global(html),:global(body),:global(#app){margin:0;height:100%;background:var(--audience-background);color:var(--audience-foreground);overflow:hidden}
+  :global(body){font-family:var(--audience-font);font-synthesis:none;text-rendering:geometricPrecision}
+  .display-shell{height:100dvh;width:100%;box-sizing:border-box;display:flex;flex-direction:column;background:var(--audience-background);overflow:hidden;--accent:#363a3e}
+  .audience-heading{flex-shrink:0}
+  .activity{display:flex;align-items:center;gap:14px;text-align:right;color:#929ea8}
+  .activity strong{font-size:18px;font-weight:500;color:#c5cad0;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .activity span{font-size:11px;line-height:1.6;max-width:250px}.working{animation:pulse 2s ease-in-out infinite}@keyframes pulse{50%{opacity:.5}}
+  nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 28px;height:50px;flex-shrink:0;border-bottom:1px solid #1d2126;color:#929aa3}
+  .view-tabs{height:100%;display:flex;align-items:stretch;gap:24px}
+  button{font:inherit;background:transparent;color:#929ea8;border:0;cursor:pointer}
+  button:focus-visible{outline:2px solid #c5cad0;outline-offset:-2px}
+  .view-tabs button{font-size:11px;border-bottom:2px solid transparent;padding:0 2px}
+  .view-tabs button:hover{color:#eee}.view-tabs button.selected{color:#f6f7f8;border-bottom-color:#f6f7f8}
+  nav :global(.language-switch){border-color:#343a41;border-radius:5px}
+  nav :global(.language-switch button){min-height:26px;padding:3px 9px;font-size:11px}
+  .stage{flex:1;min-height:0;position:relative;overflow:hidden;margin:24px 34px}
+  .wall-copy{box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere;font-size:clamp(24px,2.6vw,42px);line-height:1.34;font-weight:620;letter-spacing:-.022em;margin:0;color:#f7f8fa}
+  .measure{position:fixed;left:-20000px;top:0;visibility:hidden;pointer-events:none;height:auto}
+  .empty{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px;box-sizing:border-box}
+  .symbol{font-size:32px;color:#737f8b}h2{font-size:20px;color:#a5aeb7;font-weight:400;line-height:1.5;margin:18px 0 10px}.empty p{font-size:13px;color:#69737f;line-height:1.8;margin:0}
+  .paging{display:flex;align-items:center;gap:10px;font-size:10px;color:#8997a2;margin-left:auto}.paging button{padding:3px 8px;font-size:12px}
+  .audience-footer .brand-tagline{margin-left:12px}
+  .window-error{position:absolute;top:44px;left:0;right:0;background:#292d31;color:#e4e7eb;font-size:12px;z-index:10;padding:10px}
+  @media(max-width:650px){nav{padding:0 22px}.activity{gap:6px;flex-direction:column;align-items:flex-end}.activity strong{font-size:15px}.activity span{max-width:180px;font-size:10px}.stage{margin:20px 26px}.audience-footer .brand-tagline{display:none}.view-tabs{gap:16px}}
+  @media(max-height:500px){.audience-heading{min-height:52px;padding-block:9px}.audience-heading .eyebrow{display:none}.audience-heading h1{margin:0}nav{height:40px}.stage{margin-block:12px}}
+  @media(prefers-reduced-motion:reduce){.working{animation:none}}
 </style>

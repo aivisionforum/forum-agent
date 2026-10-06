@@ -10,7 +10,7 @@ export function captionSpeaker(assignments: SpeakerAssignment[], sessionId: stri
     && a.segment_id === segmentId && a.source_revision === revision) ?? null;
 }
 
-function visibleInsights(state: AnalysisState | null, sessionId: string | null): ArtifactRecord[] {
+export function visibleInsights(state: AnalysisState | null, sessionId: string | null): ArtifactRecord[] {
   if (!state || !sessionId || state.session_id !== sessionId) return [];
   const current = new Map<string,ArtifactRecord>();
   for (const a of state.artifacts) if (!current.has(a.artifact_id) || current.get(a.artifact_id)!.revision < a.revision) current.set(a.artifact_id,a);

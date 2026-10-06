@@ -1,29 +1,21 @@
 <script lang="ts">
+  import AudienceTitlebar from './components/AudienceTitlebar.svelte';
+  import { t, uiLocale, initializeLocale, setLocale } from './lib/i18n';
   import { afterUpdate, onDestroy, onMount } from 'svelte';
-  import LiveInsights from './components/LiveInsights.svelte';
-  import { captionSpeaker, bilingualCaption } from './lib/forum/live-meeting';
-  import { speakerText, type SpeakerAssignment } from './lib/forum/speakers';
-  import logoUrl from '../../icons/logo-mark.png';
-  import { productName } from './lib/product';
+  import { bilingualCaption } from './lib/forum/live-meeting';
+  import { productName, brandLogoUrl as logoUrl } from './lib/product';
   import { getOverlayState, listenOverlay, startWindowDrag, isTauri, meetingWindowAction, type OverlayState } from './lib/api';
   import { nextChromeTier, type ChromeTier } from './lib/caption-metrics';
-  import { captionShare, DEFAULT_CAPTION_SHARE, MEETING_SPLIT_KEY } from './lib/meeting-layout';
 
+  initializeLocale();
   let state: OverlayState | null = null;
-  let assignments: SpeakerAssignment[] = [];
   let pinned = false;
   let windowError = '';
   let followLatest = true;
   let lastFeed = '';
   let disposed = false;
   let snapshotVersion = 0;
-  $: sessionId = state?.sessionId ?? (!isTauri() && new URLSearchParams(location.search).get('idle') !== '1' ? '00000000-0000-4000-8000-000000000001' : null);
-  $: statusText = ({idle:sessionId ? '本场已停止' : '等待开始',warming:'模型准备中',starting:'正在启动',running:'实时转写中',listening:'正在收音',degraded:'部分功能待恢复',stopping:'正在停止',draining:'正在保存尾句',error:'运行异常',failed:'运行失败'}[state?.status ?? 'idle'] ?? state?.status);
   $: history = state ? displayHistory() : [];
-  $: captionLabels = new Map((state?.history ?? []).map(sentence => {
-    const assigned = captionSpeaker(assignments, sessionId, sentence.segmentId, sentence.sourceRevision);
-    return [sentence.segmentId ?? sentence.sourceText, assigned ? speakerText(assigned.label) : ''];
-  }));
   async function windowAction(action: 'close' | 'minimize' | 'fullscreen' | 'pin') {
     windowError = '';
     try { await meetingWindowAction(action, !pinned); if (action === 'pin' && isTauri()) pinned = !pinned; }
@@ -38,32 +30,6 @@
   let sourceFeed: HTMLElement;
   let shell: HTMLElement;
   let meetingContent: HTMLDivElement;
-  let splitShare = DEFAULT_CAPTION_SHARE;
-  let splitWidth = 1180;
-  let resizing = false;
-  $: effectiveShare = captionShare(splitShare, splitWidth);
-  function saveSplit() { try { localStorage.setItem(MEETING_SPLIT_KEY, String(splitShare)); } catch {} }
-  function moveSplit(event: PointerEvent) {
-    if (!resizing) return;
-    const rect = meetingContent.getBoundingClientRect();
-    splitShare = captionShare((event.clientX - rect.left - 4) / Math.max(1, rect.width - 8), rect.width);
-    scheduleFollowLatest();
-  }
-  function beginSplit(event: PointerEvent) {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    resizing = true;
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
-    moveSplit(event);
-  }
-  function endSplit() { if (resizing) { resizing = false; saveSplit(); } }
-  function resetSplit() { splitShare = DEFAULT_CAPTION_SHARE; saveSplit(); scheduleFollowLatest(); }
-  function keySplit(event: KeyboardEvent) {
-    if (!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) return;
-    event.preventDefault();
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? 1 : effectiveShare + (event.key === 'ArrowLeft' ? -.025 : .025);
-    splitShare = captionShare(next, splitWidth); saveSplit(); scheduleFollowLatest();
-  }
   let resizeObserver: ResizeObserver | null = null;
   let layoutFrame: number | null = null;
   let scrollFrame: number | null = null;
@@ -78,8 +44,9 @@
   function applySnapshot(snapshot: OverlayState): void {
     if (disposed) return;
     snapshotVersion++;
-    if (snapshot.sessionId !== state?.sessionId) { assignments = []; followLatest = true; }
+    if (snapshot.sessionId !== state?.sessionId) { followLatest = true; }
     state = snapshot;
+    if (isTauri() && snapshot.appLanguage) setLocale(snapshot.appLanguage);
     syncTranslatingSentence(snapshot);
     scheduleResponsiveLayout();
   }
@@ -222,7 +189,7 @@
       return;
     }
 
-    if (state?.subtitleSplit) {
+    if ((state?.subtitleSplit && !state?.subtitleSideBySide)) {
       followFeed(
         sentenceFeed,
         Boolean(state && (state.history.length > 0 || state.translating || state.pendingSourceText))
@@ -263,14 +230,12 @@
   }
 
   onMount(() => {
-    try { const saved = localStorage.getItem(MEETING_SPLIT_KEY); if (saved !== null && Number.isFinite(Number(saved))) splitShare = Number(saved); } catch {}
     reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     let unlisten: () => void = () => undefined;
     void refreshOverlay();
     void listenOverlay(applySnapshot).then((cleanup) => { if (disposed) cleanup(); else unlisten = cleanup; }).catch(e => windowError = String(e));
     const syncTimer = window.setInterval(() => { if (isTauri() && !document.hidden) void refreshOverlay(); },2500);
     resizeObserver = new ResizeObserver(() => {
-      splitWidth = meetingContent?.clientWidth ?? splitWidth;
       scheduleResponsiveLayout();
       scheduleFollowLatest();
     });
@@ -293,42 +258,34 @@
 </script>
 
 <svelte:head>
-  <title>{productName} — 实时会议</title>
+  <title>{productName} {$t("— 公开字幕")}</title>
 </svelte:head>
 
 <svelte:window on:keydown={(e) => { if (e.key === 'Escape') windowError = ''; }} />
 
 <main
   class="overlay-shell chrome-tier-{chromeTier}"
-  class:sentence-pairs={state?.subtitleSplit && !state?.translationOnly && state?.targetLanguage !== 'none'}
+  class:sentence-pairs={(state?.subtitleSplit && !state?.subtitleSideBySide) && !state?.translationOnly && state?.targetLanguage !== 'none'}
   class:translation-only={state?.translationOnly && state?.targetLanguage !== 'none'}
   class:source-only={state?.targetLanguage === 'none'}
   style={`--subtitle-size:${state?.fontSize ?? 24}px;--configured-caption-anchor:${state?.anchorPosition ?? 50}%;`}
   bind:this={shell}
 >
-  <header class="meeting-titlebar">
-    <div class="window-controls" aria-label="窗口控制">
-      <button aria-label="关闭会议窗口" title="关闭窗口（会议继续运行）" on:click={() => windowAction('close')}>×</button>
-      <button aria-label="最小化窗口" title="最小化" on:click={() => windowAction('minimize')}>−</button>
-      <button aria-label="切换全屏" title="进入或退出全屏" on:click={() => windowAction('fullscreen')}>⛶</button>
-    </div>
-    <div class="window-drag-title" data-tauri-drag-region role="presentation" on:mousedown={dragWindow} on:dblclick={() => windowAction('fullscreen')}><span data-tauri-drag-region>{productName}</span><span class="window-subtitle" data-tauri-drag-region>实时会议</span></div>
-    <button class="pin-button" class:pinned aria-pressed={pinned} title="保持在其他窗口上方" on:click={() => windowAction('pin')}>{pinned ? '已置顶' : '置顶'}</button>
-  </header>
-  {#if windowError}<div class="window-error" role="alert">{windowError}</div>{/if}
-  <div class="meeting-content" class:resizing bind:this={meetingContent} style={`--caption-share:${effectiveShare}fr;--insight-share:${1-effectiveShare}fr`}>
-  <section id="meeting-captions" class="captions-panel" aria-label="实时双语字幕">
-    <header class="captions-heading"><div><span class="eyebrow">LIVE TRANSCRIPT</span><h1>实时字幕</h1></div><button class:paused={!followLatest} on:click={resumeFollow}>{followLatest ? '跟随最新 ↓' : '回到最新 ↓'}</button></header>
+  <AudienceTitlebar subtitle={$t("公开字幕 · 屏幕 1")} {pinned} action={windowAction} drag={dragWindow}/>
+  {#if windowError}<div class="window-error" role="alert">{$t("窗口暂不可用，请操作员检查")}</div>{/if}
+  <div class="meeting-content" bind:this={meetingContent}>
+  <section id="meeting-captions" class="captions-panel" aria-label={$t("实时双语字幕")}>
+    <header class="captions-heading audience-heading"><div><span class="eyebrow">LIVE TRANSCRIPT</span><h1>{$t("实时字幕")}</h1></div><button class:paused={!followLatest} on:click={resumeFollow}>{followLatest ? $t("跟随最新 ↓") : $t("回到最新 ↓")}</button></header>
     <!-- Scrollable captions are keyboard-focusable so readers can pause following with Page Up. -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
-    <div class="captions-content" on:wheel|passive={pauseFollow} on:keydown={pauseByKey} role="region" aria-label="字幕内容" tabindex="0">
-    {#if state && !state.history.length && !state.translating && !state.pendingSourceText}<div class="caption-empty"><h2>等待现场的第一句话</h2><p>开始会议后，原文与译文会持续显示在这里。</p></div>{/if}
+    <div class="captions-content" on:wheel|passive={pauseFollow} on:keydown={pauseByKey} role="region" aria-label={$t("字幕内容")} tabindex="0">
+    {#if state && !state.history.length && !state.translating && !state.pendingSourceText}<div class="caption-empty"><h2>{$t("等待现场的第一句话")}</h2><p>{$t("开始会议后，原文与译文会持续显示在这里。")}</p></div>{/if}
   {#if state?.targetLanguage === 'none'}
-    <section class="source-only-feed anchor-feed" aria-label="Source language subtitles" bind:this={sourceFeed}>
+    <section class="source-only-feed anchor-feed" aria-label={$t("原文字幕")} bind:this={sourceFeed}>
       <div class="pane-content anchor-track">
         {#each history as sentence}
           {#if sentence.sourceText.trim()}
-            <div class="caption-block">{#if captionLabels.get(sentence.segmentId ?? sentence.sourceText)}<span class="caption-speaker">{captionLabels.get(sentence.segmentId ?? sentence.sourceText)}</span>{/if}<p class="pane-line source-only-line">{sentence.sourceText}</p></div>
+            <div class="caption-block"><p class="pane-line source-only-line">{sentence.sourceText}</p></div>
           {/if}
         {/each}
         {#if state.translating}
@@ -341,11 +298,11 @@
       <div class="anchor-tail" aria-hidden="true"></div>
     </section>
   {:else if state?.translationOnly}
-    <section class="translation-only-feed anchor-feed" aria-label="Translation subtitles" bind:this={targetFeed}>
+    <section class="translation-only-feed anchor-feed" aria-label={$t("译文字幕")} bind:this={targetFeed}>
       <div class="pane-content anchor-track">
         {#each history as sentence}
           {#if sentence.translation.trim()}
-            <div class="caption-block">{#if captionLabels.get(sentence.segmentId ?? sentence.sourceText)}<span class="caption-speaker">{captionLabels.get(sentence.segmentId ?? sentence.sourceText)}</span>{/if}<p class="pane-line target-line">{sentence.translation}</p></div>
+            <div class="caption-block"><p class="pane-line target-line">{sentence.translation}</p></div>
           {/if}
         {/each}
         {#if state.translating && receivedTranslation.trim()}
@@ -356,7 +313,7 @@
             {/if}
           </p>
         {:else if state.translating || state.pendingSourceText.trim()}
-          <p class="translation-loading" aria-label="Translation pending" aria-live="polite">
+          <p class="translation-loading" aria-label={$t("等待译文")} aria-live="polite">
             <span aria-hidden="true"></span>
             <span aria-hidden="true"></span>
             <span aria-hidden="true"></span>
@@ -365,18 +322,18 @@
       </div>
       <div class="anchor-tail" aria-hidden="true"></div>
     </section>
-  {:else if state?.subtitleSplit}
+  {:else if (state?.subtitleSplit && !state?.subtitleSideBySide)}
     <div class="subtitle-feed anchor-feed" bind:this={sentenceFeed}>
       <div class="subtitle-track anchor-track">
         {#if state.history.length === 0 && !state.translating && !state.pendingSourceText}
-          <section class="empty-transcript" aria-label="Empty subtitle window" data-tauri-drag-region>
+          <section class="empty-transcript" aria-label={$t("空字幕窗口")} data-tauri-drag-region>
             <div class="empty-zone target-zone" data-tauri-drag-region></div>
             <div class="empty-zone source-zone" data-tauri-drag-region></div>
           </section>
         {:else}
           {#each history as sentence}
             <article class="subtitle-entry">
-              {#if captionLabels.get(sentence.segmentId ?? sentence.sourceText)}<span class="caption-speaker">{captionLabels.get(sentence.segmentId ?? sentence.sourceText)}</span>{/if}
+
               <p class="translation">{sentence.translation}</p>
               <p class="source">{sentence.sourceText}</p>
             </article>
@@ -396,7 +353,7 @@
 
           {#if state.pendingSourceText}
             <article class="subtitle-entry pending">
-              <p class="translation" aria-label="Translation pending"></p>
+              <p class="translation" aria-label={$t("等待译文")}></p>
               <p class="source">{state.pendingSourceText}</p>
             </article>
           {/if}
@@ -405,12 +362,12 @@
       <div class="anchor-tail" aria-hidden="true"></div>
     </div>
   {:else}
-    <div class="stacked-feed" aria-label="Target language above source language">
-      <section class="language-pane target-pane anchor-feed" aria-label="Target language subtitles" bind:this={targetFeed}>
+    <div class="stacked-feed" class:side-by-side={state?.subtitleSideBySide} aria-label={state?.subtitleSideBySide ? ($uiLocale === 'en' ? 'Translation on the left, original on the right' : '译文在左，原文在右') : $t("译文在上，原文在下")}>
+      <section class="language-pane target-pane anchor-feed" aria-label={$t("目标语言字幕")} bind:this={targetFeed}>
         <div class="pane-content anchor-track">
           {#each history as sentence}
             {#if sentence.translation.trim()}
-              <div class="caption-block">{#if captionLabels.get(sentence.segmentId ?? sentence.sourceText)}<span class="caption-speaker">{captionLabels.get(sentence.segmentId ?? sentence.sourceText)}</span>{/if}<p class="pane-line target-line">{sentence.translation}</p></div>
+              <div class="caption-block"><p class="pane-line target-line">{sentence.translation}</p></div>
             {/if}
           {/each}
           {#if state?.translating}
@@ -424,11 +381,11 @@
         </div>
         <div class="anchor-tail" aria-hidden="true"></div>
       </section>
-      <section class="language-pane source-pane anchor-feed" aria-label="Source language subtitles" bind:this={sourceFeed}>
+      <section class="language-pane source-pane anchor-feed" aria-label={$t("原文字幕")} bind:this={sourceFeed}>
         <div class="pane-content anchor-track">
           {#each history as sentence}
             {#if sentence.sourceText.trim()}
-              <div class="caption-block">{#if captionLabels.get(sentence.segmentId ?? sentence.sourceText)}<span class="caption-speaker">{captionLabels.get(sentence.segmentId ?? sentence.sourceText)}</span>{/if}<p class="pane-line source-line">{sentence.sourceText}</p></div>
+              <div class="caption-block"><p class="pane-line source-line">{sentence.sourceText}</p></div>
             {/if}
           {/each}
           {#if state?.translating}
@@ -444,16 +401,10 @@
   {/if}
     </div>
   </section>
-  <!-- A movable window splitter is a focusable ARIA separator with arrow-key controls. -->
-  <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
-  <div class="meeting-divider" role="separator" aria-controls="meeting-captions" aria-label="调整字幕与洞察宽度" aria-orientation="vertical" aria-valuemin={Math.round(captionShare(0,splitWidth)*100)} aria-valuemax={Math.round(captionShare(1,splitWidth)*100)} aria-valuenow={Math.round(effectiveShare*100)} aria-valuetext={`字幕 ${Math.round(effectiveShare*100)}%，洞察 ${Math.round((1-effectiveShare)*100)}%`} tabindex="0" title="拖动调整宽度 · 双击恢复 · 方向键微调" on:pointerdown={beginSplit} on:pointermove={moveSplit} on:pointerup={endSplit} on:pointercancel={endSplit} on:lostpointercapture={endSplit} on:keydown={keySplit} on:dblclick={resetSplit}></div>
-  {#key sessionId}<LiveInsights {sessionId} running={state?.active ?? false} on:speakers={e => assignments = e.detail}/>{/key}
   </div>
-  <footer class="brand-footer">
+  <footer class="brand-footer audience-footer">
     <span class="brand-logo-tile"><span class="brand-logo" style={`--brand-mark:url("${logoUrl}")`} aria-hidden="true"></span></span>
     <span class="brand-name">{productName}</span>
-    <span class="runtime-status"><span class="status-dot" class:working={state?.active}></span>{isTauri() ? statusText : '界面预览 · 合成数据'}</span>
-    <span class="runtime-detail" title={state?.runtimeMessage}>{isTauri() ? state?.runtimeMessage ?? '' : '不采集音频'}</span>
-    <span class="brand-tagline">本机私有 · 洞察需审核</span>
+    <span class="brand-tagline">{$t("公开字幕 · 屏幕 1")}</span>
   </footer>
 </main>

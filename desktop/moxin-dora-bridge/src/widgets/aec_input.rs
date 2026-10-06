@@ -1297,6 +1297,7 @@ impl AecInputBridge {
                 if audio_source == AudioSource::SystemAudio {
                     if let Some(ref sck) = sck_capture {
                         if let Some(samples) = sck.get_audio() {
+                            let samples = shared_state.as_ref().map(|s| s.process_input(&samples)).unwrap_or(samples);
                             let rms: f32 = {
                                 let sq: f32 = samples.iter().map(|s| s * s).sum();
                                 (sq / samples.len() as f32).sqrt()
@@ -1330,6 +1331,8 @@ impl AecInputBridge {
                                 // Convert i16 to f32 normalized
                                 let samples_f32: Vec<f32> =
                                     samples_i16.iter().map(|&s| s as f32 / 32768.0).collect();
+                                let samples_f32 = shared_state.as_ref().map(|s| s.process_input(&samples_f32)).unwrap_or(samples_f32);
+                                let vad = if using_aec { vad } else { Self::calculate_rms(&samples_f32) > cpal_capture.vad_threshold };
                                 all_audio.extend(samples_f32);
                                 vad_results.push(vad);
                             }
@@ -1794,8 +1797,10 @@ impl AecInputBridge {
                 if pcm.is_empty() {
                     return Ok(());
                 }
-                capture.record(pcm)?;
-                for segment in segmenter.push(pcm) {
+                let processed = shared.process_input(pcm);
+                // Journal post-gain PCM so an unclosed crash tail uses the same levels.
+                capture.record(&processed)?;
+                for segment in segmenter.push(&processed) {
                     capture.use_segment_identity(segment.segment_id, segment.start_sample)?;
                     let metadata = capture.close_segment(&segment.samples)?;
                     deliveries.enqueue(metadata, segment.samples)?;

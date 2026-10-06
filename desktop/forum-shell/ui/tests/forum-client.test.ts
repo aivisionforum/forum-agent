@@ -31,7 +31,8 @@ test('desktop transport preserves typed request payload rather than leaking it i
 
 test('display rejects every write and sends credentials only in a bearer header', async () => {
   const calls: Array<{ url: string; init?: RequestInit }> = [];
-  const transport = new DisplayTransport('http://127.0.0.1:8211', 'secret', (async (url: URL | RequestInfo, init?: RequestInit) => {
+  const transport = new DisplayTransport('http://127.0.0.1:8211', 'secret', (async function(this: unknown, url: URL | RequestInfo, init?: RequestInit) {
+    assert.equal(this,globalThis);
     calls.push({url:String(url), init}); return new Response(JSON.stringify({cursor: 9}), {status:200});
   }) as typeof fetch);
   await assert.rejects(transport.call('publish_artifact', { request: {} }), /仅可读取/);
@@ -44,7 +45,7 @@ test('display rejects every write and sends credentials only in a bearer header'
 });
 
 import { PublicProjection, displayCredentials } from '../src/lib/forum/display-state.ts';
-import { canPublish } from '../src/lib/forum/client.ts';
+import { canPublish, canReviewForWall, ForumClient } from '../src/lib/forum/client.ts';
 import { previewAnalysisState } from '../src/lib/forum/preview.ts';
 
 test('public snapshots replace withdrawn cards, and any stale/error state removes visible content', () => {
@@ -72,13 +73,29 @@ test('display refresh uses tab-scoped token and strips it from the visible URL',
   assert.throws(() => displayCredentials(new URL('http://127.0.0.1:8123/display.html?session=62dd4406-b46e-45fa-9615-c1ea9c6ee51d'),storage),/缺少凭据/);
 });
 
-test('UI publication affordance requires current validation, explicit approval and complete coverage', () => {
+test('UI publication requires current validation and approval; partial coverage is allowed only for cited insights', () => {
   const a = structuredClone(previewAnalysisState.artifacts[0]);
   assert.equal(canPublish(a),false);
   a.review = 'approved'; assert.equal(canPublish(a),true);
-  a.coverage_complete = false; assert.equal(canPublish(a),false);
+  a.coverage_complete = false; assert.equal(canPublish(a),true);
+  a.kind = 'minutes'; assert.equal(canPublish(a),false); a.kind = 'insight';
   a.coverage_complete = true; a.validation = 'stale'; assert.equal(canPublish(a),false);
   a.validation = 'valid'; a.kind = 'suggested_questions'; assert.equal(canPublish(a),false);
+});
+
+test('gated review can start from a draft; the final action requests atomic approval and publication', async () => {
+  const draft = structuredClone(previewAnalysisState.artifacts[0]);
+  assert.equal(canPublish(draft), false);
+  assert.equal(canReviewForWall(draft), true);
+  const calls: unknown[] = [];
+  const client = new ForumClient(new DesktopTransport(async <T>(command: string, args?: Record<string, unknown>) => { calls.push([command,args]); return {} as T; }));
+  const request = {artifact_id:draft.artifact_id,expected_revision:draft.revision,operator_id:'operator',reason:'Checked public copy',policy_hash:'policy',reviewed_title:'Title',reviewed_text:'Speaker A: Test captions.',evidence:[]};
+  await client.approveAndPublishArtifact(request);
+  await client.showInsightWall(draft.session_ids[0], 'en');
+  assert.deepEqual(calls, [['approve_and_publish_artifact',{request}],['show_insight_wall',{sessionId:draft.session_ids[0],language:'en'}]]);
+  draft.validation = 'stale'; assert.equal(canReviewForWall(draft),false);
+  draft.validation = 'valid'; draft.coverage_complete = false; assert.equal(canReviewForWall(draft),true);
+  draft.kind = 'minutes'; assert.equal(canReviewForWall(draft),false);
 });
 
 import { readLegacyFile, MAX_LEGACY_IMPORT_BYTES } from '../src/lib/forum/import.ts';

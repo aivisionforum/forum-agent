@@ -170,3 +170,14 @@ this runtime as its own `speaker-worker` resource and sign all native contents.
 Distribution to a clean Mac, signing/notarization and real acoustic quality remain
 separate product acceptance gates. License details and exact native-loader
 relocations are documented in `packaging/THIRD_PARTY.md` and the runtime manifest.
+
+
+Fresh macOS bundle checks allow 300 seconds per isolated Python subprocess for
+first-load native-library scanning. Override with
+`FORUM_SPEAKER_CHECK_TIMEOUT_SECONDS=600` (a positive finite number of seconds).
+Both the packager and app runtime checker forward this one variable through
+their sanitized environments; the app wrapper allows all three child checks
+plus inspection time. This is a packaging diagnostic limit, not an inference
+latency setting. A colleague reported successful second-Mac build/startup smoke
+testing, including Node 22; acoustic quality and formal release gates remain
+separate.

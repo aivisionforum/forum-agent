@@ -1,5 +1,14 @@
 # Vision Forum 实施进度与验证记录
 
+## 2026-10-03 排练反馈实现更新
+
+本轮验证：Rust contracts/core/gateway/desktop 共 158 项通过、2 项原有忽略；meeting/speaker/打包及 profile 共 116 项 Python 检查通过；前端 39 项测试通过、Svelte 零错误/警告、生产 UI 构建和 `cargo check -p forum-shell` 通过，生成协议与源码一致。合成数据浏览器验证覆盖 1280×720、1920×1080、560×560 的分页，以及倒计时、WORKING、回顾、撤回和断线恢复；同时修复了原公开传输层在 WebKit 下调用原生 fetch 时的 receiver 错误。本轮没有运行真实模型/采音或重打包 `.app`，不新增硬件门槛结论。
+
+操作员私有工作台和公开洞察墙继续使用独立权限通道；公开墙移除审核标签/版本号/资料搜索，增加倒计时、WORKING、延迟/断线提示、按屏幕空间拆页、15 秒自动翻页和“本场至今”。生成周期恢复到 profile 规定的约 180 秒。数据库 v7 增加按场次的守门/自动批准设置、操作记录、计划时间和匿名公开标签；旧场次默认守门，升级保留迁移备份。自动批准仅作用于新完成的有效洞察，复用事务内发布校验；编辑、隐藏、撤回和来源失效继续使公开内容撤下。人工纪要/报告发布流程保持独立。
+
+已收到同事对第二台 Mac 的烟测反馈：UI 构建、cargo check、Dora 0.4.1、打包（将 speaker checker 改为 300 秒后）、启动和 Local AI is ready 通过，Node 22 兼容。该反馈更新下文较早的“第二台待测”记录，但不覆盖真实双机采集、手机显示、90 分钟、离线推理、签名公证和硬件最低规格测量。speaker checker 现默认 300 秒，支持 `FORUM_SPEAKER_CHECK_TIMEOUT_SECONDS`，并贯通打包隔离环境与 app 检查的外层时限。
+
+
 更新：2026-09-16。分支：`codex/vision-forum-integration`。
 
 本文件记录已经执行的代码工作；[主方案](VISION_FORUM_ENGINEERING_PLAN_ZH.md)、[协议](DATA_AND_PROTOCOL_ZH.md)和[任务表](IMPLEMENTATION_TASKS_ZH.md)仍定义最终目标。没有验证证据的项目不标为通过。

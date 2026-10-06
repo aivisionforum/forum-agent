@@ -1876,6 +1876,25 @@
       ],
       "type": "object"
     },
+    "InsightApprovalMode": {
+      "enum": [
+        "gated",
+        "automatic"
+      ],
+      "type": "string"
+    },
+    "InsightSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/InsightApprovalMode"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "type": "object"
+    },
     "OutboxMessage": {
       "properties": {
         "body": {
@@ -2672,11 +2691,48 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "wall": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PublicWallStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
         "cursor",
         "artifacts"
+      ],
+      "type": "object"
+    },
+    "PublicWallStatus": {
+      "additionalProperties": false,
+      "description": "Only coarse operational state crosses the display boundary, never errors or drafts.",
+      "properties": {
+        "next_update_at_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "phase": {
+          "$ref": "#/$defs/WallPhase"
+        },
+        "server_time_ms": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "phase",
+        "server_time_ms"
       ],
       "type": "object"
     },
@@ -3179,6 +3235,34 @@
         "session_id",
         "producer",
         "payload"
+      ],
+      "type": "object"
+    },
+    "SetInsightSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/InsightApprovalMode"
+        },
+        "operator_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "session_id": {
+          "format": "uuid",
+          "not": {
+            "const": "00000000-0000-0000-0000-000000000000"
+          },
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "mode",
+        "operator_id",
+        "reason"
       ],
       "type": "object"
     },
@@ -4486,6 +4570,16 @@
         "direction_epoch"
       ],
       "type": "object"
+    },
+    "WallPhase": {
+      "enum": [
+        "listening",
+        "working",
+        "paused",
+        "delayed",
+        "finished"
+      ],
+      "type": "string"
     }
   },
   "$id": "urn:ai-vision-forum:contracts:1",

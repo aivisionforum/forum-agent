@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[3]
 WORKER = REPO / 'services/speaker-worker'
@@ -21,6 +22,21 @@ checker = load('speaker_check_test', WORKER / 'packaging/check_bundle.py')
 
 
 class PackagingTests(unittest.TestCase):
+    def test_check_timeout_default_override_and_invalid_values(self):
+        with patch.dict(checker.os.environ, {}, clear=True):
+            self.assertEqual(checker.check_timeout(), 300)
+        with patch.dict(checker.os.environ, {checker.TIMEOUT_ENV: '600'}):
+            self.assertEqual(checker.check_timeout(), 600)
+        for value in ('', 'invalid', '0', '-1', 'nan', 'inf'):
+            with self.subTest(value=value), patch.dict(checker.os.environ, {checker.TIMEOUT_ENV: value}):
+                with self.assertRaisesRegex(ValueError, checker.TIMEOUT_ENV):
+                    checker.check_timeout()
+
+    def test_timeout_override_reaches_sanitized_packaging_check(self):
+        with patch.dict(packager.os.environ, {checker.TIMEOUT_ENV: '600', 'PRIVATE_TOKEN': 'secret'}):
+            env = packager.checker_environment({'PATH': '/usr/bin'})
+        self.assertEqual(env, {'PATH': '/usr/bin', checker.TIMEOUT_ENV: '600'})
+
     def test_lock_pins_official_artifacts_and_separate_runtime(self):
         lock = json.loads((WORKER / 'packaging/runtime-macos-arm64.lock.json').read_text())
         packager.validate_lock(lock)

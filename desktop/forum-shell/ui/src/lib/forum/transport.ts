@@ -28,7 +28,8 @@ export class DisplayTransport implements ForumTransport {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const response = await this.fetcher(url, {
+      // WebKit requires Window as the receiver for its native fetch function.
+      const response = await this.fetcher.call(globalThis, url, {
         method: 'GET', headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/json' },
         signal: controller.signal, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer'
       });

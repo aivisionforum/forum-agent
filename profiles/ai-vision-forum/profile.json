@@ -51,7 +51,9 @@
     "preserve_original_code_switching": true
   },
   "publication": {
-    "public_summaries": "manual_review_required",
+    "public_summaries": "session_selected_gated_default_or_automatic_insights",
+    "automatic_insights": "validated_new_results_only_operator_correctable",
+    "automatic_public_evidence": "anonymous_source_description_no_raw_quotes",
     "public_captions": "strict_manual_review",
     "operator_captions": "private_fast_unreviewed",
     "unreviewed_partials_on_public_displays": false,

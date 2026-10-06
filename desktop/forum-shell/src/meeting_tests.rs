@@ -2,6 +2,26 @@ use super::*;
 use forum_runtime::RuntimeClient;
 
 #[test]
+fn selected_wall_mode_is_saved_before_capture_and_recovery_preserves_live_changes() {
+    let (root, repo, host) = fixture();
+    let mut options = host.setup.options.clone();
+    options.insight_mode = InsightApprovalMode::Automatic;
+    let setup = repo.create_setup(options.clone()).unwrap();
+    let id = setup.session.session_id;
+    assert_eq!(repo.core.call(move |s| s.insight_settings(id)).unwrap().mode, InsightApprovalMode::Automatic);
+    repo.core.call(move |s| s.set_insight_settings(&SetInsightSettings {
+        session_id: id, mode: InsightApprovalMode::Gated,
+        operator_id: "operator".into(), reason: "改为守门".into(),
+    })).unwrap();
+    let recovered = MeetingHost::create(repo.clone(), options.clone(), Some(id)).unwrap();
+    assert_eq!(repo.core.call(move |s| s.insight_settings(id)).unwrap().mode, InsightApprovalMode::Gated);
+    let mut old_options = serde_json::to_value(options).unwrap();
+    old_options.as_object_mut().unwrap().remove("insight_mode");
+    assert_eq!(serde_json::from_value::<MeetingOptions>(old_options).unwrap().insight_mode, InsightApprovalMode::Gated);
+    drop(recovered); drop(host); repo.core.shutdown().unwrap(); drop(repo); fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn joining_event_changes_only_future_sessions_and_persists_across_reopen(){
     let (root,repo,host)=fixture();let old=host.setup.session.clone();let mut options=host.setup.options.clone();options.dual_audio=true;
     let next_event=Uuid::new_v4();assert!(repo.join_event(Uuid::nil()).is_err());repo.join_event(next_event).unwrap();
@@ -18,6 +38,7 @@ fn fixture() -> (PathBuf, MeetingRepository, MeetingHost) {
     let host = MeetingHost::create(
         repo.clone(),
         MeetingOptions {
+            insight_mode: Default::default(),
             max_segment_ms: 10_000,            source_language: "auto".into(),
             target_language: "bilingual".into(),
             recording_enabled: true,

@@ -23,7 +23,9 @@ export interface TranslationSettings {
   sourceLanguage: LanguageCode;
   targetLanguage: LanguageCode;
   inputDevice: string;
+  inputGain: number;
   subtitleSplit: boolean;
+  subtitleSideBySide: boolean;
   translationOnly: boolean;
   overlayOpacity: number;
   fontSizePreset: string;
@@ -69,6 +71,8 @@ export interface ModelStatus {
   translationReady?: boolean;
   automaticAsrReady?: boolean;
   automaticAsrDetail?: string;
+  translationRuntimeReady?: boolean;
+  translationRuntimeDetail?: string;
   downloading: boolean;
   component: 'core' | null;
   progress: number;
@@ -101,6 +105,7 @@ export interface TranslatingSentence extends Sentence {
 }
 
 export interface OverlayState {
+  appLanguage?: 'zh' | 'en';
   sessionId?: string | null;
   runtimeMessage?: string;
   active: boolean;
@@ -108,6 +113,7 @@ export interface OverlayState {
   sourceLanguage: string;
   targetLanguage: string;
   subtitleSplit: boolean;
+  subtitleSideBySide: boolean;
   translationOnly: boolean;
   fontSize: number;
   anchorPosition: number;
@@ -126,7 +132,9 @@ export const previewSettings: SettingsPayload = {
     sourceLanguage: 'zh',
     targetLanguage: 'en',
     inputDevice: '__system_audio__',
+    inputGain: 1,
     subtitleSplit: false,
+    subtitleSideBySide: false,
     translationOnly: false,
     overlayOpacity: 1,
     fontSizePreset: '24',
@@ -153,6 +161,7 @@ export const previewOverlay: OverlayState = {
   sourceLanguage: 'zh',
   targetLanguage: 'en',
   subtitleSplit: false,
+  subtitleSideBySide: false,
   translationOnly: false,
   fontSize: 24,
   anchorPosition: 50,
@@ -197,6 +206,7 @@ export async function getModelStatus(): Promise<ModelStatus> {
     asrReady: true,
     translationReady: true,
     automaticAsrReady: true,
+    translationRuntimeReady: true,
     downloading: false,
     component: null,
     progress: 1,
@@ -227,9 +237,9 @@ export async function getUsage(): Promise<UsageSnapshot> {
   };
 }
 
-export async function startTranslation(settings: TranslationSettings): Promise<RuntimeState> {
+export async function startTranslation(settings: TranslationSettings, insightMode: 'gated' | 'automatic' = 'gated'): Promise<RuntimeState> {
   if (!isTauri()) throw new Error('Browser preview only. Open the desktop app to capture audio.');
-  return invoke<RuntimeState>('start_translation', { settings });
+  return invoke<RuntimeState>('start_translation', { settings, insightMode });
 }
 
 export async function stopTranslation(): Promise<RuntimeState> {
@@ -278,6 +288,7 @@ export async function getOverlayState(): Promise<OverlayState> {
     preview.history = previewSentences(3);
     preview.pendingSourceText = '';
   }
+  preview.subtitleSideBySide = previewMode.get('columns') === '1';
   if (previewMode.get('stacked') === '1') {
     preview.subtitleSplit = false;
   }
@@ -381,4 +392,10 @@ export async function meetingWindowAction(action: 'close' | 'minimize' | 'fullsc
 
 export async function listenLiveSettings(handler: () => void): Promise<UnlistenFn> {
   return isTauri() ? listen('open-live-settings', handler) : () => {};
+}
+
+export interface AudioLevelSample { rms: number; peak: number }
+export async function listenAudioLevel(handler: (samples: AudioLevelSample[]) => void): Promise<UnlistenFn> {
+  if (!isTauri()) return () => undefined;
+  return listen<AudioLevelSample[]>('audio-level', ({payload}) => handler(payload));
 }

@@ -98,6 +98,26 @@ pub enum CoverageTarget {
         revision: Revision,
     },
 }
+pub const INSIGHT_INTERVAL_MS: u64 = 180_000;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InsightApprovalMode {
+    Gated,
+    Automatic,
+}
+impl Default for InsightApprovalMode {
+    fn default() -> Self { Self::Gated }
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WallPhase {
+    Listening,
+    Working,
+    Paused,
+    Delayed,
+    Finished,
+}
+
 dto! {
     pub struct AnalysisConfig {
         pub model_profile:String,pub model_manifest_id:String,pub prompt_version:String,pub prompt_sha256:String,
@@ -183,7 +203,16 @@ dto! {
         pub public_id:Uuid,pub revision:Revision,pub kind:AnalysisKind,pub title:String,pub text:String,
         pub evidence:Vec<PublicEvidence>,pub publication_seq:u64,
     }
-    pub struct PublicSnapshot {pub cursor:u64,pub artifacts:Vec<PublicArtifact>}
+    pub struct PublicSnapshot {
+        pub cursor:u64,pub artifacts:Vec<PublicArtifact>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub wall:Option<PublicWallStatus>,
+    }
+    pub struct InsightSettings {pub mode:InsightApprovalMode}
+    pub struct SetInsightSettings {pub session_id:Uuid,pub mode:InsightApprovalMode,pub operator_id:String,pub reason:String}
+    /// Only coarse operational state crosses the display boundary, never errors or drafts.
+    pub struct PublicWallStatus {pub phase:WallPhase,pub next_update_at_ms:Option<u64>,pub server_time_ms:u64}
+
     pub struct PublicationChange {pub publication_seq:u64,pub public_id:Uuid,pub withdrawn:bool,pub artifact:Option<PublicArtifact>}
 }
 dto! {

@@ -479,12 +479,12 @@ fn public_search_unicode_offsets_public_evidence_and_stale_are_safe() {
     );
 }
 #[test]
-fn migration_five_to_six_preserves_source_and_makes_backup() {
+fn migration_five_to_current_preserves_source_and_makes_backup() {
     let db = TempDatabase::new();
     let mut s = Store::open(db.path()).unwrap();
     let f = setup(&mut s);
     let expected = s.session_snapshot(f.session.session_id).unwrap();
-    s.connection.execute_batch("DROP TABLE speaker_assignment_requests; DROP TABLE speaker_assignment_revisions; DROP TABLE speaker_assignments; DROP TABLE speaker_clusters; DROP TABLE analysis_peer_provenance; DROP TABLE peer_publication_watermarks; DROP TABLE peer_publication_history; DROP TABLE peer_publications; DROP TABLE peer_sessions; PRAGMA user_version=5;").unwrap();
+    s.connection.execute_batch("DROP TABLE insight_settings; DROP TABLE insight_settings_audit; DROP TABLE insight_schedule; DROP TABLE public_speaker_labels; DROP TABLE speaker_assignment_requests; DROP TABLE speaker_assignment_revisions; DROP TABLE speaker_assignments; DROP TABLE speaker_clusters; DROP TABLE analysis_peer_provenance; DROP TABLE peer_publication_watermarks; DROP TABLE peer_publication_history; DROP TABLE peer_publications; DROP TABLE peer_sessions; PRAGMA user_version=5;").unwrap();
     drop(s);
     let mut s = Store::open(db.path()).unwrap();
     assert_eq!(
@@ -496,7 +496,7 @@ fn migration_five_to_six_preserves_source_and_makes_backup() {
         s.connection
             .pragma_query_value(None, "user_version", |r| r.get::<_, u32>(0))
             .unwrap(),
-        6
+        DATABASE_VERSION
     );
 }
 #[test]

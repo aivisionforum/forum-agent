@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { bilingualCaption, captionSpeaker, meetingTopics, latestInsight, rollingInsights } from '../src/lib/forum/live-meeting.ts';
-import { captionShare } from '../src/lib/meeting-layout.ts';
 import { previewAnalysisState } from '../src/lib/forum/preview.ts';
 import type { SpeakerAssignment } from '../src/lib/forum/speakers';
 
@@ -119,14 +118,7 @@ test('rolling notes retain earlier ideas, deduplicate exact repeats and keep dis
   assert.deepEqual(rollingInsights({...state,session_id:'other'},old.session_ids[0]),[]);
 });
 
-test('splitter leaves both panels usable at window sizes and rejects invalid stored values', () => {
-  for (const width of [850,1180,2500,5160]) {
-    assert.ok(captionShare(0,width)*(width-8)>=279.9);
-    assert.ok((1-captionShare(1,width))*(width-8)>=299.9);
-    assert.equal(captionShare(NaN,width),captionShare(.62,width));
-  }
-  assert.ok(captionShare(.2,2500)<.3);
-});
+
 
 
 test('topic phrases keep concrete subjects and reject generic AI, Data and process labels', () => {

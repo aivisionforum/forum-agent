@@ -383,6 +383,12 @@ export type IncompleteSegment = {
   "track_id": string;
 };
 
+export type InsightApprovalMode = "gated" | "automatic";
+
+export type InsightSettings = {
+  "mode": InsightApprovalMode;
+};
+
 export type OutboxMessage = {
   "body": unknown;
   "event_type": string;
@@ -544,6 +550,13 @@ export type PublicSessionView = {
 export type PublicSnapshot = {
   "artifacts": Array<PublicArtifact>;
   "cursor": number;
+  "wall"?: PublicWallStatus | null;
+};
+
+export type PublicWallStatus = {
+  "next_update_at_ms"?: number | null;
+  "phase": WallPhase;
+  "server_time_ms": number;
 };
 
 export type PublicationChange = {
@@ -650,6 +663,13 @@ export type SessionTransitionEvent = {
   "schema_version": 1;
   "session_id": string;
   "type": "session.changed";
+};
+
+export type SetInsightSettings = {
+  "mode": InsightApprovalMode;
+  "operator_id": string;
+  "reason": string;
+  "session_id": string;
 };
 
 export type SnapshotItem = {
@@ -915,3 +935,5 @@ export type TranslationWork = {
   "target_language": string;
   "track_id": string;
 };
+
+export type WallPhase = "listening" | "working" | "paused" | "delayed" | "finished";

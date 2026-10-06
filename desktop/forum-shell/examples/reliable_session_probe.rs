@@ -44,6 +44,7 @@ fn main() -> Result<()> {
     let translate = source == "auto";
     let target = if translate { "bilingual" } else { "none" };
     let options = MeetingOptions {
+            insight_mode: Default::default(),
         max_segment_ms: 10_000,
         source_language: source.clone(),
         target_language: target.into(),

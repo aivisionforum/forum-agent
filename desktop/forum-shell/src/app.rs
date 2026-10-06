@@ -38,6 +38,10 @@ pub struct TranslationSettings {
     source_language: String,
     target_language: String,
     input_device: String,
+    #[serde(default = "preferences::default_input_gain")]
+    input_gain: f64,
+    #[serde(default)]
+    subtitle_side_by_side: bool,
     subtitle_split: bool,
     translation_only: bool,
     overlay_opacity: f64,
@@ -67,6 +71,8 @@ impl From<&AppPreferences> for TranslationSettings {
             source_language: preferences.translation_source_language.clone(),
             target_language: preferences.translation_target_language.clone(),
             input_device: preferences.translation_input_device.clone(),
+            input_gain: preferences.translation_input_gain,
+            subtitle_side_by_side: preferences.translation_subtitle_side_by_side,
             subtitle_split: preferences.translation_subtitle_split,
             translation_only: preferences.translation_only,
             overlay_opacity: preferences.translation_overlay_opacity,
@@ -94,8 +100,9 @@ impl TranslationSettings {
         preferences.translation_source_language = self.source_language.clone();
         preferences.translation_target_language = self.target_language.clone();
         preferences.translation_input_device = self.input_device.clone();
-        preferences.translation_subtitle_split =
-            self.subtitle_split || self.target_language == "none";
+        preferences.translation_input_gain = preferences::sanitize_input_gain(self.input_gain);
+        preferences.translation_subtitle_side_by_side = self.subtitle_side_by_side && self.target_language != "none";
+        preferences.translation_subtitle_split = self.target_language == "none" || (self.subtitle_split && !preferences.translation_subtitle_side_by_side);
         preferences.translation_only = self.translation_only && self.target_language != "none";
         preferences.translation_overlay_opacity = self.overlay_opacity.clamp(0.35, 1.0);
         preferences.translation_font_size_preset = self.font_size_preset.clone();
@@ -176,12 +183,14 @@ struct TranslatingSentence {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OverlayState {
+    app_language: String,
     session_id: Option<forum_contracts::Uuid>,
     runtime_message: String,
     active: bool,
     status: String,
     source_language: String,
     target_language: String,
+    subtitle_side_by_side: bool,
     subtitle_split: bool,
     translation_only: bool,
     font_size: u32,
@@ -200,6 +209,8 @@ struct ModelStatus {
     translation_ready: bool,
     automatic_asr_ready: bool,
     automatic_asr_detail: String,
+    translation_runtime_ready: bool,
+    translation_runtime_detail: String,
     downloading: bool,
     component: Option<String>,
     progress: f64,
@@ -276,6 +287,7 @@ impl AppState {
         let preferences = self.preferences.lock().clone();
         let shared = self.runtime.shared_state();
         shared.translation_window_visible.set(true);
+        shared.input_gain.set(preferences.translation_input_gain as f32);
         shared
             .translation_locale_en
             .set(preferences.app_language == "en");
@@ -430,7 +442,9 @@ impl AppState {
 
         let preferences = self.preferences.lock();
         let accent_theme = preferences.accent_theme.clone();
+        let app_language = preferences.app_language.clone();
         let translation_only = preferences.translation_only;
+        let subtitle_side_by_side = preferences.translation_subtitle_side_by_side;
         drop(preferences);
         let translating = shared
             .translation_stream
@@ -442,12 +456,14 @@ impl AppState {
                 complete: stream.complete,
             });
         OverlayState {
+            app_language,
             session_id,
             runtime_message: self.runtime_state.lock().message.clone(),
             active,
             status,
             source_language,
             target_language,
+            subtitle_side_by_side,
             subtitle_split: shared.translation_subtitle_split.read(),
             translation_only,
             font_size: shared
@@ -628,12 +644,15 @@ impl AppState {
                 }
             });
         let automatic = AutomaticAsrPaths::resolve(self.resource_dir.as_deref());
+        let translation_runtime = translation_runtime_env(self.resource_dir.as_deref());
         ModelStatus {
             asr_ready: ModelPaths::resolve_current_for_mode(false).is_ok_and(|paths| paths.ready_for_mode(false, false)),
             automatic_asr_ready: automatic.is_ok(),
             automatic_asr_detail: automatic
                 .err()
                 .unwrap_or_else(|| "Qwen3-ASR 自动识别已准备".into()),
+            translation_runtime_ready: translation_runtime.is_ok(),
+            translation_runtime_detail: translation_runtime.err().unwrap_or_default(),
             translation_ready: ModelPaths::resolve_current()
                 .is_ok_and(|paths| paths.ready_for(true)),
             core_ready: core_models_ready(),
@@ -934,8 +953,9 @@ fn start_translation(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     settings: TranslationSettings,
+    insight_mode: Option<forum_contracts::InsightApprovalMode>,
 ) -> Result<RuntimeState, String> {
-    begin_translation(app, state, settings, None)
+    begin_translation(app, state, settings, None, insight_mode.unwrap_or_default())
 }
 
 fn begin_translation(
@@ -943,6 +963,7 @@ fn begin_translation(
     state: State<'_, AppState>,
     settings: TranslationSettings,
     recovery: Option<forum_contracts::Uuid>,
+    insight_mode: forum_contracts::InsightApprovalMode,
 ) -> Result<RuntimeState, String> {
     let _activity=state.activity_gate.lock();
     if state.exiting.load(std::sync::atomic::Ordering::Acquire) {return Err("应用正在退出".into());}
@@ -1021,6 +1042,7 @@ fn begin_translation(
         dataflow,
         model_env,
         MeetingOptions {
+            insight_mode,
             max_segment_ms: preferences::sanitize_final_interval_seconds(settings.final_interval_seconds) * 1000,            source_language: settings.source_language.clone(),
             target_language: settings.target_language.clone(),
             recording_enabled: settings.recording_enabled,
@@ -1097,7 +1119,7 @@ fn recover_meeting(
     } else {
         "__default_microphone__".into()
     };
-    begin_translation(app, state, settings, Some(session_id))
+    begin_translation(app, state, settings, Some(session_id), setup.options.insight_mode)
 }
 
 #[tauri::command]
@@ -1242,10 +1264,10 @@ fn apply_native_identity(
 ) -> Result<(), String> {
     let name = crate::identity::PRODUCT_NAME;
     if let Some(window) = app.get_webview_window("main") {
-        window.set_title(name).map_err(|error| error.to_string())?;
+        window.set_title(&format!("{name} · {}", if settings.app_language == "en" { "Operator console · Private" } else { "操作员控制台 · 私有" })).map_err(|error| error.to_string())?;
     }
     if let Some(window) = app.get_webview_window("overlay") {
-        window.set_title(name).map_err(|error| error.to_string())?;
+        window.set_title(&format!("{name} · {}", if settings.app_language == "en" { "Public captions · Screen 1" } else { "公开字幕 · 屏幕 1" })).map_err(|error| error.to_string())?;
     }
     apply_macos_dock_icon(app, &settings.accent_theme)
 }
@@ -1353,6 +1375,11 @@ fn start_event_bridge(app_handle: tauri::AppHandle) {
                     let _ = app_handle.emit_to("overlay", "overlay-state", &overlay_state);
                 }
             }
+            // Input diagnostics are private to the operator; never emit to audience windows.
+            let levels = state.runtime.shared_state().mic.take_levels();
+            if has_main_window && runtime_state.running && !levels.is_empty() {
+                let _ = app_handle.emit_to("main", "audio-level", levels);
+            }
             thread::sleep(Duration::from_millis(80));
         }
     });
@@ -1397,6 +1424,7 @@ pub fn run(args: Args) {
                         dataflow.into(),
                         model_env,
                         MeetingOptions {
+                            insight_mode: Default::default(),
                             max_segment_ms: preferences::sanitize_final_interval_seconds(initial_settings.final_interval_seconds) * 1000,
                             source_language: initial_settings.source_language.clone(),
                             target_language: initial_settings.target_language.clone(),
@@ -1417,17 +1445,22 @@ pub fn run(args: Args) {
             list_meeting_sessions_page,
             import_legacy_transcript,
             get_analysis_state,
+            set_insight_settings,
             create_analysis_job,
             cancel_analysis_job,
             retry_analysis_job,
             revise_artifact,
             review_artifact,
             publish_artifact,
+            approve_and_publish_artifact,
+            prepare_insight_publication,
             hide_artifact,
             get_analysis_evidence,
             get_analysis_artifact,
             export_artifact,
             get_display_info,
+            show_insight_wall,
+            get_insight_settings,
             revoke_display,
             get_public_snapshot,
             get_lan_state,create_lan_identity,start_lan,stop_lan,create_participant_access,create_peer_invite,pair_forum_peer,revoke_lan_access,disconnect_forum_peer,get_public_sessions,search_public_content,
@@ -1516,6 +1549,9 @@ mod tests {
     #[test]
     fn settings_round_trip_preserves_translation_preferences() {
         let original = AppPreferences {
+            app_language: "en".into(),
+            translation_input_gain: 2.25,
+            translation_subtitle_side_by_side: true,
             translation_only: true,
             translation_final_interval_seconds: 6,
             ..AppPreferences::default()
@@ -1535,6 +1571,9 @@ mod tests {
             original.translation_input_device,
             updated.translation_input_device
         );
+        assert_eq!(original.translation_input_gain, updated.translation_input_gain);
+        assert_eq!(original.translation_subtitle_side_by_side, updated.translation_subtitle_side_by_side);
+        assert_eq!(original.app_language, updated.app_language);
         assert_eq!(original.accent_theme, updated.accent_theme);
         assert_eq!(original.translation_only, updated.translation_only);
         assert_eq!(
@@ -1553,11 +1592,13 @@ mod tests {
         let mut settings = TranslationSettings::from(&preferences);
         settings.target_language = "none".into();
         settings.translation_only = true;
+        settings.subtitle_side_by_side = true;
 
         let mut updated = AppPreferences::default();
         settings.apply_to(&mut updated);
 
         assert!(!updated.translation_only);
+        assert!(!updated.translation_subtitle_side_by_side);
         assert!(updated.translation_subtitle_split);
     }
 

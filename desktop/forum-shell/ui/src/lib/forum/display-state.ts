@@ -4,6 +4,14 @@ import type { PublicSnapshot } from './client';
 export function validatePublicSnapshot(value: unknown, minimumCursor: number): PublicSnapshot {
   if (!value || typeof value !== 'object') throw new Error('大屏快照格式无效。');
   const snapshot = value as PublicSnapshot;
+  if (Object.keys(snapshot).some(key => !['cursor','artifacts','wall'].includes(key))) throw new Error('大屏快照格式无效。');
+  if (snapshot.wall != null) {
+    const wall = snapshot.wall;
+    if (typeof wall !== 'object' || Object.keys(wall).some(key => !['phase','next_update_at_ms','server_time_ms'].includes(key))
+      || !['listening','working','paused','delayed','finished'].includes(wall.phase)
+      || !Number.isSafeInteger(wall.server_time_ms) || wall.server_time_ms < 0
+      || (wall.next_update_at_ms !== null && (!Number.isSafeInteger(wall.next_update_at_ms) || typeof wall.next_update_at_ms !== 'number' || wall.next_update_at_ms < 0))) throw new Error('大屏运行状态格式无效。');
+  }
   if (!Number.isSafeInteger(snapshot.cursor) || snapshot.cursor < minimumCursor || !Array.isArray(snapshot.artifacts)) throw new Error('大屏快照版本无效，请重新连接。');
   const allowed = new Set(['public_id','revision','kind','title','text','evidence','publication_seq']);
   const ids = new Set<string>();

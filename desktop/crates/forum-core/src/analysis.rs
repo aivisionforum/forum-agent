@@ -1,5 +1,5 @@
 //! Durable analysis workflow. Every mutation and its internal/public change log
-//! share a transaction. Model output never directly enters the public projection.
+//! share a transaction. Public output requires approval under the session policy.
 use super::*;
 use std::collections::HashSet;
 
@@ -1222,7 +1222,7 @@ impl Store {
         }
         let validation = validate_content(&s, &result.content)?;
         let complete = coverage_complete(&s, &result.coverage)?;
-        let a = ArtifactRecord {
+        let mut a = ArtifactRecord {
             artifact_id: Uuid::new_v4(),
             revision: Revision::FIRST,
             kind: j.kind,
@@ -1267,6 +1267,7 @@ impl Store {
         j.progress.phase = "finished".into();
         j.progress.wait_reason = None;
         save_job(&tx, &j)?;
+        auto_publish_insight(&tx, &mut a, &s)?;
         tx.commit()?;
         Ok(a)
     }
@@ -1339,140 +1340,32 @@ impl Store {
         Ok(a)
     }
     pub fn publish_artifact(&mut self, cmd: &ArtifactPublishCommand) -> Result<PublicArtifact> {
-        operator(&cmd.operator_id, &cmd.reason)?;
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let mut a = load_artifact(&tx, cmd.artifact_id)?;
-        expected_revision(&a, cmd.expected_revision)?;
-        if a.validation != ArtifactValidation::Valid
-            || a.review != ArtifactReview::Approved
-            || !a.coverage_complete
-            || cmd.policy_hash != a.config.projection_policy_hash
-            || matches!(
-                a.kind,
-                AnalysisKind::SuggestedQuestions | AnalysisKind::RedactionReview
-            )
-        {
-            return Err(invalid("artifact_publication_policy"));
-        }
-        let s = load_snapshot(&tx, a.snapshot_id)?.snapshot;
-        if !snapshot_current(&tx, &s)? {
-            return Err(StoreError::LateResult);
-        }
-        if cmd.reviewed_title.trim().is_empty()
-            || cmd.reviewed_text.trim().is_empty()
-            || cmd.evidence.is_empty()
-        {
-            return Err(invalid("reviewed_public_projection_empty"));
-        }
-        let citations: Vec<&AnalysisEvidence> = a
-            .content
-            .sections
-            .iter()
-            .flat_map(|s| s.claims.iter())
-            .flat_map(|c| c.evidence.iter())
-            .collect();
-        for e in &cmd.evidence {
-            if !citations.contains(&&e.evidence) || e.reviewed_text.trim().is_empty() {
-                return Err(invalid("public_evidence_not_reviewed_claim"));
-            }
-            validate_evidence(&s, &e.evidence)?;
-        }
-        let command_sha = digest(json(cmd)?);
-        let prior:Option<String>=tx.query_row("SELECT body_json FROM publication_projection WHERE artifact_id=?1 AND active=1 AND command_sha256=?2",params![a.artifact_id.to_string(),command_sha],|r|r.get(0)).optional()?;
-        if let Some(body) = prior {
-            return Ok(serde_json::from_str(&body)?);
-        }
-        let previous: Option<String> = tx
-            .query_row(
-                "SELECT body_json FROM publication_projection WHERE artifact_id=?1",
-                [a.artifact_id.to_string()],
-                |r| r.get(0),
-            )
-            .optional()?;
-        if let Some(previous) = previous {
-            let previous: PublicArtifact = serde_json::from_str(&previous)?;
-            if previous.revision == a.revision
-                && (previous.title != cmd.reviewed_title
-                    || previous.text != cmd.reviewed_text
-                    || previous
-                        .evidence
-                        .iter()
-                        .map(|e| e.text.as_str())
-                        .collect::<Vec<_>>()
-                        != cmd
-                            .evidence
-                            .iter()
-                            .map(|e| e.reviewed_text.as_str())
-                            .collect::<Vec<_>>())
-            {
-                return Err(invalid(
-                    "public_projection_change_requires_artifact_revision",
-                ));
-            }
-        }
-        // Re-activation never makes earlier dependency invalidations disappear.
-        invalidate_dependents(&tx, a.artifact_id)?;
-        let old: Option<String> = tx
-            .query_row(
-                "SELECT public_id FROM publication_projection WHERE artifact_id=?1",
-                [a.artifact_id.to_string()],
-                |r| r.get(0),
-            )
-            .optional()?;
-        let public_id = old
-            .map(|id| parse_uuid(&id))
-            .transpose()?
-            .unwrap_or_else(Uuid::new_v4);
-        tx.execute(
-            "INSERT INTO publication_changes(artifact_id,public_id,body_json) VALUES(?1,?2,'{}')",
-            params![a.artifact_id.to_string(), public_id.to_string()],
-        )?;
-        let seq = tx.last_insert_rowid() as u64;
-        tx.execute(
-            "INSERT INTO publication_reviews(publication_seq,command_json) VALUES(?1,?2)",
-            params![seq, json(cmd)?],
-        )?;
-        let public = PublicArtifact {
-            public_id,
-            revision: a.revision,
-            kind: a.kind,
-            title: cmd.reviewed_title.clone(),
-            text: cmd.reviewed_text.clone(),
-            evidence: cmd
-                .evidence
-                .iter()
-                .map(|e| PublicEvidence {
-                    public_evidence_id: Uuid::new_v4(),
-                    revision: Revision::FIRST,
-                    text: e.reviewed_text.clone(),
-                })
-                .collect(),
-            publication_seq: seq,
-        };
-        tx.execute("INSERT INTO publication_projection(artifact_id,public_id,active,body_json) VALUES(?1,?2,1,?3) ON CONFLICT(artifact_id) DO UPDATE SET active=1,body_json=excluded.body_json",params![a.artifact_id.to_string(),public_id.to_string(),json(&public)?])?;
-        tx.execute(
-            "UPDATE publication_projection SET command_sha256=?2 WHERE artifact_id=?1",
-            params![a.artifact_id.to_string(), command_sha],
-        )?;
-        let change = PublicationChange {
-            publication_seq: seq,
-            public_id,
-            withdrawn: false,
-            artifact: Some(public.clone()),
-        };
-        tx.execute(
-            "UPDATE publication_changes SET body_json=?2 WHERE publication_seq=?1",
-            params![seq, json(&change)?],
-        )?;
-        a.publication = ArtifactPublication::Published;
-        a.operator_id = Some(cmd.operator_id.clone());
-        a.reason = Some(cmd.reason.clone());
-        save_artifact(&tx, &a)?;
+        let public = publish_in_transaction(&tx, cmd)?;
         tx.commit()?;
         Ok(public)
     }
+
+    /// The operator confirms the reviewed public copy once. Approval and the
+    /// public projection either both commit or both roll back.
+    pub fn approve_and_publish_artifact(&mut self, cmd: &ArtifactPublishCommand) -> Result<ArtifactRecord> {
+        operator(&cmd.operator_id, &cmd.reason)?;
+        let tx = self.connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut artifact = load_artifact(&tx, cmd.artifact_id)?;
+        expected_revision(&artifact, cmd.expected_revision)?;
+        artifact.review = ArtifactReview::Approved;
+        artifact.operator_id = Some(cmd.operator_id.clone());
+        artifact.reason = Some(cmd.reason.clone());
+        save_artifact(&tx, &artifact)?;
+        // The shared path checks current sources, coverage, evidence and policy.
+        publish_in_transaction(&tx, cmd)?;
+        let result = load_artifact(&tx, cmd.artifact_id)?;
+        tx.commit()?;
+        Ok(result)
+    }
+
     pub fn set_artifact_visibility(
         &mut self,
         cmd: &ArtifactVisibilityCommand,
@@ -1687,8 +1580,13 @@ impl Store {
             .into_iter()
             .map(|b| Ok(serde_json::from_str(&b)?))
             .collect::<Result<_>>()?;
+        let wall = Some(wall_status(&tx, session)?);
         tx.commit()?;
-        Ok(PublicSnapshot { cursor, artifacts })
+        Ok(PublicSnapshot {
+            cursor,
+            artifacts,
+            wall,
+        })
     }
     pub fn public_changes(
         &self,
@@ -2030,3 +1928,137 @@ impl Store {
         Ok(())
     }
 }
+
+fn publish_in_transaction(tx: &Connection, cmd: &ArtifactPublishCommand) -> Result<PublicArtifact> {
+    operator(&cmd.operator_id, &cmd.reason)?;
+    let mut a = load_artifact(tx, cmd.artifact_id)?;
+    expected_revision(&a, cmd.expected_revision)?;
+    if a.validation != ArtifactValidation::Valid
+        || a.review != ArtifactReview::Approved
+        || !publication_coverage_ready(&a)
+        || cmd.policy_hash != a.config.projection_policy_hash
+        || matches!(
+            a.kind,
+            AnalysisKind::SuggestedQuestions | AnalysisKind::RedactionReview
+        )
+    {
+        return Err(invalid("artifact_publication_policy"));
+    }
+    let s = load_snapshot(tx, a.snapshot_id)?.snapshot;
+    if !snapshot_current(tx, &s)? {
+        return Err(StoreError::LateResult);
+    }
+    if cmd.reviewed_title.trim().is_empty()
+        || cmd.reviewed_text.trim().is_empty()
+        || cmd.evidence.is_empty()
+    {
+        return Err(invalid("reviewed_public_projection_empty"));
+    }
+    let citations: Vec<&AnalysisEvidence> = a
+        .content
+        .sections
+        .iter()
+        .flat_map(|s| s.claims.iter())
+        .flat_map(|c| c.evidence.iter())
+        .collect();
+    for e in &cmd.evidence {
+        if !citations.contains(&&e.evidence) || e.reviewed_text.trim().is_empty() {
+            return Err(invalid("public_evidence_not_reviewed_claim"));
+        }
+        validate_evidence(&s, &e.evidence)?;
+    }
+    let command_sha = digest(json(cmd)?);
+    let prior:Option<String>=tx.query_row("SELECT body_json FROM publication_projection WHERE artifact_id=?1 AND active=1 AND command_sha256=?2",params![a.artifact_id.to_string(),command_sha],|r|r.get(0)).optional()?;
+    if let Some(body) = prior {
+        return Ok(serde_json::from_str(&body)?);
+    }
+    let previous: Option<String> = tx
+        .query_row(
+            "SELECT body_json FROM publication_projection WHERE artifact_id=?1",
+            [a.artifact_id.to_string()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(previous) = previous {
+        let previous: PublicArtifact = serde_json::from_str(&previous)?;
+        if previous.revision == a.revision
+            && (previous.title != cmd.reviewed_title
+                || previous.text != cmd.reviewed_text
+                || previous
+                    .evidence
+                    .iter()
+                    .map(|e| e.text.as_str())
+                    .collect::<Vec<_>>()
+                    != cmd
+                        .evidence
+                        .iter()
+                        .map(|e| e.reviewed_text.as_str())
+                        .collect::<Vec<_>>())
+        {
+            return Err(invalid(
+                "public_projection_change_requires_artifact_revision",
+            ));
+        }
+    }
+    // Re-activation never makes earlier dependency invalidations disappear.
+    invalidate_dependents(tx, a.artifact_id)?;
+    let old: Option<String> = tx
+        .query_row(
+            "SELECT public_id FROM publication_projection WHERE artifact_id=?1",
+            [a.artifact_id.to_string()],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let public_id = old
+        .map(|id| parse_uuid(&id))
+        .transpose()?
+        .unwrap_or_else(Uuid::new_v4);
+    tx.execute(
+        "INSERT INTO publication_changes(artifact_id,public_id,body_json) VALUES(?1,?2,'{}')",
+        params![a.artifact_id.to_string(), public_id.to_string()],
+    )?;
+    let seq = tx.last_insert_rowid() as u64;
+    tx.execute(
+        "INSERT INTO publication_reviews(publication_seq,command_json) VALUES(?1,?2)",
+        params![seq, json(cmd)?],
+    )?;
+    let public = PublicArtifact {
+        public_id,
+        revision: a.revision,
+        kind: a.kind,
+        title: cmd.reviewed_title.clone(),
+        text: cmd.reviewed_text.clone(),
+        evidence: cmd
+            .evidence
+            .iter()
+            .map(|e| PublicEvidence {
+                public_evidence_id: Uuid::new_v4(),
+                revision: Revision::FIRST,
+                text: e.reviewed_text.clone(),
+            })
+            .collect(),
+        publication_seq: seq,
+    };
+    tx.execute("INSERT INTO publication_projection(artifact_id,public_id,active,body_json) VALUES(?1,?2,1,?3) ON CONFLICT(artifact_id) DO UPDATE SET active=1,body_json=excluded.body_json",params![a.artifact_id.to_string(),public_id.to_string(),json(&public)?])?;
+    tx.execute(
+        "UPDATE publication_projection SET command_sha256=?2 WHERE artifact_id=?1",
+        params![a.artifact_id.to_string(), command_sha],
+    )?;
+    let change = PublicationChange {
+        publication_seq: seq,
+        public_id,
+        withdrawn: false,
+        artifact: Some(public.clone()),
+    };
+    tx.execute(
+        "UPDATE publication_changes SET body_json=?2 WHERE publication_seq=?1",
+        params![seq, json(&change)?],
+    )?;
+    a.publication = ArtifactPublication::Published;
+    a.operator_id = Some(cmd.operator_id.clone());
+    a.reason = Some(cmd.reason.clone());
+    save_artifact(tx, &a)?;
+    Ok(public)
+}
+
+include!("insight_wall.rs");

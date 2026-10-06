@@ -1276,3 +1276,394 @@ fn source_backed_topics_persist_without_claims_and_reject_invalid_evidence() {
     let legacy: AnalysisSection = serde_json::from_value(serde_json::json!({"heading":"旧版", "claims":[]})).unwrap();
     assert!(legacy.topics.is_empty());
 }
+
+fn set_wall_mode(s: &mut Store, session: Uuid, mode: InsightApprovalMode) {
+    s.set_insight_settings(&SetInsightSettings {
+        session_id: session,
+        mode,
+        operator_id: "operator".into(),
+        reason: "本场现场选择".into(),
+    })
+    .unwrap();
+}
+
+#[test]
+fn gated_approval_publishes_reviewed_copy_atomically_and_failure_leaves_draft_private() {
+    let mut store = Store::in_memory().unwrap();
+    let fixture = setup(&mut store);
+    let draft = finish(&mut store, &fixture);
+    let proposal = store.prepare_insight_publication(draft.artifact_id, draft.revision).unwrap();
+    assert!(!proposal.reviewed_text.trim().is_empty());
+    assert!(!proposal.evidence.is_empty());
+    assert_eq!(store.artifact(draft.artifact_id).unwrap().review, ArtifactReview::Draft);
+    let mut command = ArtifactPublishCommand {
+        artifact_id: draft.artifact_id,
+        expected_revision: draft.revision,
+        operator_id: "operator".into(), reason: "核对匿名公开正文并批准上墙".into(),
+        policy_hash: draft.config.projection_policy_hash.clone(),
+        reviewed_title: "讨论要点".into(), reviewed_text: "发言人A：先测试字幕。".into(),
+        evidence: vec![PublicEvidenceInput {
+            evidence: draft.content.sections[0].claims[0].evidence[0].clone(),
+            reviewed_text: "依据发言人A的本场发言整理。".into(),
+        }],
+    };
+    assert!(store.public_snapshot(fixture.session.session_id).unwrap().artifacts.is_empty());
+    command.evidence[0].reviewed_text.clear();
+    assert!(store.approve_and_publish_artifact(&command).is_err());
+    assert_eq!(store.artifact(draft.artifact_id).unwrap().review, ArtifactReview::Draft);
+    assert!(store.public_snapshot(fixture.session.session_id).unwrap().artifacts.is_empty());
+    command.evidence[0].reviewed_text = "匿名公开依据".into();
+    let published = store.approve_and_publish_artifact(&command).unwrap();
+    assert_eq!(published.review, ArtifactReview::Approved);
+    assert_eq!(published.publication, ArtifactPublication::Published);
+    let wall = store.public_snapshot(fixture.session.session_id).unwrap();
+    assert_eq!(wall.artifacts.len(), 1);
+    assert_eq!(wall.artifacts[0].text, command.reviewed_text);
+    let serialized = serde_json::to_string(&wall).unwrap();
+    assert!(!serialized.contains("operator_id"));
+    assert!(!serialized.contains("approved"));
+    let edited = store.edit_artifact(&ArtifactEdit {
+        artifact_id: draft.artifact_id, expected_revision: draft.revision,
+        content: draft.content.clone(), operator_id: "operator".into(), reason: "现场纠错".into(),
+    }).unwrap();
+    assert!(store.prepare_insight_publication(draft.artifact_id, draft.revision).is_err());
+    assert!(store.approve_and_publish_artifact(&command).is_err());
+    assert_eq!(store.artifact(edited.artifact_id).unwrap().review, ArtifactReview::Draft);
+    assert!(store.public_snapshot(fixture.session.session_id).unwrap().artifacts.is_empty());
+}
+
+#[test]
+fn automatic_wall_is_session_scoped_atomic_and_never_republishes_hidden_or_edited_content() {
+    let mut s = Store::in_memory().unwrap();
+    let f = setup(&mut s);
+    let other = setup(&mut s);
+    let draft = finish(&mut s, &f);
+    assert_eq!(
+        s.insight_settings(f.session.session_id).unwrap().mode,
+        InsightApprovalMode::Gated
+    );
+    set_wall_mode(&mut s, f.session.session_id, InsightApprovalMode::Automatic);
+    assert!(s
+        .public_snapshot(f.session.session_id)
+        .unwrap()
+        .artifacts
+        .is_empty());
+    let j = s
+        .create_analysis_job(&request(&f, AnalysisKind::Insight))
+        .unwrap();
+    s.claim_analysis_job(j.job_id, j.attempt).unwrap();
+    let r = result(&s, &j);
+    let a = s.finish_analysis_job(&r).unwrap();
+    assert_eq!(a.review, ArtifactReview::Approved);
+    assert_eq!(a.publication, ArtifactPublication::Published);
+    assert_eq!(a.operator_id.as_deref(), Some("session-auto-approval"));
+    assert_eq!(
+        s.artifact(draft.artifact_id).unwrap().review,
+        ArtifactReview::Draft
+    );
+    let public = s.public_snapshot(f.session.session_id).unwrap();
+    assert_eq!(public.artifacts.len(), 1);
+    assert_eq!(public.artifacts[0].title, "讨论要点");
+    assert!(!serde_json::to_string(&public)
+        .unwrap()
+        .contains(&f.capture.payload.segment_id.to_string()));
+    assert_eq!(finish(&mut s, &other).review, ArtifactReview::Draft);
+    s.set_artifact_visibility(&ArtifactVisibilityCommand {
+        artifact_id: a.artifact_id,
+        expected_revision: a.revision,
+        publication: ArtifactPublication::Hidden,
+        operator_id: "operator".into(),
+        reason: "现场更正".into(),
+    })
+    .unwrap();
+    s.finish_analysis_job(&r).unwrap(); // replay cannot resurrect an operator hide
+    assert!(s
+        .public_snapshot(f.session.session_id)
+        .unwrap()
+        .artifacts
+        .is_empty());
+    let mut content = a.content.clone();
+    content.title = "修订".into();
+    let edited = s
+        .edit_artifact(&ArtifactEdit {
+            artifact_id: a.artifact_id,
+            expected_revision: a.revision,
+            content,
+            operator_id: "operator".into(),
+            reason: "现场更正".into(),
+        })
+        .unwrap();
+    assert_eq!(edited.review, ArtifactReview::Draft);
+    assert!(s
+        .public_snapshot(f.session.session_id)
+        .unwrap()
+        .artifacts
+        .is_empty());
+    set_wall_mode(&mut s, f.session.session_id, InsightApprovalMode::Gated);
+    assert_eq!(finish(&mut s, &f).review, ArtifactReview::Draft);
+}
+
+#[test]
+fn automatic_wall_rejects_unsupported_and_non_insight_results() {
+    let mut s = Store::in_memory().unwrap();
+    let f = setup(&mut s);
+    set_wall_mode(&mut s, f.session.session_id, InsightApprovalMode::Automatic);
+    for variant in ["unsupported", "minutes"] {
+        let kind = if variant == "minutes" {
+            AnalysisKind::Minutes
+        } else {
+            AnalysisKind::Insight
+        };
+        let j = s.create_analysis_job(&request(&f, kind)).unwrap();
+        s.claim_analysis_job(j.job_id, j.attempt).unwrap();
+        let mut r = result(&s, &j);
+        if variant == "unsupported" {
+            r.content.sections[0].claims[0].grounding = GroundingStatus::Unsupported;
+            r.content.sections[0].claims[0].evidence.clear();
+        }
+        let a = s.finish_analysis_job(&r).unwrap();
+        assert_eq!(a.review, ArtifactReview::Draft);
+        assert_eq!(a.publication, ArtifactPublication::Private);
+    }
+    assert!(s
+        .public_snapshot(f.session.session_id)
+        .unwrap()
+        .artifacts
+        .is_empty());
+}
+
+#[test]
+fn wall_mode_persists_and_public_status_contains_only_coarse_progress() {
+    let db = TempDatabase::new();
+    let mut s = Store::open(db.path()).unwrap();
+    let f = setup(&mut s);
+    set_wall_mode(&mut s, f.session.session_id, InsightApprovalMode::Automatic);
+    s.advance_insight_schedule(f.session.session_id).unwrap();
+    let wall = s
+        .public_snapshot(f.session.session_id)
+        .unwrap()
+        .wall
+        .unwrap();
+    assert_eq!(wall.phase, WallPhase::Listening);
+    assert!(wall.next_update_at_ms.unwrap() - wall.server_time_ms <= INSIGHT_INTERVAL_MS);
+    let j = s
+        .create_analysis_job(&request(&f, AnalysisKind::Insight))
+        .unwrap();
+    assert_eq!(
+        s.public_snapshot(f.session.session_id)
+            .unwrap()
+            .wall
+            .unwrap()
+            .phase,
+        WallPhase::Working
+    );
+    s.claim_analysis_job(j.job_id, j.attempt).unwrap();
+    s.fail_analysis_job(j.job_id, j.attempt, "private path /secret/model".into())
+        .unwrap();
+    let public = s.public_snapshot(f.session.session_id).unwrap();
+    assert_eq!(public.wall.as_ref().unwrap().phase, WallPhase::Delayed);
+    assert!(!serde_json::to_string(&public).unwrap().contains("secret"));
+    drop(s);
+    let s = Store::open(db.path()).unwrap();
+    assert_eq!(
+        s.insight_settings(f.session.session_id).unwrap().mode,
+        InsightApprovalMode::Automatic
+    );
+    assert_eq!(
+        s.public_snapshot(f.session.session_id)
+            .unwrap()
+            .wall
+            .unwrap()
+            .phase,
+        WallPhase::Finished
+    );
+}
+
+#[test]
+fn automatic_publication_sql_failure_rolls_back_result_review_and_projection() {
+    let mut s = Store::in_memory().unwrap();
+    let f = setup(&mut s);
+    set_wall_mode(&mut s, f.session.session_id, InsightApprovalMode::Automatic);
+    let j = s
+        .create_analysis_job(&request(&f, AnalysisKind::Insight))
+        .unwrap();
+    s.claim_analysis_job(j.job_id, j.attempt).unwrap();
+    let r = result(&s, &j);
+    s.connection.execute_batch("CREATE TRIGGER wall_fault BEFORE INSERT ON publication_reviews BEGIN SELECT RAISE(ABORT,'synthetic publication failure'); END;").unwrap();
+    assert!(s.finish_analysis_job(&r).is_err());
+    assert!(s
+        .list_artifacts(f.session.session_id, None, 30)
+        .unwrap()
+        .items
+        .is_empty());
+    assert!(s
+        .public_snapshot(f.session.session_id)
+        .unwrap()
+        .artifacts
+        .is_empty());
+    s.connection
+        .execute_batch("DROP TRIGGER wall_fault;")
+        .unwrap();
+    assert_eq!(
+        s.finish_analysis_job(&r).unwrap().publication,
+        ArtifactPublication::Published
+    );
+}
+
+#[test]
+fn automatic_wall_uses_stable_anonymous_attribution_without_raw_quotes_or_assignees() {
+    let mut s = Store::in_memory().unwrap();
+    let mut f = Fixture::new();
+    let speaker = Uuid::new_v4();
+    f.final_event.payload.speaker_id = Some(speaker);
+    f.setup(&mut s);
+    s.register_capture(&f.capture).unwrap();
+    s.ingest_final(&f.final_event).unwrap();
+    set_wall_mode(&mut s, f.session.session_id, InsightApprovalMode::Automatic);
+    for _ in 0..2 {
+        let j = s
+            .create_analysis_job(&request(&f, AnalysisKind::Insight))
+            .unwrap();
+        s.claim_analysis_job(j.job_id, j.attempt).unwrap();
+        let mut r = result(&s, &j);
+        let claim = &mut r.content.sections[0].claims[0];
+        claim.assignee = Some("Test Person".into());
+        claim.text = "Test Person 提议先做试点，尚待确认。".into();
+        s.finish_analysis_job(&r).unwrap();
+    }
+    let public = s.public_snapshot(f.session.session_id).unwrap();
+    assert_eq!(public.artifacts.len(), 2);
+    for a in &public.artifacts {
+        assert!(a.text.starts_with("发言人A："));
+        assert!(!a.text.contains("Test Person"));
+        assert_eq!(a.evidence[0].text, "依据发言人A的本场发言整理。");
+    }
+    let json = serde_json::to_string(&public).unwrap();
+    assert!(!json.contains(&speaker.to_string()));
+    assert!(!json.contains(&f.final_event.payload.text));
+}
+
+#[test]
+fn unavailable_analysis_setup_reports_delayed_without_leaking_private_notice() {
+    let mut s = Store::in_memory().unwrap();
+    let f = setup(&mut s);
+    s.advance_insight_schedule(f.session.session_id).unwrap();
+    s.mark_insight_schedule_blocked(f.session.session_id)
+        .unwrap();
+    assert_eq!(
+        s.public_snapshot(f.session.session_id)
+            .unwrap()
+            .wall
+            .unwrap()
+            .phase,
+        WallPhase::Delayed
+    );
+    s.advance_insight_schedule(f.session.session_id).unwrap();
+    assert_eq!(
+        s.public_snapshot(f.session.session_id)
+            .unwrap()
+            .wall
+            .unwrap()
+            .phase,
+        WallPhase::Listening
+    );
+}
+
+#[test]
+fn partial_cited_insights_publish_in_both_modes_but_partial_minutes_do_not() {
+    for mode in [InsightApprovalMode::Gated, InsightApprovalMode::Automatic] {
+        let mut store = Store::in_memory().unwrap();
+        let fixture = setup(&mut store);
+        set_wall_mode(&mut store, fixture.session.session_id, mode);
+        let job = store.create_analysis_job(&request(&fixture, AnalysisKind::Insight)).unwrap();
+        store.claim_analysis_job(job.job_id, job.attempt).unwrap();
+        let mut output = result(&store, &job);
+        output.coverage.units[0].status = CoverageStatus::Failed;
+        output.coverage.units[0].reason = Some("Other points were omitted; these citations are valid".into());
+        let artifact = store.finish_analysis_job(&output).unwrap();
+        assert!(!artifact.coverage_complete);
+        let proposal = store.prepare_insight_publication(artifact.artifact_id, artifact.revision).unwrap();
+        if mode == InsightApprovalMode::Gated {
+            assert!(store.public_snapshot(fixture.session.session_id).unwrap().artifacts.is_empty());
+            store.approve_and_publish_artifact(&proposal).unwrap();
+        }
+        let published = store.public_snapshot(fixture.session.session_id).unwrap();
+        assert_eq!(published.artifacts.len(), 1);
+        assert_eq!(published.artifacts[0].text, proposal.reviewed_text);
+        assert!(!store.artifact(artifact.artifact_id).unwrap().coverage_complete);
+        // Repeating the exact button request is idempotent.
+        store.approve_and_publish_artifact(&proposal).unwrap();
+        let cursor = store.public_snapshot(fixture.session.session_id).unwrap().cursor;
+        store.approve_and_publish_artifact(&proposal).unwrap();
+        assert_eq!(store.public_snapshot(fixture.session.session_id).unwrap().cursor, cursor);
+        // Source changes still withdraw a partial insight and reject an old preview.
+        store.revise_transcript(&fixture.revision(Revision::FIRST, "Updated source")).unwrap();
+        assert!(store.public_snapshot(fixture.session.session_id).unwrap().artifacts.is_empty());
+        assert!(store.approve_and_publish_artifact(&proposal).is_err());
+        assert!(store.prepare_insight_publication(artifact.artifact_id, artifact.revision).is_err());
+
+        let job = store.create_analysis_job(&request(&fixture, AnalysisKind::Minutes)).unwrap();
+        store.claim_analysis_job(job.job_id, job.attempt).unwrap();
+        let mut output = result(&store, &job);
+        output.coverage.units[0].status = CoverageStatus::Failed;
+        output.coverage.units[0].reason = Some("partial".into());
+        let minutes = store.finish_analysis_job(&output).unwrap();
+        let mut command = proposal.clone();
+        command.artifact_id = minutes.artifact_id;
+        command.expected_revision = minutes.revision;
+        command.evidence[0].evidence = minutes.content.sections[0].claims[0].evidence[0].clone();
+        assert!(store.approve_and_publish_artifact(&command).is_err());
+        assert_eq!(store.artifact(minutes.artifact_id).unwrap().review, ArtifactReview::Draft);
+    }
+}
+
+#[test]
+fn insight_preview_preserves_reviewed_copy_and_hide_then_restore() {
+    let mut store = Store::in_memory().unwrap();
+    let fixture = setup(&mut store);
+    let draft = finish(&mut store, &fixture);
+    let mut command = store.prepare_insight_publication(draft.artifact_id, draft.revision).unwrap();
+    command.reviewed_text = "Operator corrected anonymous copy".into();
+    store.approve_and_publish_artifact(&command).unwrap();
+    assert_eq!(store.prepare_insight_publication(draft.artifact_id, draft.revision).unwrap().reviewed_text, command.reviewed_text);
+    store.set_artifact_visibility(&ArtifactVisibilityCommand {
+        artifact_id:draft.artifact_id, expected_revision:draft.revision,
+        publication:ArtifactPublication::Hidden, operator_id:"operator".into(), reason:"hide".into(),
+    }).unwrap();
+    assert!(store.public_snapshot(fixture.session.session_id).unwrap().artifacts.is_empty());
+    let restore = store.prepare_insight_publication(draft.artifact_id, draft.revision).unwrap();
+    assert_eq!(restore.reviewed_text, command.reviewed_text);
+    store.approve_and_publish_artifact(&restore).unwrap();
+    assert_eq!(store.public_snapshot(fixture.session.session_id).unwrap().artifacts[0].text, command.reviewed_text);
+}
+
+#[test]
+fn incomplete_insight_with_unsupported_or_no_claims_stays_private() {
+    for empty in [false, true] {
+        let mut store = Store::in_memory().unwrap();
+        let fixture = setup(&mut store);
+        set_wall_mode(&mut store, fixture.session.session_id, InsightApprovalMode::Automatic);
+        let job = store.create_analysis_job(&request(&fixture, AnalysisKind::Insight)).unwrap();
+        store.claim_analysis_job(job.job_id, job.attempt).unwrap();
+        let mut output = result(&store, &job);
+        output.coverage.units.clear();
+        if empty {
+            output.content.sections[0].topics = vec![AnalysisTopic {
+                label:"会场测试".into(), evidence:output.content.sections[0].claims[0].evidence.clone(),
+            }];
+            output.content.sections[0].claims.clear();
+        }
+        else {
+            let mut claim = output.content.sections[0].claims[0].clone();
+            claim.claim_id = Uuid::new_v4();
+            claim.kind = ClaimKind::Question;
+            claim.grounding = GroundingStatus::Unsupported;
+            claim.evidence.clear();
+            output.content.sections[0].claims.push(claim);
+        }
+        let draft = store.finish_analysis_job(&output).unwrap();
+        assert_eq!(draft.publication, ArtifactPublication::Private);
+        assert!(store.prepare_insight_publication(draft.artifact_id, draft.revision).is_err());
+        assert!(store.public_snapshot(fixture.session.session_id).unwrap().artifacts.is_empty());
+    }
+}

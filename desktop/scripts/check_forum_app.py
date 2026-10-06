@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import plistlib
@@ -28,6 +29,24 @@ INPUTS = {
     'forum-profile.json': 'profiles/ai-vision-forum/profile.json',
     'prepare_forum_models.py': 'desktop/resources/setup/prepare_forum_models.py',
 }
+
+
+def runtime_check_options(component):
+    env = {'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'en_US.UTF-8'}
+    if component != 'speaker-worker':
+        return {'timeout': 90, 'env': env}
+    key = 'FORUM_SPEAKER_CHECK_TIMEOUT_SECONDS'
+    raw = os.environ.get(key, '300')
+    try:
+        seconds = float(raw)
+    except ValueError:
+        raise ValueError(f'{key} must be a positive finite number of seconds.') from None
+    if not math.isfinite(seconds) or seconds <= 0 or not math.isfinite(seconds * 3 + 60):
+        raise ValueError(f'{key} must be a positive finite number of seconds.')
+    env[key] = raw
+    # Three isolated child checks plus native inspection; do not cut off the
+    # checker at the app wrapper's old 90-second timeout.
+    return {'timeout': max(90, seconds * 3 + 60), 'env': env}
 
 
 def sha(path):
@@ -114,8 +133,8 @@ def check(app, expected_profile=None, repo=None, runtime_checks=False, allow_uns
                 command = [str(python), '-I', '-B', str(resource / 'checks/check_meeting_worker_bundle.py'), '--resource-dir', str(resource)]
             else:
                 command = [str(python), '-I', '-B', str(resource / 'checks/check_bundle.py'), '--root', str(resource)]
-            result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=90,
-                env={'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'en_US.UTF-8'})
+            result = subprocess.run(command, check=True, capture_output=True, text=True,
+                **runtime_check_options(component))
             component_reports[component]['isolated_check'] = json.loads(result.stdout)
     native_path = resources / 'speaker-worker/checks/_native_check.py'
     spec = importlib.util.spec_from_file_location('forum_app_native', native_path)

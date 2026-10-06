@@ -54,6 +54,14 @@ Vite server. Browser mode is visibly marked as synthetic preview and cannot
 start real capture. `npm --prefix forum-shell/ui run desktop:dev` launches the
 Tauri development shell; it does not automatically start capture.
 
+On macOS, the development launcher uses the repository's `.venv/bin/python`
+for the ASR, translation and meeting workers, with adapters loaded from the
+checkout. Prepare that environment with the pinned worker dependencies,
+including `mlx-qwen3-asr==0.4.4`; `FORUM_AGENT_DEV_PYTHON` can select another
+absolute Python path. Explicit per-worker Python/script overrides are retained.
+Startup checks the ASR/translation imports and never downloads model weights.
+The UI reports a missing runtime separately from missing model files.
+
 ## Runtime boundary
 
 The desktop Dora controller creates its own coordinator and daemon on private

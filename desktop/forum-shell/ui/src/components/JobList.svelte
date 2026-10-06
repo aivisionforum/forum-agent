@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t, uiLocale } from '../lib/i18n';
   import { createEventDispatcher } from 'svelte';
   import { jobLabels, kindLabels, type AnalysisJob } from '../lib/forum/client';
   export let jobs: AnalysisJob[] = [];
@@ -11,21 +12,21 @@
 <div class="job-list">
   {#each jobs as job (job.job_id)}
     <article class="job-card">
-      <div class="job-heading"><strong>{kindLabels[job.kind]}</strong><span class:error={job.state === 'failed'} class:active={['queued','waiting','running'].includes(job.state)} class="badge">{jobLabels[job.state] ?? job.state}</span></div>
-      <div class="job-meta">第 {job.attempt} 次执行 · {new Date(job.created_at_ms).toLocaleString()} · {Math.round(job.budget_ms / 1000)} 秒总预算（含排队）</div>
-      {#if job.progress.total_units > 0}<progress max="100" value={percent(job)} aria-label="任务完成进度"></progress>{/if}
-      <p>{job.progress.phase || '等待调度'}{#if job.progress.total_units > 0} · {job.progress.completed_units}/{job.progress.total_units} 段{/if}</p>
+      <div class="job-heading"><strong>{$t(kindLabels[job.kind])}</strong><span class:error={job.state === 'failed'} class:active={['queued','waiting','running'].includes(job.state)} class="badge">{$t(jobLabels[job.state] ?? job.state)}</span></div>
+      <div class="job-meta">{$t("第")} {job.attempt} {$t("次执行 ·")} {new Date(job.created_at_ms).toLocaleString($uiLocale === 'en' ? 'en-US' : 'zh-CN')} · {Math.round(job.budget_ms / 1000)} {$t("秒总预算（含排队）")}</div>
+      {#if job.progress.total_units > 0}<progress max="100" value={percent(job)} aria-label={$t("任务完成进度")}></progress>{/if}
+      <p>{job.progress.phase || $t("等待调度")}{#if job.progress.total_units > 0} · {job.progress.completed_units}/{job.progress.total_units} {$t("段")}{/if}</p>
       {#if job.progress.wait_reason}<p class="wait-reason">{job.progress.wait_reason}</p>{/if}
-      {#if job.state === 'succeeded_partial'}<p class="warning">仅生成部分内容，缺失范围会保留在草稿中；不能作为完整纪要发布。</p>{/if}
+      {#if job.state === 'succeeded_partial'}<p class="warning">{$t("仅生成部分内容，缺失范围会保留在草稿中；不能作为完整纪要发布。")}</p>{/if}
       {#if job.error}<p class="error-text">{job.error}</p>{/if}
       <div class="actions">
-        {#if cancellable(job.state)}<button disabled={busy} on:click={() => dispatch('cancel', job)}>取消任务</button>{/if}
-        {#if job.state === 'cancel_requested'}<span>正在等待工作进程停止…</span>{/if}
-        {#if retryable(job.state)}<button disabled={busy} on:click={() => dispatch('retry', job)}>重试未完成部分</button>{/if}
-        {#if job.result}<button on:click={() => dispatch('result', job)}>查看草稿 →</button>{/if}
+        {#if cancellable(job.state)}<button disabled={busy} on:click={() => dispatch('cancel', job)}>{$t("取消任务")}</button>{/if}
+        {#if job.state === 'cancel_requested'}<span>{$t("正在等待工作进程停止…")}</span>{/if}
+        {#if retryable(job.state)}<button disabled={busy} on:click={() => dispatch('retry', job)}>{$t("重试未完成部分")}</button>{/if}
+        {#if job.result}<button on:click={() => dispatch('result', job)}>{$t("查看草稿 →")}</button>{/if}
       </div>
     </article>
-  {:else}<div class="empty-state"><h3>还没有分析任务</h3><p>选择会议后，可以生成即时洞察或完整纪要。任务状态会持续保存。</p></div>{/each}
+  {:else}<div class="empty-state"><h3>{$t("还没有分析任务")}</h3><p>{$t("选择会议后，可以生成即时洞察或完整纪要。任务状态会持续保存。")}</p></div>{/each}
 </div>
 <style>
   .job-list { display:grid; gap:12px; } .job-card { border:1px solid #d8dbdf; padding:18px; background:white; }

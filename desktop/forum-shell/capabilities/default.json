@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the Forum operator and private caption windows",
+  "description": "Permissions for the local operator and caption window; the public insight wall has no IPC access",
   "windows": [
     "main",
     "overlay"

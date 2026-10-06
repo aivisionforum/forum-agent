@@ -1,5 +1,12 @@
 # 第四部分：macOS 打包、完整性与发布边界
 
+## 2026-10-03 补充：新 Mac 首次扫描超时
+
+同事反馈第二台 Mac 的 UI 构建、`cargo check`、Dora 0.4.1、打包、启动和 “Local AI is ready” 均通过，Node 22 兼容；speaker checker 原来的 30 秒限制在首次加载 torch 动态库时失败两次，本地改 300 秒后通过。此处记录的是同事的烟测结果，未据此宣称签名/公证、权限、离线模型推理或双机 90 分钟验收通过。
+
+`services/speaker-worker/packaging/check_bundle.py` 的每个隔离子进程默认允许 300 秒。打包会解出新的独立 Python，macOS 首次扫描原生库可能较慢；该限制不用于现场语音推理。需要调整时，在打包或检查命令前设置正有限秒数，例如 `FORUM_SPEAKER_CHECK_TIMEOUT_SECONDS=600`。打包器会把这个变量传入隔离 checker，`.app --runtime-checks` 外层超时相应留出三次子检查加 60 秒的余量。不会传递其他开发环境变量。
+
+
 ## 当前产物与隔离层次
 
 主构建入口是 `desktop/scripts/build_macos_app.sh`，默认 `--profile dev`。

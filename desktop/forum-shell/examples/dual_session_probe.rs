@@ -40,6 +40,7 @@ fn main() -> Result<()> {
     let root = PathBuf::from("/tmp").join(format!("forum-dual-runtime-probe-{}", Uuid::new_v4()));
     let runtime = TranslationRuntime::new(root.clone());
     let options = MeetingOptions {
+            insight_mode: Default::default(),
         max_segment_ms: 10_000,
         source_language: "auto".into(),
         target_language: "bilingual".into(),

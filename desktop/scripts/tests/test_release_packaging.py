@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('forum_release_check', SCRIPT_DIR / 'check_forum_app.py')
@@ -15,6 +16,22 @@ inventory = importlib.util.module_from_spec(spec); spec.loader.exec_module(inven
 
 
 class ReleaseGateTests(unittest.TestCase):
+    def test_app_check_preserves_speaker_timeout_and_allows_all_child_checks(self):
+        key = 'FORUM_SPEAKER_CHECK_TIMEOUT_SECONDS'
+        with patch.dict(os.environ, {}, clear=True):
+            default = checker.runtime_check_options('speaker-worker')
+        self.assertEqual(default['timeout'], 960)
+        self.assertEqual(default['env'][key], '300')
+        with patch.dict(os.environ, {key:'600', 'PRIVATE_TOKEN':'secret'}):
+            options = checker.runtime_check_options('speaker-worker')
+            self.assertEqual(options['timeout'], 1860)
+            self.assertEqual(options['env'][key], '600')
+            self.assertNotIn('PRIVATE_TOKEN', options['env'])
+            self.assertEqual(checker.runtime_check_options('meeting-worker')['timeout'],90)
+        for value in ('invalid', '-1', '0', 'nan', 'inf'):
+            with patch.dict(os.environ, {key:value}), self.assertRaises(ValueError):
+                checker.runtime_check_options('speaker-worker')
+
     def test_signing_inventory_recognizes_native_variants_and_metal(self):
         for magic in inventory.MACH_MAGICS:
             self.assertEqual(inventory.code_kind(magic), 'Mach-O')

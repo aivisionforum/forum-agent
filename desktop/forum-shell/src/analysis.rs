@@ -195,7 +195,7 @@ struct Automatic {
 impl Automatic {
     fn next_job(&mut self, now: Instant) -> Option<(Uuid, AnalysisKind)> {
         if let Some((id, last)) = self.live.as_mut() {
-            if now.duration_since(*last) >= Duration::from_secs(12) {
+            if now.duration_since(*last) >= Duration::from_millis(INSIGHT_INTERVAL_MS) {
                 *last = now;
                 let id = *id;
                 return Some((id, AnalysisKind::Insight));
@@ -264,6 +264,12 @@ impl Drop for AnalysisManager {
 impl AnalysisClient {
     pub fn session_started(&self, id: Uuid) {
         self.0.automatic.lock().live = Some((id, Instant::now()));
+        if let Err(error) = self.0.core.call(move |s| s.advance_insight_schedule(id)) {
+            self.0
+                .notice
+                .lock()
+                .insert(Some(id), format!("洞察倒计时未能保存：{error}"));
+        }
     }
     pub fn session_stopped(&self, id: Uuid) {
         {
@@ -408,6 +414,11 @@ fn run_loop(inner: Arc<Inner>) {
             }
         }
         let automatic = inner.automatic.lock().next_job(Instant::now());
+        if let Some((id, _)) = automatic {
+            if let Err(error) = inner.core.call(move |s| s.advance_insight_schedule(id)) {
+                log::warn!("洞察倒计时更新失败：{error}");
+            }
+        }
         if let Some((id, kind)) = automatic.filter(|(id, _)| {
             let id = *id;
             inner
@@ -426,6 +437,9 @@ fn run_loop(inner: Arc<Inner>) {
                     .notice
                     .lock()
                     .insert(Some(id), format!("自动会议分析尚未入队：{error}"));
+                let _ = inner
+                    .core
+                    .call(move |s| s.mark_insight_schedule_blocked(id));
                 log::warn!("自动会议分析未入队：{error}");
             } else {
                 inner.notice.lock().remove(&Some(id));
@@ -824,19 +838,19 @@ mod tests {
             live: Some((first, now)),
             ..Default::default()
         };
-        assert!(automatic.next_job(now + Duration::from_secs(11)).is_none());
+        assert!(automatic.next_job(now + Duration::from_secs(179)).is_none());
         assert_eq!(
-            automatic.next_job(now + Duration::from_secs(12)),
+            automatic.next_job(now + Duration::from_secs(180)),
             Some((first, AnalysisKind::Insight))
         );
-        assert!(automatic.next_job(now + Duration::from_secs(13)).is_none());
-        assert!(automatic.next_job(now + Duration::from_secs(14)).is_none());
+        assert!(automatic.next_job(now + Duration::from_secs(181)).is_none());
+        assert!(automatic.next_job(now + Duration::from_secs(182)).is_none());
         assert_eq!(
-            automatic.next_job(now + Duration::from_secs(24)),
+            automatic.next_job(now + Duration::from_secs(360)),
             Some((first, AnalysisKind::Insight))
         );
-        automatic.live = Some((second, now + Duration::from_secs(24)));
-        assert!(automatic.next_job(now + Duration::from_secs(25)).is_none());
+        automatic.live = Some((second, now + Duration::from_secs(360)));
+        assert!(automatic.next_job(now + Duration::from_secs(361)).is_none());
     }
     #[test]
     fn stop_after_analysis_shutdown_is_durable_without_model_setup() {
